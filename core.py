@@ -300,7 +300,7 @@ def require_ntfs(root):  # 在归档前检查目标卷及硬链接能力。
 
 class Archiver:  # 使用可重放任务协调数据库和文件系统。
     def __init__(self, store, root=ARCHIVE_ROOT, fault=None):  # 测试可注入独立归档根目录和故障点。
-        self.store, self.root, self.fault = store, Path(root), fault  # 保存归档依赖。
+        self.store, self.root, self.fault = store, Path(root) if root is not None else None, fault  # 未配置时不默认创建开发机器上的目录。
         self.lock = threading.RLock()  # 归档任务串行运行。
 
     def checkpoint(self, job, plan, state):  # 持久记录每个可恢复阶段。
@@ -310,6 +310,8 @@ class Archiver:  # 使用可重放任务协调数据库和文件系统。
 
     def submit(self, vid, score, tags, layout=None, hierarchy_job=None):  # 创建单视频归档或全局结构迁移的子任务。
         with self.lock, self.store.file_lock:  # 文件操作与目录扫描的身份登记共用串行边界。
+            if self.root is None:  # 新安装必须先明确选择存储路径。
+                raise RuntimeError('请先在右上角“设置 → 存储路径”选择视频存储文件夹。')  # 禁止静默归档到旧固定位置。
             if any(row['id'] != hierarchy_job for row in self.store.query('SELECT id FROM hierarchy_jobs WHERE state<>"done"')):  # 全局迁移未完成时禁止独立归档覆盖目标。
                 raise RuntimeError('有未完成的标签结构迁移，请先在文件任务中恢复。')  # 不让新操作破坏恢复计划。
             if self.store.query('SELECT id FROM deletion_jobs WHERE video=? AND state<>"done"', (vid,)):  # 不在待重试删除期间重新创建归档入口。

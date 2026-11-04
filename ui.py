@@ -152,6 +152,14 @@ def build_interface(window, tree_class, delegate_class, bundle):  # 在不改变
     appearance = button('外观', lambda: appearance_dialog(window), 'photo')  # 提供明确的自定义背景入口。
     appearance.setObjectName('appearanceButton')  # 便于自动化验收外观设置入口。
     top_layout.addWidget(appearance)  # 放在导航右侧的可见位置。
+    settings = QPushButton('设置')  # 将视频存储配置放在右上角明确入口。
+    settings.setObjectName('settingsButton')  # 路径专项可定位此设置菜单。
+    settings.setProperty('role', 'nav')  # 与现有工具栏保持一致样式。
+    settings_menu = QMenu(settings)  # 后续设置项集中在同一菜单。
+    settings_menu.addAction('存储路径', window.storage_dialog)  # 修改已保存的视频归档位置。
+    settings_menu.addAction('外观与背景', lambda: appearance_dialog(window))  # 保留现有背景配置能力。
+    settings.setMenu(settings_menu)  # 打开菜单时快捷键仍优先处理弹出层。
+    top_layout.addWidget(settings)  # 入口固定在导航右侧。
     more = QPushButton('更多')  # 低频功能不长期占据主工具栏。
     more.setProperty('role', 'nav')  # 与外观按钮保持相同层级。
     menu = QMenu(more)  # 使用普通桌面菜单容纳系统与维护操作。

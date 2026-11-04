@@ -1,0 +1,54 @@
+[
+  {
+    "name": "首次没有默认盘符或归档目录",
+    "passed": true
+  },
+  {
+    "name": "首次取消不保存配置且不自动播放",
+    "passed": true
+  },
+  {
+    "name": "未配置拒绝归档且来源保留",
+    "passed": true
+  },
+  {
+    "name": "首次保存通过NTFS硬链接检查并持久化",
+    "passed": true
+  },
+  {
+    "name": "归档实际使用自定义目录",
+    "passed": true
+  },
+  {
+    "name": "右上角设置可修改并保存路径",
+    "passed": true
+  },
+  {
+    "name": "修改路径不立即迁移旧视频且历史有效",
+    "passed": true
+  },
+  {
+    "name": "后续归档使用新路径并保留身份进度",
+    "passed": true
+  },
+  {
+    "name": "配置提交失败保留原路径",
+    "passed": true
+  },
+  {
+    "name": "未完成文件任务阻止修改路径",
+    "passed": true
+  },
+  {
+    "name": "拒绝相对路径",
+    "passed": true
+  },
+  {
+    "name": "已配置启动不重复弹窗",
+    "passed": true
+  },
+  {
+    "name": "中断批次恢复沿用原根目录",
+    "passed": true
+  }
+]

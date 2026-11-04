@@ -2,7 +2,7 @@ import json  # 固化全局结构与各视频的迁移计划。
 import threading  # 同一分类批次串行执行。
 import time  # 为任务状态记录更新时间。
 import uuid  # 分配独立批次身份。
-from core import validate_layout, validate_tag, canonical_tags, tag_parts, archive_name  # 复用路径与文件名的统一规则。
+from core import validate_layout, validate_tag, canonical_tags, tag_parts, archive_name, Archiver  # 恢复时沿用任务冻结的归档根目录。
 
 class TagMigration:  # 在现有逐视频归档日志之上协调全局分类迁移。
     def __init__(self, store, archiver, fault=None):  # 测试可注入持久检查点故障。
@@ -16,6 +16,8 @@ class TagMigration:  # 在现有逐视频归档日志之上协调全局分类迁
 
     def submit(self, vid, score, tags, rows):  # 明确确认后才创建全库迁移意图。
         with self.lock:  # 计划和提交保持串行。
+            if self.archiver.root is None:  # 路径未设置时不留下无法执行的新批次。
+                raise RuntimeError('请先在“设置 → 存储路径”选择视频存储文件夹。')  # 当前草稿和来源文件保持原状。
             if self.store.query('SELECT id FROM hierarchy_jobs WHERE state<>"done"') or self.store.query('SELECT id FROM jobs WHERE state<>"done"'):  # 不覆盖先前尚未完成的文件意图。
                 raise RuntimeError('有未完成文件任务，请先通过“文件任务”恢复。')  # 已完成的中间状态仍由日志保护。
             layout = validate_layout(rows)  # 全部小类必须有有效的大类父级。
@@ -40,7 +42,7 @@ class TagMigration:  # 在现有逐视频归档日志之上协调全局分类迁
                 entries.append({'video': video['id'], 'score': target_score, 'tags': chosen, 'done': False, 'metadata_only': metadata_only})  # 冻结归档或纯元数据更新意图。
             if not any(entry['video'] == vid for entry in entries):  # 当前身份已被外部删除时不得作用于其他视频。
                 raise FileNotFoundError('当前视频记录已不存在，未提交标签修改。')  # 保留原全局结构。
-            plan = {'layout': list(layout.values()), 'videos': entries, 'current': vid}  # 全局关系和所有子任务在一个计划内持久化。
+            plan = {'layout': list(layout.values()), 'videos': entries, 'current': vid, 'archive_root': str(self.archiver.root)}  # 冻结根目录，重启后不使用后来修改的设置。
             job = uuid.uuid4().hex  # 分配本次迁移身份。
             self.store.execute('INSERT INTO hierarchy_jobs VALUES(?,?,?,?,?)', (job, 'planned', json.dumps(plan, ensure_ascii=False), None, time.time()))  # 任何文件修改之前记录恢复批次。
             return self.run(job)  # 开始逐视频安全归档。
@@ -49,6 +51,7 @@ class TagMigration:  # 在现有逐视频归档日志之上协调全局分类迁
         with self.lock:  # 防止手动重试与启动恢复交叉。
             row = self.store.query('SELECT * FROM hierarchy_jobs WHERE id=?', (job,))[0]  # 不依赖先前进程的内存状态。
             plan = json.loads(row['plan'])  # 读取冻结的目标结构与任务进度。
+            batch_archiver = Archiver(self.store, plan['archive_root'], self.archiver.fault) if plan.get('archive_root') else self.archiver  # 旧批次兼容原行为，新批次严格恢复到原目标。
             if row['state'] == 'done':  # 已完成批次不再次移动文件。
                 return [entry['video'] for entry in plan['videos']]  # 返回需要刷新显示的身份。
             try:  # 所有失败都保持可恢复任务。
@@ -62,7 +65,7 @@ class TagMigration:  # 在现有逐视频归档日志之上协调全局分类迁
                     if entry.get('metadata_only'):  # 全局删除不让原本未归档的视频突然归档。
                         self.store.execute('UPDATE videos SET tags=? WHERE id=?', (json.dumps(entry['tags'], ensure_ascii=False), entry['video']))  # 仍由持久批次记录进度以便恢复。
                     else:  # 已归档视频或本次主动确认的视频同步实际目录。
-                        self.archiver.submit(entry['video'], entry['score'], entry['tags'], layout=layout, hierarchy_job=job)  # 新入口先创建，旧入口最后清理。
+                        batch_archiver.submit(entry['video'], entry['score'], entry['tags'], layout=layout, hierarchy_job=job)  # 使用冻结根目录创建入口，最后才清理旧路径。
                     entry['done'] = True  # 单视频归档真正完成后再记录完成。
                     self.checkpoint(job, plan, 'migrating')  # 断电后从下一条继续。
                 with self.store.lock, self.store.db:  # 所有视频完成后一次提交公共标签结构。

@@ -13,6 +13,7 @@ from PySide6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, Q
 from core import Store, Archiver, ScanRequired, scan, validate_tag, natural  # 复用经测试的核心规则与延迟扫描信号。
 from video_delete import DeletionManager  # 以可恢复任务回收全部登记入口。
 from tag_migration import TagMigration  # 以可恢复批次同步全局标签层级。
+from storage_settings import StorageSettings, StorageDialog  # 加载每位用户独立的存储路径与设置窗口。
 
 BASE = Path(sys.executable).parent if getattr(sys, 'frozen', False) else Path(__file__).parent  # 数据随便携程序保存。
 BUNDLE = Path(getattr(sys, '_MEIPASS', BASE))  # 定位打包资源。
@@ -206,7 +207,10 @@ class Window(QMainWindow):  # 主界面和播放协调层。
     def __init__(self, data_dir=None):  # 测试可使用隔离数据目录。
         super().__init__()  # 创建主窗口。
         self.store = Store(data_dir or BASE / 'data')  # 元数据不依赖开发环境路径。
-        self.archiver = Archiver(self.store)  # 固定使用用户指定归档根目录。
+        self.storage = StorageSettings(self.store.directory)  # 首次运行没有默认归档目录。
+        self.legacy_storage_recovery = self.storage.root is None and self.has_pending_file_tasks()  # 旧版本未完成任务先沿用其原路径恢复。
+        from core import ARCHIVE_ROOT  # 旧固定路径只供旧版本已提交任务兼容恢复。
+        self.archiver = Archiver(self.store, ARCHIVE_ROOT if self.legacy_storage_recovery else self.storage.root)  # 正常新安装不再依赖 E 盘。
         self.deleter = DeletionManager(self.store)  # 将删除阶段与元数据提交持久记账。
         self.tag_migration = TagMigration(self.store, self.archiver)  # 全局分类复用逐视频硬链接归档和恢复日志。
         self.file_task_thumbnail_pause = False  # 文件批处理期间阻止新解码器重新占用入口。
@@ -256,6 +260,28 @@ class Window(QMainWindow):  # 主界面和播放协调层。
         folder = QFileDialog.getExistingDirectory(self, '选择视频文件夹')  # 使用系统目录选择器。
         if folder:  # 取消对话框不触发扫描。
             self.load_folder(folder)  # 复用拖放导入流程。
+
+    def has_pending_file_tasks(self):  # 未完成文件意图必须先按原目标恢复。
+        return any(self.store.query(f'SELECT id FROM {table} WHERE state<>"done" LIMIT 1') for table in ('jobs', 'hierarchy_jobs', 'deletion_jobs'))  # 仅查询内部固定表名。
+
+    def storage_dialog(self, first_run=False):  # 右上角设置与首次引导共用入口。
+        if self.busy or self.has_pending_file_tasks():  # 不在文件任务执行或等待恢复时更改目标根目录。
+            self.message('请先等待文件任务完成，或通过“更多 → 文件任务”恢复，再设置存储路径。')  # 保留原任务位置。
+            return False  # 不切换正在使用的归档器。
+        return StorageDialog(self, first_run).exec() == QDialog.Accepted  # 取消不保存路径。
+
+    def initialize_storage(self):  # 正常启动时只在未配置情况下弹出首次设置。
+        if self.storage.root is not None:  # 已配置用户不被重复打扰。
+            return  # 不扫描或移动任何视频。
+        if self.busy:  # 旧版已提交任务的恢复先完成。
+            QTimer.singleShot(300, self.initialize_storage)  # 让后台任务继续，不阻塞主界面。
+            return  # 稍后再显示首次设置。
+        self.storage_dialog(first_run=True)  # 可以稍后设置，浏览与播放仍可用。
+
+    def ensure_storage(self):  # 归档操作前保证用户已明确选择目录。
+        if self.archiver.root is not None and not self.legacy_storage_recovery:  # 包括测试注入的独立归档器。
+            return True  # 已配置时不重复弹窗。
+        return self.storage_dialog(first_run=True)  # 稍后设置会取消本次归档操作。
 
     def load_folder(self, folder, play_id=None):  # 替换浏览树而不改变当前播放。
         if self.busy:  # 归档期间不启动会改变当前视频的操作。
@@ -603,6 +629,8 @@ class Window(QMainWindow):  # 主界面和播放协调层。
         self.tree.viewport().update()  # 只刷新可见区域，不折叠目录。
 
     def apply_tags(self, vid, tags, schema):  # 全部相关视频完成层级迁移后再弹出评分。
+        if not self.ensure_storage():  # 首次归档前必须有用户明确选择的位置。
+            return  # 不创建文件任务或移动来源视频。
         self.save()  # 释放当前播放文件前保存进度。
         paused = self.resume_paused if self.resume is not None else self.player.get_state() != vlc.State.Playing  # 保留连续重载中的目标暂停状态。
         active = self.current  # 当前视频可能在标签弹窗期间自然切换。
@@ -638,6 +666,8 @@ class Window(QMainWindow):  # 主界面和播放协调层。
         self.work(migrate, completed)  # 批次执行期间主界面保持响应。
 
     def archive(self, vid, score, tags):  # 安全释放文件后后台归档。
+        if not self.ensure_storage():  # 已归档视频改分也必须使用明确配置的位置。
+            return  # 未设置时保留原评分和入口。
         self.save()  # 先保存精确播放位置。
         same = vid == self.current  # 自动连播可能在弹窗期间切换视频。
         paused = self.resume_paused if self.resume is not None else self.player.get_state() != vlc.State.Playing  # 连续分类时沿用尚未完成重载的目标暂停状态。
@@ -797,6 +827,9 @@ class Window(QMainWindow):  # 主界面和播放协调层。
         self.message('正在恢复未完成归档任务……')  # 提示真实恢复状态。
         def recovered(errors, error):  # 在主线程处理恢复结果。
             self.busy = False  # 恢复常规操作。
+            if self.legacy_storage_recovery and not self.has_pending_file_tasks():  # 旧固定路径只用于完成原已提交任务。
+                self.archiver.root = self.storage.root  # 未配置时恢复为不允许新归档。
+                self.legacy_storage_recovery = False  # 首次路径设置不会隐式沿用旧固定值。
             self.file_task_thumbnail_pause = False  # 恢复完成后允许派生缩略图任务。
             self.refresh_names([entry['video'] for plan in tag_plans for entry in plan['videos']])  # 同步批次实际完成的文件名。
             self.deleting_ids.difference_update(pending)  # 失败目标允许后续正常读取。
@@ -827,7 +860,7 @@ class Window(QMainWindow):  # 主界面和播放协调层。
 
     def help_dialog(self):  # 显示核心交互和部署说明。
         self.message('Ctrl+D：选中视频优先，否则删除当前视频；移入回收站后自动播放下一条，末尾停止。')  # 帮助关闭后仍显示新增快捷键说明。
-        QMessageBox.information(self, 'MoPlayer 使用说明', '拖入一个文件夹，双击视频播放。\n空格：播放/暂停；X/Z：下一个/上一个；左方向键/A：后退5秒；右方向键/D：快进5秒。\nEnter：切换仅视频全屏；鼠标移动显示控制栏；Esc：优先关闭弹窗，其次恢复原布局。\nQ：标签确认后归档；R：整数评分；W：仅添加收藏；Ctrl+D：移入回收站后播放下一条。\n归档根目录：E:\\我觉得是学习资料\n归档期间安全释放并重载视频，保持进度、暂停状态与原播放顺序。\n数据保存在程序旁 data 目录；启动不会恢复目录或自动播放。\n资源管理器缩略图取决于系统缩略图提供程序，详见交付说明。')  # 说明四个进度键并区分 D 与 Ctrl+D。
+        QMessageBox.information(self, 'MoPlayer 使用说明', f'拖入一个文件夹，双击视频播放。\n空格：播放/暂停；X/Z：下一个/上一个；左方向键/A：后退5秒；右方向键/D：快进5秒。\nEnter：切换仅视频全屏；鼠标移动显示控制栏；Esc：优先关闭弹窗，其次恢复原布局。\nQ：标签确认后归档；R：整数评分；W：仅添加收藏；Ctrl+D：移入回收站后播放下一条。\n归档根目录：{self.storage.root or "未设置，请在右上角设置中选择"}\n归档期间安全释放并重载视频，保持进度、暂停状态与原播放顺序。\n数据保存在程序旁 data 目录；启动不会恢复目录或自动播放。\n资源管理器缩略图取决于系统缩略图提供程序，详见交付说明。')  # 说明四个进度键并区分 D 与 Ctrl+D。
 
     def explorer_thumbnail_dialog(self):  # 为资源管理器的视频缩略图提供一次性启用与修复入口。
         if getattr(self, 'thumbnail_setup_pending', False):  # 避免同时运行多个组件配置任务。
@@ -891,6 +924,7 @@ def main():  # 程序统一启动入口。
         logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s', handlers=[RotatingFileHandler(directory / 'moplayer.log', maxBytes=4 * 1024 * 1024, backupCount=3, encoding='utf-8')])  # 日志全部写入便携数据目录。
         window = Window(directory)  # 创建主界面但不导入历史目录。
         window.show()  # 展示可直接操作的播放器。
+        QTimer.singleShot(0, window.initialize_storage)  # 首次正常运行选择存储路径，不影响隔离专项构造窗口。
         from file_open import FileOpenServer  # 加载默认应用文件接收服务。
         window.file_server = FileOpenServer(window, directory)  # 在数据库锁保护下创建唯一接收端点。
         if len(sys.argv) > 1:  # 只有用户通过文件关联明确打开时才自动播放。
@@ -905,6 +939,10 @@ def main():  # 程序统一启动入口。
         return 1  # 报告失败退出码。
 
 if __name__ == '__main__':  # 仅直接运行时启动应用。
+    if len(sys.argv) == 3 and sys.argv[1] == '--storage-test':  # 只验证首次选择与设置中更改存储路径。
+        from verify_storage import run  # 使用明确指定的隔离数据库和归档文件夹。
+        run(sys.argv[2])  # 不打开真实用户数据库。
+        sys.exit(0)  # 专项完成后不进入正常启动流程。
     if len(sys.argv) == 3 and sys.argv[1] == '--tag-nesting-test':  # 仅检查互斥展开、父类嵌套和删除标签。
         from verify_tag_nesting import run  # 测试使用指定目录的隔离视频和数据库。
         run(sys.argv[2])  # 不启动正常播放器或读取用户数据。
