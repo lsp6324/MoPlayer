@@ -7,7 +7,7 @@ import threading  # 提供扫描取消信号。
 import time  # 管理周期保存时间。
 from collections import OrderedDict  # 限制界面缩略图内存缓存大小。
 from pathlib import Path  # 处理便携数据路径。
-if len(sys.argv) == 3 and sys.argv[1] == '--ui-refresh-test':
+if len(sys.argv) == 3 and sys.argv[1] in ('--ui-refresh-test', '--seek-notice-test'):
     # A windowed EXE has no stderr; keep explicit test failures reviewable.
     _test_output = Path(sys.argv[2]).absolute()
     _test_output.mkdir(parents=True, exist_ok=True)
@@ -299,6 +299,8 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
         self.setWindowIcon(QIcon(str(BUNDLE / 'assets/yunli.ico')))  # 窗口与任务栏使用同一云璃 Q 版图标。
         from video_fullscreen import VideoFullscreen  # 独立管理视频全屏与控制栏浮层。
         self.video_fullscreen = VideoFullscreen(self)  # 不移动 VLC 原生播放窗口，保持解码连续。
+        from seek_notice import SeekNotice  # 跳转提示与播放和目录管理逻辑分开。
+        self.seek_notice = SeekNotice(self, vlc)  # 普通窗口和全屏共用内核文字提示。
         self.timer = QTimer(self)  # 主线程定时刷新播放器状态。
         self.timer.timeout.connect(self.tick)  # 保留既有进度和自动连播逻辑。
         self.timer.start(250)  # 每四分之一秒刷新一次。
@@ -419,6 +421,7 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
         self._pending_seek = None
         self.seekbar.hold(0, 0)
         self.playback_options.dismiss()
+        self.seek_notice.clear()  # 换片或重载时不显示上一条视频的跳转提示。
         self.player.stop()  # 释放旧媒体及文件句柄。
         self.player_empty.hide()  # 播放开始后移除空状态文案，避免遮住真实视频。
         media = self.instance.media_new(str(path))  # 使用真实本地路径创建媒体。
@@ -599,8 +602,11 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
 
     def seek(self, offset):  # 方向键和 A/D 共用带边界保护的毫秒跳转。
         if self.current and not self.busy and self.player.get_length() > 0:  # 只在已知有效时长时跳转。
-            length = self.player.get_length()
-            self.set_playback_position(min(max(0, self.player.get_time() + offset), length), length)
+            total = self.player.get_length()  # 同一次跳转使用同一个有效总时长。
+            before = min(max(0, self.player.get_time()), total)  # 跳转前进度也限制在有效范围。
+            after = min(max(0, before + offset), total)  # 到开头或结尾时显示实际截断后的目标。
+            self.set_playback_position(after, total)
+            self.seek_notice.show(before, after, total)  # 两行显示前后时间、总时长和新的进度百分比。
 
     def set_playback_position(self, target, length):
         self._pending_seek = (target, time.monotonic() + 2)
@@ -1125,6 +1131,7 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
         self.timer.stop()  # 停止状态刷新。
         self.seekbar.animation.stop()
         self.playback_options.dismiss()
+        self.seek_notice.clear()  # 关闭前停止进度提示计时和内核文字层。
         self.video_fullscreen.exit()  # 关闭浮动控件并恢复其所有权后退出。
         self.player.stop()  # 释放视频文件句柄。
         QApplication.instance().removeEventFilter(self)  # 移除应用快捷键过滤器。
@@ -1174,6 +1181,10 @@ if __name__ == '__main__':  # 仅直接运行时启动应用。
             sys.exit(1)
         else:
             sys.exit(0)
+    if len(sys.argv) == 3 and sys.argv[1] == '--seek-notice-test':  # 只验证快进后退的两行进度提示。
+        from verify_seek_notice import run  # 生成与用户素材隔离的真实一分钟视频。
+        run(sys.argv[2])  # 专项不打开用户数据库。
+        sys.exit(0)  # 完成后不进入普通启动流程。
     if len(sys.argv) == 3 and sys.argv[1] == '--storage-test':  # 只验证首次选择与设置中更改存储路径。
         from verify_storage import run  # 使用明确指定的隔离数据库和归档文件夹。
         run(sys.argv[2])  # 不打开真实用户数据库。

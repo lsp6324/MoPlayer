@@ -165,6 +165,16 @@ def run(destination):
         paused_fraction = window.seekbar.visual_fraction
         QTest.qWait(120)
         check('paused timeline stays still', window.seekbar.visual_fraction == paused_fraction and not window.seekbar.animation.isActive())
+        before_seek = max(0, window.player.get_time())
+        target = min(window.player.get_length(), before_seek + 5000)
+        QTest.keyClick(window.surface, Qt.Key_D)
+        check('keyboard jump updates timeline and enables upstream video notice',
+              abs(window.seekbar.visual_fraction - target / window.player.get_length()) < .0001 and
+              window.player.video_get_marquee_int(vlc.VideoMarqueeOption.Enable) == 1)
+        check('keyboard jump confirmation preserves paused timeline',
+              wait(lambda: window._pending_seek is None and abs(window.player.get_time() - target) < 100) and
+              abs(window.seekbar.visual_fraction - target / window.player.get_length()) < .003 and
+              not window.seekbar.animation.isActive())
         handle = int(window.surface.winId())
         frame = output / 'decoded-frame.png'
         check('VLC decoded frame snapshot', window.player.video_take_snapshot(0, str(frame), 320, 180) == 0 and wait(frame.exists))

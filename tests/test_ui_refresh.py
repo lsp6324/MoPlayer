@@ -176,6 +176,32 @@ def test_seek_previews_without_stale_tick_snapback(window):
         window.player = real
 
 
+@pytest.mark.parametrize(('position', 'offset', 'target'), [(5000, 5000, 10000),
+    (10000, -5000, 5000), (2000, -5000, 0), (98000, 5000, 100000)])
+def test_keyboard_seek_combines_notice_and_timeline_without_stale_snapback(window, position, offset, target):
+    real = window.player
+    fake = Mock()
+    fake.get_length.return_value = 100000
+    fake.get_time.return_value = position
+    fake.get_state.return_value = vlc.State.Paused
+    window.player = fake
+    window.seek_notice.show = Mock()
+    window.last_save = time.monotonic()
+    try:
+        window.seek(offset)
+        fake.set_time.assert_called_once_with(target)
+        window.seek_notice.show.assert_called_once_with(position, target, 100000)
+        assert window.seekbar.visual_fraction == target / 100000
+        window.tick()
+        assert window.seekbar.visual_fraction == target / 100000
+        fake.get_time.return_value = target
+        window.tick()
+        assert window._pending_seek is None
+        assert not window.seekbar.animation.isActive()
+    finally:
+        window.player = real
+
+
 def test_timeline_clock_keeps_moving_between_repeated_decoder_samples():
     from seek_slider import PlaybackClock
     clock = PlaybackClock()
