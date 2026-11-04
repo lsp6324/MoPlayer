@@ -213,6 +213,65 @@ def test_timeline_clock_keeps_moving_between_repeated_decoder_samples():
     assert clock.position(20) == pytest.approx(2750)
 
 
+def test_seek_notice_is_screen_rendered_centered_and_does_not_touch_decoder(window):
+    real = window.player
+    window.player = Mock()
+    window.activateWindow()
+    QApplication.processEvents()
+    try:
+        notice = window.seek_notice
+        notice.show(5000, 10000, 60000)
+        panel = notice.overlay
+        assert panel.isVisible() and panel.owner is window and panel.isWindow()
+        assert notice.text() == '00:05→00:10(01:00)\n16.7%'
+        assert panel.windowFlags() & Qt.WindowTransparentForInput
+        assert panel.windowFlags() & Qt.WindowDoesNotAcceptFocus
+        assert panel.time_label.font().pixelSize() == 20
+        center = window.surface.mapToGlobal(window.surface.rect().center())
+        assert abs(panel.geometry().center().x() - center.x()) <= 1
+        assert panel.geometry().center().y() < center.y()
+        assert window.isActiveWindow()
+        assert window.player.mock_calls == []
+        width = panel.width()
+        window.resize(1200, 760)
+        QApplication.processEvents()
+        QApplication.processEvents()
+        center = window.surface.mapToGlobal(window.surface.rect().center())
+        assert panel.isVisible() and abs(panel.geometry().center().x() - center.x()) <= 1
+        assert panel.width() == width and panel.time_label.font().pixelSize() == 20
+        notice.clear()
+        assert not panel.isVisible() and notice.text() == '' and not notice.timer.isActive()
+    finally:
+        window.player = real
+
+
+def test_seek_notice_restarts_hide_deadline_for_repeated_seeks(window):
+    window.activateWindow()
+    QApplication.processEvents()
+    notice = window.seek_notice
+    notice.show(0, 5000, 60000)
+    notice.timer.start(200)
+    QTest.qWait(100)
+    notice.show(5000, 10000, 60000)
+    QTest.qWait(150)
+    assert notice.overlay.isVisible() and notice.timer.remainingTime() > 1000
+    assert notice.text() == '00:05→00:10(01:00)\n16.7%'
+    notice.timer.start(30)
+    QTest.qWait(80)
+    assert not notice.overlay.isVisible() and notice.text() == ''
+
+
+def test_clearing_media_removes_seek_surface_immediately(window):
+    window.activateWindow()
+    QApplication.processEvents()
+    notice = window.seek_notice
+    notice.show(5000, 10000, 60000)
+    assert notice.overlay.isVisible()
+    window.clear_player()
+    assert not notice.overlay.isVisible() and notice.text() == ''
+    assert not notice.timer.isActive()
+
+
 @pytest.mark.parametrize('rate', [.5, 1, 1.5, 2])
 def test_timeline_clock_speed_changes_are_continuous_and_pause_is_stable(rate):
     from seek_slider import PlaybackClock

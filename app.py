@@ -299,8 +299,8 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
         self.setWindowIcon(QIcon(str(BUNDLE / 'assets/yunli.ico')))  # 窗口与任务栏使用同一云璃 Q 版图标。
         from video_fullscreen import VideoFullscreen  # 独立管理视频全屏与控制栏浮层。
         self.video_fullscreen = VideoFullscreen(self)  # 不移动 VLC 原生播放窗口，保持解码连续。
-        from seek_notice import SeekNotice  # 跳转提示与播放和目录管理逻辑分开。
-        self.seek_notice = SeekNotice(self, vlc)  # 普通窗口和全屏共用内核文字提示。
+        from seek_notice import SeekNotice
+        self.seek_notice = SeekNotice(self)  # 独立浮层按界面分辨率绘制，普通和全屏共用。
         self.timer = QTimer(self)  # 主线程定时刷新播放器状态。
         self.timer.timeout.connect(self.tick)  # 保留既有进度和自动连播逻辑。
         self.timer.start(250)  # 每四分之一秒刷新一次。
@@ -606,7 +606,7 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
             before = min(max(0, self.player.get_time()), total)  # 跳转前进度也限制在有效范围。
             after = min(max(0, before + offset), total)  # 到开头或结尾时显示实际截断后的目标。
             self.set_playback_position(after, total)
-            self.seek_notice.show(before, after, total)  # 两行显示前后时间、总时长和新的进度百分比。
+            self.seek_notice.show(before, after, total)  # 在播放画面居中偏上显示时间与进度。
 
     def set_playback_position(self, target, length):
         self._pending_seek = (target, time.monotonic() + 2)
@@ -688,6 +688,7 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
         return model.createIndex(row, 0, model.nodes.setdefault(node, node))  # 支持恢复嵌套展开状态。
 
     def clear_player(self):  # 删除完成后解除已不存在的视频身份。
+        self.seek_notice.clear()
         self.current, self.resume, self.ended = None, None, True
         self._pending_seek = None
         self.refresh_title()  # 定时器不再访问已删除的数据库行。
@@ -1131,7 +1132,7 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
         self.timer.stop()  # 停止状态刷新。
         self.seekbar.animation.stop()
         self.playback_options.dismiss()
-        self.seek_notice.clear()  # 关闭前停止进度提示计时和内核文字层。
+        self.seek_notice.clear()  # 关闭前停止进度提示计时并隐藏浮层。
         self.video_fullscreen.exit()  # 关闭浮动控件并恢复其所有权后退出。
         self.player.stop()  # 释放视频文件句柄。
         QApplication.instance().removeEventFilter(self)  # 移除应用快捷键过滤器。

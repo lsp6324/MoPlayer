@@ -168,9 +168,10 @@ def run(destination):
         before_seek = max(0, window.player.get_time())
         target = min(window.player.get_length(), before_seek + 5000)
         QTest.keyClick(window.surface, Qt.Key_D)
-        check('keyboard jump updates timeline and enables upstream video notice',
+        check('keyboard jump updates timeline and shows independent seek surface',
               abs(window.seekbar.visual_fraction - target / window.player.get_length()) < .0001 and
-              window.player.video_get_marquee_int(vlc.VideoMarqueeOption.Enable) == 1)
+              window.seek_notice.overlay.isVisible() and
+              window.player.video_get_marquee_int(vlc.VideoMarqueeOption.Enable) == 0)
         check('keyboard jump confirmation preserves paused timeline',
               wait(lambda: window._pending_seek is None and abs(window.player.get_time() - target) < 100) and
               abs(window.seekbar.visual_fraction - target / window.player.get_length()) < .003 and
