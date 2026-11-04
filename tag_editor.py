@@ -71,7 +71,8 @@ class TagChip(QPushButton):  # 普通标签点击选择，父标签点击展开�
         self.setText(text)  # 胶囊内部只保留标签名称和必要的折叠标记。
         self.setFixedSize(self.fontMetrics().horizontalAdvance(text) + 28, 34)  # 文字长度决定胶囊宽度。
         self.setCheckable(True)  # 蓝色状态表示该标签或其子类已被选择。
-        self.setStyleSheet('QPushButton { background-color:#ffffff; } QPushButton:checked { background-color:#d5e8ff; border-color:#80afe5; color:#245a99; } QPushButton:checked:hover { background-color:#c8e0ff; }')  # 直接为胶囊指定淡蓝色选中填充，避免外层透明背景样式覆盖。
+        self.setProperty('role', 'tagChip')
+        self.setStyleSheet('QPushButton { border-radius:17px; padding:0; }')  # 直接为胶囊指定淡蓝色选中填充，避免外层透明背景样式覆盖。
         self.setCursor(Qt.PointingHandCursor)  # 明确可以点击。
         self.setAcceptDrops(self.parent_tag)  # 只有明确设定的父标签接收子类。
         self.setToolTip(name + ('\n点击显示或收起子标签；右键可选择父标签本身' if self.parent_tag else '\n点击选择；右键设为父标签或移出父标签'))  # 不显示额外的类型下拉框。
@@ -141,6 +142,7 @@ class TagEditor(QDialog):  # 参考图式胶囊标签卡，父类只在主动点
         for row in list(self.schema.values()):  # 已有子类的标签自动视为父标签。
             if row.get('parent') in self.schema:  # 兼容上一版本的层级数据。
                 self.schema[row['parent']]['is_parent'] = True  # 不丢失真实父子关系。
+        self.managing, self.delete_selection = False, set()
         self.expanded, self.chips = set(), {}  # 初次打开不展开任何父标签。
         self.dragging, self.pending_refresh, self.serial = False, False, 0  # 拖动结束后再安全更新布局。
         self.setWindowTitle('标签管理')  # 与参考图的标题一致。
@@ -157,9 +159,15 @@ class TagEditor(QDialog):  # 参考图式胶囊标签卡，父类只在主动点
         layout = QVBoxLayout(card)  # 标题、标签、输入与确认保持单列。
         layout.setContentsMargins(20, 18, 20, 16)  # 接近参考图的白色留白。
         header = QHBoxLayout()  # 搜索放在标题旁，避免单独占一行。
-        title = QLabel('标签管理')  # 不增加宣传文案。
+        self.title = title = QPushButton('标签管理')
+        title.setCheckable(True)
+        title.setAutoDefault(False)  # 不增加宣传文案。
         title.setStyleSheet('font-size:17px;')  # 标题清晰但不过分突出。
         header.addWidget(title)  # 标题靠左。
+        self.delete_button = QPushButton('删除')
+        self.delete_button.setAutoDefault(False)
+        self.delete_button.hide()
+        header.addWidget(self.delete_button)
         header.addStretch()  # 搜索靠右。
         self.search = QLineEdit()  # 保留快速查找大量标签的能力。
         self.search.setPlaceholderText('搜索标签')  # 搜索不改变选择或展开状态。
@@ -184,7 +192,8 @@ class TagEditor(QDialog):  # 参考图式胶囊标签卡，父类只在主动点
         self.hint.hide()  # 默认界面不堆叠多行说明。
         layout.addWidget(self.hint)  # 提示保持就地显示。
         footer = QHBoxLayout()  # 简单说明与确认操作放在底部。
-        footer.addWidget(QLabel('右键设为父标签，拖动归类'))  # 交互提示使用具体操作。
+        self.footer_hint = QLabel('右键设为父标签，拖动归类')
+        footer.addWidget(self.footer_hint)  # 交互提示使用具体操作。
         footer.addStretch()  # 操作按钮靠右。
         self.buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)  # 仍然集中确认，避免每次点击移动视频。
         self.buttons.button(QDialogButtonBox.Ok).setText('应用标签')  # 全部应用成功后仍自动评分。
@@ -206,6 +215,11 @@ class TagEditor(QDialog):  # 参考图式胶囊标签卡，父类只在主动点
         self.hint.setVisible(bool(text))  # 没有提示时维持简洁卡片。
 
     def update_selection(self):  # 只更新选择颜色，不改变布局或滚动。
+        if self.managing:
+            for name, chip in self.chips.items():
+                chip.setChecked(name in self.delete_selection)
+            self.delete_button.setEnabled(bool(self.delete_selection))
+            return
         parents = {parent for name in self.selected if name in self.schema for parent in tag_chain(name, self.schema)[:-1]}  # 多层子标签隐含选中所有祖先。
         for name, chip in self.chips.items():  # 同步根标签与展开后的子标签。
             chip.setChecked(name in self.selected or name in parents)  # 父标签不用自动展开来显示选中状态。
@@ -270,9 +284,13 @@ class TagEditor(QDialog):  # 参考图式胶囊标签卡，父类只在主动点
             if serial == self.serial:  # 新操作发生后丢弃旧恢复回调。
                 self.scroll.verticalScrollBar().setValue(position)  # 不跳到顶部或新归类的小类。
         restore()  # 先恢复当前已计算的范围。
-        QTimer.singleShot(0, restore)  # 布局下一轮稳定后再次保持原视口。
+        QTimer.singleShot(0, self, restore)  # 草稿释放后不执行过期的滚动回调。
 
     def activate(self, name):  # 父标签点击显示子类，普通标签点击选择。
+        if self.managing:
+            self.delete_selection.symmetric_difference_update({name})
+            self.update_selection()
+            return
         if self.schema[name].get('is_parent'):  # 父类展开是明确的用户操作。
             self.expanded = set() if name in self.expanded else {name}  # 打开新父类时自动收起原父类。
             self.rebuild()  # 不自动展开所有父类。
@@ -345,7 +363,7 @@ class TagEditor(QDialog):  # 参考图式胶囊标签卡，父类只在主动点
         del self.schema[name]  # 从待应用的全局字典删除该标签。
         self.selected.discard(name)  # 当前视频不再选择已删除的标签。
         self.expanded.discard(name)  # 不自动展开提升后的子标签。
-        self.message('标签将在应用后从所有视频移除；视频文件保留。')  # 明确全局影响且允许取消草稿。
+        self.message('')  # 明确全局影响且允许取消草稿。
         self.rebuild()  # 保持剩余展开状态和浏览位置。
 
     def add_tag(self):  # 加号与回车只新增草稿标签。
@@ -354,7 +372,7 @@ class TagEditor(QDialog):  # 参考图式胶囊标签卡，父类只在主动点
             if name.casefold() in {tag.casefold() for tag in self.schema}:  # 不创建大小写重复标签。
                 raise ValueError('标签已存在。')  # 用户可以直接选择已有胶囊。
             self.schema[name] = {'name': name, 'kind': 'major', 'parent': None, 'is_parent': False}  # 新标签先作为普通可选胶囊。
-            self.selected.add(name)  # 新标签默认选中。
+            # Adding to the catalog does not select the tag for this video.
             self.entry.clear()  # 支持连续新增。
             self.message('')  # 清除旧错误提示。
             self.rebuild()  # 不清除搜索或抢走滚动位置。
@@ -371,3 +389,26 @@ class TagEditor(QDialog):  # 参考图式胶囊标签卡，父类只在主动点
             self.message(str(error))  # 就地显示原因。
             return  # 暂不应用。
         super().accept()  # 成功后继续原来的全局迁移和自动评分流程。
+
+    def enable_management(self):
+        self.setStyleSheet('QFrame#tagCard { border:none; background:transparent; } QScrollArea { border:none; background:transparent; } QPushButton { padding:5px 10px; }')
+        self.title.setObjectName('tagManager')
+        self.title.setProperty('role', 'quiet')
+        self.title.toggled.connect(self.set_management)
+        self.delete_button.clicked.connect(self.delete_selected)
+        self.delete_button.setProperty('role', 'quiet')
+        self.delete_button.setEnabled(False)
+
+    def set_management(self, enabled):
+        self.managing = enabled
+        self.delete_selection.clear()
+        self.delete_button.setVisible(enabled)
+        self.update_selection()
+
+    def delete_selected(self):
+        # Schema edits go through TagMigration; no filesystem delete call here.
+        for name in list(self.delete_selection):
+            if name in self.schema:
+                self.delete_tag(name)
+        self.delete_selection.clear()
+        self.update_selection()

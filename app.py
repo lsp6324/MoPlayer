@@ -7,8 +7,16 @@ import threading  # 提供扫描取消信号。
 import time  # 管理周期保存时间。
 from collections import OrderedDict  # 限制界面缩略图内存缓存大小。
 from pathlib import Path  # 处理便携数据路径。
-from PySide6.QtCore import Qt, QTimer, QObject, Signal, QRunnable, QThreadPool, QAbstractItemModel, QModelIndex, QEvent, QLockFile, QSize, QRect  # 使用 Qt 事件循环、异步任务和明确缩略图尺寸。
-from PySide6.QtGui import QAction, QIcon, QPixmap, QColor, QPalette, QPainter, QPainterPath, QPen  # 绘制圆角缩略图卡片与选中状态。
+if len(sys.argv) == 3 and sys.argv[1] == '--ui-refresh-test':
+    # A windowed EXE has no stderr; keep explicit test failures reviewable.
+    _test_output = Path(sys.argv[2]).absolute()
+    _test_output.mkdir(parents=True, exist_ok=True)
+    _test_console = (_test_output / 'console.txt').open('w', encoding='utf-8')
+    sys.stdout = sys.stderr = _test_console
+    import faulthandler
+    faulthandler.enable(file=_test_console)
+from PySide6.QtCore import Qt, QTimer, QObject, Signal, QRunnable, QThreadPool, QAbstractItemModel, QModelIndex, QEvent, QLockFile, QSize, QRect, QRectF, QPointF  # 使用 Qt 事件循环、异步任务和明确缩略图尺寸。
+from PySide6.QtGui import QAction, QIcon, QPixmap, QColor, QPalette, QPainter, QPainterPath, QPen, QFont, QTextLayout, QTextOption  # 绘制圆角缩略图卡片与选中状态。
 from PySide6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QTreeView, QSplitter, QSlider, QFileDialog, QMessageBox, QDialog, QDialogButtonBox, QListWidget, QListWidgetItem, QLineEdit, QComboBox, QAbstractSpinBox, QTextEdit, QPlainTextEdit, QFrame, QStyledItemDelegate, QStyleOptionViewItem, QStyle  # 构建原生界面和大缩略图视频行。
 from core import Store, Archiver, ScanRequired, scan, validate_tag, natural  # 复用经测试的核心规则与延迟扫描信号。
 from video_delete import DeletionManager  # 以可恢复任务回收全部登记入口。
@@ -17,7 +25,7 @@ from storage_settings import StorageSettings, StorageDialog  # 加载每位用�
 
 BASE = Path(sys.executable).parent if getattr(sys, 'frozen', False) else Path(__file__).parent  # 数据随便携程序保存。
 BUNDLE = Path(getattr(sys, '_MEIPASS', BASE))  # 定位打包资源。
-VLC_DIR = BUNDLE / 'vlc' if getattr(sys, 'frozen', False) else Path('E:/tools/videoplayerenv/runtime/vlc-3.0.21')  # 源码开发与便携部署分别定位。
+VLC_DIR = BUNDLE / 'vlc' if getattr(sys, 'frozen', False) else Path(os.environ.get('MOPLAYER_VLC_DIR', 'E:/tools/videoplayerenv/runtime/vlc-3.0.21'))  # 源码开发与便携部署分别定位。
 os.environ['PYTHON_VLC_LIB_PATH'] = str(VLC_DIR / 'libvlc.dll')  # 禁止意外加载系统其他 VLC 版本。
 os.environ['PYTHON_VLC_MODULE_PATH'] = str(VLC_DIR)  # 指定 VLC 原生模块目录。
 os.environ['VLC_PLUGIN_PATH'] = str(VLC_DIR / 'plugins')  # 插件全部随包加载。
@@ -83,47 +91,101 @@ class ThumbnailCache(QObject):  # 为目录、历史和收藏共用有界异步�
         self.pool.start(job)  # 不在绘制过程中执行解码或大文件读取。
         return None  # 首次显示使用加载占位画布。
 
-class VideoDelegate(QStyledItemDelegate):  # 在浏览列表直接显示至少 120×120 的视频画面。
-    def __init__(self, thumbnails, parent):  # 多个视图共用同一个缩略图服务。
-        super().__init__(parent)  # 由所在视图管理委托生命周期。
-        self.thumbnails = thumbnails  # 保存统一缓存入口。
+THUMB_VIEW = (140, 79)
+THUMB_ROW = 96
+THUMB_RADIUS = 5
 
-    def sizeHint(self, option, index):  # 按视频和文件夹分别确定行高。
-        return QSize(330, 136) if index.data(Qt.UserRole) else QSize(200, 30)  # 视频留出 180×120 画面和上下边距，文件夹保持紧凑。
+class VideoDelegate(QStyledItemDelegate):
+    def __init__(self, thumbnails, parent, window=None):
+        super().__init__(parent)
+        self.thumbnails = thumbnails
+        self.window = window or thumbnails.window
 
-    def paint(self, painter, option, index):  # 自定义视频行并保留系统选择和文件夹行为。
-        vid = index.data(Qt.UserRole)  # 读取稳定视频 ID，文件夹没有此角色。
-        if not vid:  # 普通目录继续使用原生树样式。
-            super().paint(painter, option, index)  # 保留展开收起和文件夹图标。
-            return  # 不给文件夹生成视频缩略图。
-        background = QStyleOptionViewItem(option)  # 复制行状态以绘制原生选中背景。
-        self.initStyleOption(background, index)  # 读取当前字体、调色板和选择状态。
-        background.text, background.icon = '', QIcon()  # 缩略图和文字在固定区域自行绘制。
-        painter.save()  # 不将本行绘制状态泄漏到其他行。
-        painter.setRenderHint(QPainter.Antialiasing)  # 平滑绘制文件选择区域和缩略图。
-        card = option.rect.adjusted(1, 1, -2, -1)  # 文件列表只保留细分隔空间。
-        selected = bool(option.state & QStyle.State_Selected)  # 保留鼠标和键盘选择状态。
-        hovered = bool(option.state & QStyle.State_MouseOver)  # 鼠标悬停给出轻量反馈。
-        painter.setPen(QPen(QColor('#9eb8df' if selected else '#eceef1'), 1))  # 普通行使用细分隔线，选中时才强调蓝色。
-        painter.setBrush(QColor('#e9f0fb' if selected else '#f2f4f7' if hovered else '#ffffff'))  # 视频条目保持普通列表的状态反馈。
-        painter.drawRoundedRect(card, 3, 3)  # 移除独立卡片感的大圆角。
-        area = QRect(option.rect.left() + 6, option.rect.top() + 8, 180, 120)  # 实际显示尺寸固定为 180×120，不用小图标替代。
-        painter.save()  # 缩略图圆角裁切不会影响右侧文字。
-        clip = QPainterPath()  # 创建仅作用于缩略图的圆角路径。
-        clip.addRoundedRect(area, 2, 2)  # 保持 180×120 画布，只处理细微边角。
-        painter.setClipPath(clip)  # 将视频像素限制在图片卡片内。
-        painter.fillRect(area, QColor('#151b25'))  # 加载和补边区域使用统一深色画布。
-        image = self.thumbnails.request(vid)  # 只为正在绘制的可见视频行排队。
-        if image is not None:  # 已有实际视频帧时立即显示。
-            painter.drawPixmap(area, image)  # 将 240×160 缓存等比例显示为 180×120。
-        else:  # 加载或失败时给出清晰状态。
-            painter.setPen(QColor('#dce2ec'))  # 使用深色背景上的可读文字。
-            painter.drawText(area, Qt.AlignCenter, '缩略图不可用' if vid in self.thumbnails.errors else '缩略图加载中…')  # 不用播放小图标冒充缩略图。
-        painter.restore()  # 结束图片区域裁切。
-        label = QRect(area.right() + 10, option.rect.top() + 12, max(40, option.rect.right() - area.right() - 16), 108)  # 在图片右侧显示文件名和列表信息。
-        painter.setPen(QColor('#245ba8' if selected else '#414852'))  # 文件名使用中性深灰，选中时再强调蓝色。
-        painter.drawText(label, Qt.AlignLeft | Qt.AlignVCenter | Qt.TextWordWrap, str(index.data(Qt.DisplayRole)))  # 长文件名换行显示而不压缩图片。
-        painter.restore()  # 还原绘制状态。
+    def sizeHint(self, option, index):
+        return QSize(300, THUMB_ROW) if index.data(Qt.UserRole) else QSize(180, 32)
+
+    def paint(self, painter, option, index):
+        vid = index.data(Qt.UserRole)
+        if not vid:
+            super().paint(painter, option, index)
+            return
+        from theme import theme_tokens
+        colors = theme_tokens(self.window)
+        selected = bool(option.state & QStyle.State_Selected)
+        hovered = bool(option.state & QStyle.State_MouseOver)
+        playing = self.window.current == vid
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing)
+        card = option.rect.adjusted(1, 2, -2, -2)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor(colors['selected'] if selected else colors['hover'] if hovered else colors['library_bg']))
+        painter.drawRoundedRect(card, 6, 6)
+        if playing:
+            painter.setBrush(QColor(colors['accent']))
+            painter.drawRoundedRect(QRectF(card.left(), card.top() + 12, 3, card.height() - 24), 1.5, 1.5)
+        area = QRect(option.rect.left() + 10, option.rect.top() + 8, THUMB_VIEW[0], THUMB_VIEW[1])
+        painter.save()
+        clip = QPainterPath()
+        clip.addRoundedRect(area, THUMB_RADIUS, THUMB_RADIUS)
+        painter.setClipPath(clip)
+        painter.fillRect(area, QColor(colors['thumb']))
+        image = self.thumbnails.request(vid)
+        if image is not None:
+            painter.drawPixmap(area, image)
+        elif vid in self.thumbnails.errors:
+            painter.setPen(QColor(colors['text_dim']))
+            painter.drawText(area, Qt.AlignCenter, '—')
+        else:
+            phase = (time.monotonic() % 1.1) / 1.1
+            alpha = int(18 + 20 * (1 - abs(phase * 2 - 1)))
+            painter.fillRect(area.adjusted(10, 10, -10, -10), QColor(255, 255, 255, alpha))
+        painter.restore()
+        if playing:
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor(colors['accent']))
+            painter.drawEllipse(QRectF(area.right() - 13, area.top() + 7, 6, 6))
+        cache = self.window.video_details
+        if vid not in cache:
+            row = self.window.store.video(vid)
+            cache[vid] = dict(row) if row else {}
+            while len(cache) > 256:
+                cache.popitem(last=False)
+        row = cache[vid]
+        name = str(index.data(Qt.DisplayRole))
+        text_area = QRect(area.right() + 12, area.top() + 5, max(0, option.rect.right() - area.right() - 18), 42)
+        painter.setFont(option.font)
+        painter.setPen(QColor(colors['text_strong'] if selected or playing else colors['text']))
+        text_layout = QTextLayout(name, option.font)
+        wrapping = QTextOption()
+        wrapping.setWrapMode(QTextOption.WrapAtWordBoundaryOrAnywhere)
+        text_layout.setTextOption(wrapping)
+        text_layout.beginLayout()
+        first = text_layout.createLine()
+        if first.isValid():
+            first.setLineWidth(text_area.width())
+            start_second = first.textStart() + first.textLength()
+        else:
+            start_second = len(name)
+        text_layout.endLayout()
+        if first.isValid():
+            first.draw(painter, QPointF(text_area.left(), text_area.top()))
+        if start_second < len(name):
+            second = option.fontMetrics.elidedText(name[start_second:], Qt.ElideRight, text_area.width())
+            painter.drawText(text_area.adjusted(0, option.fontMetrics.height() + 2, 0, 0), Qt.AlignLeft | Qt.AlignTop, second)
+        details = []
+        if row.get('position', 0) > 0:
+            details.append(format_time(row['position']))
+        if row.get('score') is not None:
+            details.append(f"{row['score']} 分")
+        if row.get('star'):
+            details.append('★')
+        if details:
+            painter.setPen(QColor(colors['text_dim']))
+            small = QFont(option.font)
+            small.setPixelSize(12)
+            painter.setFont(small)
+            painter.drawText(QRect(text_area.left(), area.bottom() - 22, text_area.width(), 20), Qt.AlignLeft | Qt.AlignVCenter, ' · '.join(details))
+        painter.restore()
 
 class TreeModel(QAbstractItemModel):  # 按需创建树索引，避免大量控件卡住界面。
     def __init__(self, snapshot):  # 接收已完成的异步扫描快照。
@@ -203,7 +265,9 @@ def format_time(ms):  # 将播放时间格式化为可读文本。
     seconds = max(0, ms) // 1000  # 未知时长显示零。
     return f'{seconds // 3600:02}:{seconds // 60 % 60:02}:{seconds % 60:02}'  # 支持超过一小时的视频。
 
-class Window(QMainWindow):  # 主界面和播放协调层。
+from window_chrome import ChromeWindow
+
+class Window(ChromeWindow):  # 主界面和播放协调层。
     def __init__(self, data_dir=None):  # 测试可使用隔离数据目录。
         super().__init__()  # 创建主窗口。
         self.store = Store(data_dir or BASE / 'data')  # 元数据不依赖开发环境路径。
@@ -216,10 +280,12 @@ class Window(QMainWindow):  # 主界面和播放协调层。
         self.file_task_thumbnail_pause = False  # 文件批处理期间阻止新解码器重新占用入口。
         self.thumbnail_guard, self.thumbnail_processes = threading.RLock(), {}  # 跟踪并释放目标视频的后台解码占用。
         self.deleting_ids, self.deleted_ids = set(), set()  # 阻止删除过程中及完成后的旧缩略图请求。
+        self.video_details = OrderedDict()
         self.thumbnails = ThumbnailCache(self)  # 目录树、历史和收藏统一使用异步缩略图服务。
         self.browsing, self.context, self.location, self.current = None, None, None, None  # 浏览快照与播放快照严格分离。
         self.scan_cancel, self.scan_serial, self.jobs, self.busy = threading.Event(), 0, [], False  # 管理取消和后台任务。
         self.navigation_cancel = threading.Event()  # 同级目录延迟扫描也支持取消。
+        self._pending_seek = None
         self.resume, self.resume_paused, self.last_save, self.ended = None, False, 0, False  # 维护安全重载和播放结束状态。
         self.instance = vlc.Instance('--no-video-title-show', '--no-metadata-network-access', '--no-snapshot-preview')  # 禁用网络元数据请求和视频标题浮层。
         self.player = self.instance.media_player_new()  # 创建独立播放器。
@@ -227,7 +293,7 @@ class Window(QMainWindow):  # 主界面和播放协调层。
         self.player.video_set_mouse_input(False)  # 不让内核抢占全屏与鼠标交互。
         self.setWindowTitle('MoPlayer · 本地视频与分类')  # 设置可识别的窗口标题。
         self.resize(1440, 920)  # 为品牌导航、双层控制和大缩略图保留舒适留白。
-        self.setMinimumSize(1120, 760)  # 避免窗口过小造成导航和分类按钮重叠。
+        self.setMinimumSize(900, 580)  # 避免窗口过小造成导航和分类按钮重叠。
         from ui import build_interface  # 按独立视觉模块构建蓝色卡片布局。
         build_interface(self, DropTree, VideoDelegate, BUNDLE)  # 保留所有既有控件变量和业务回调。
         self.setWindowIcon(QIcon(str(BUNDLE / 'assets/yunli.ico')))  # 窗口与任务栏使用同一云璃 Q 版图标。
@@ -250,7 +316,8 @@ class Window(QMainWindow):  # 主界面和播放协调层。
         QThreadPool.globalInstance().start(job)  # 避免阻塞主事件循环。
 
     def message(self, text):  # 提供短暂、非打断式反馈。
-        self.statusBar().showMessage(text, 12000)  # 保留足够阅读时间。
+        # Routine feedback stays in the log; errors still use fail().
+        self.statusBar().hide()  # 保留足够阅读时间。
         logging.info(text)  # 同时记录可追踪日志。
 
     def fail(self, error):  # 明确报告失败而不显示成功。
@@ -298,7 +365,7 @@ class Window(QMainWindow):  # 主界面和播放协调层。
                 return  # 丢弃过期结果。
             self.cancel_button.setEnabled(False)  # 当前扫描结束。
             if error:  # 取消或访问错误不清空旧浏览树。
-                self.message(str(error))  # 显示扫描失败原因。
+                (self.message if isinstance(error, InterruptedError) else self.fail)(str(error))
                 return  # 保持既有播放器状态。
             self.browsing, errors = result  # 只替换浏览快照。
             self.tree.setModel(TreeModel(self.browsing))  # 按需显示新目录树。
@@ -330,6 +397,7 @@ class Window(QMainWindow):  # 主界面和播放协调层。
                 self.store.progress(self.current, position)  # 更新稳定 ID 对应的进度。
 
     def start(self, context, location):  # 加载一个逻辑播放位置。
+        self.playback_options.flush_pending()
         if self.busy:  # 防止归档和换片同时操作文件。
             self.message('归档处理中，完成后可继续切换。')  # 显示暂时等待状态。
             return  # 不改变已有播放器。
@@ -348,6 +416,9 @@ class Window(QMainWindow):  # 主界面和播放协调层。
         self.refresh_title()  # 更新文件名、标签和评分。
 
     def play_path(self, path, position, paused):  # 统一普通加载和归档后重载。
+        self._pending_seek = None
+        self.seekbar.hold(0, 0)
+        self.playback_options.dismiss()
         self.player.stop()  # 释放旧媒体及文件句柄。
         self.player_empty.hide()  # 播放开始后移除空状态文案，避免遮住真实视频。
         media = self.instance.media_new(str(path))  # 使用真实本地路径创建媒体。
@@ -355,34 +426,122 @@ class Window(QMainWindow):  # 主界面和播放协调层。
         media.release()  # 播放器保留自己的媒体引用。
         self.resume, self.resume_paused, self.ended = max(0, position), paused, False  # 等待内核加载后恢复精确进度。
         self.player.play()  # 启动解码读取。
+        self.sync_play_button()
 
-    def refresh_title(self):  # 从数据库反映真实已提交状态。
-        if self.current:  # 未选中视频时不读取其他记录。
-            video = self.store.video(self.current)  # 读取当前稳定 ID 元数据。
-            score = '未评分' if video['score'] is None else f'{video["score"]}分'  # 区分零分与未评分。
-            self.now.setText(f'{video["name"]}  ·  {score}  ·  {"、".join(json.loads(video["tags"])) or "无标签"}  {"★ 已收藏" if video["star"] else ""}')  # 显示已落盘分类。
+    def sync_play_button(self, state=None, force=False):
+        """The transport button has one rendering path, driven by VLC state."""
+        from ui import icon
+        if state is None:
+            state = self.player.get_state() if self.current else vlc.State.NothingSpecial
+        running = bool(self.current) and state in (vlc.State.Opening, vlc.State.Buffering, vlc.State.Playing)
+        symbol = 'pause' if running else 'play'
+        action = '暂停' if running else '重新播放' if state == vlc.State.Ended and self.current else '播放'
+        tooltip = action + ' · 空格'
+        self.play_button.setEnabled(bool(self.current) and not self.busy)
+        if (force or self.play_button.property('iconName') != symbol or
+                self.play_button.toolTip() != tooltip):
+            self.play_button.setProperty('iconName', symbol)
+            self.play_button.setIcon(icon(symbol, '#ffffff'))
+            self.play_button.setToolTip(tooltip)
+            self.play_button.setAccessibleName(action)
+
+    def refresh_title(self):
+        from ui import icon
+        from theme import theme_tokens
+        video = self.store.video(self.current) if self.current else None
+        self.player_header.setVisible(bool(video))
+        active = bool(video) and not self.busy
+        self.classify_bar.setVisible(bool(video))
+        for button in self.transport_buttons + self.classify_buttons:
+            button.setEnabled(active)
+        self.seekbar.setEnabled(active)
+        self.favorite_button.setChecked(bool(video and video['star']))
+        symbol = 'starFilled' if video and video['star'] else 'star'
+        self.favorite_button.setProperty('iconName', symbol)
+        self.favorite_button.setIcon(icon(symbol, theme_tokens(self)['accent' if symbol == 'starFilled' else 'text_mid']))
+        if video:
+            self.now.setText(video['name'])
+            details = ([f"{video['score']} 分"] if video['score'] is not None else []) + json.loads(video['tags'])
+            self.metadata.setText(' · '.join(details))
+            self.metadata.setVisible(bool(details))
+            self.video_details.pop(self.current, None)
+        self.tree.viewport().update()
+        self.show_sidebar(self.sidebar_mode)
+
+    def show_sidebar(self, mode):
+        self.sidebar_mode = mode
+        for key, tab in self.sidebar_tabs.items():
+            tab.setChecked(key == mode)
+        self.library_stack.setCurrentIndex(0 if mode == 'files' else 1)
+        self.folder_label.setVisible(mode == 'files')
+        self.file_count.setVisible(mode == 'files')
+        self.remove_favorite.setVisible(mode == 'stars')
+        if mode == 'files':
+            return
+        scroll = self.sidebar_list.verticalScrollBar().value()
+        current = self.sidebar_list.currentItem()
+        selected = current.data(Qt.UserRole) if current else None
+        self.sidebar_list.clear()
+        condition = 'star=1' if mode == 'stars' else 'played>0'
+        for row in self.store.query('SELECT * FROM videos WHERE ' + condition + ' ORDER BY played DESC'):
+            item = QListWidgetItem(row['name'], self.sidebar_list)
+            item.setData(Qt.UserRole, row['id'])
+            item.setToolTip(row['name'])
+            if row['id'] == selected:
+                self.sidebar_list.setCurrentItem(item)
+        self.sidebar_list.verticalScrollBar().setValue(scroll)
+
+    def open_sidebar_item(self, item):
+        if self.busy:
+            return
+        vid = item.data(Qt.UserRole)
+        try:
+            self.load_folder(str(self.store.resolve(vid).parent), vid)
+        except OSError as error:
+            self.fail(error)
+
+    def remove_sidebar_favorite(self):
+        item = self.sidebar_list.currentItem()
+        if item:
+            vid = item.data(Qt.UserRole)
+            self.store.execute('UPDATE videos SET star=0 WHERE id=?', (vid,))
+            self.video_details.pop(vid, None)
+            self.refresh_title()
+
+    def toggle_sidebar(self):
+        if self.video_fullscreen.active:
+            return
+        if self.sidebar.isHidden():
+            self.sidebar.show()
+            self.splitter.setSizes(getattr(self, '_sidebar_sizes', [380, 1020]))
+        else:
+            self._sidebar_sizes = self.splitter.sizes()
+            self.sidebar.hide()
 
     def tick(self):  # 主线程刷新播放状态和定期保存。
+        state = self.player.get_state() if self.current else vlc.State.NothingSpecial
+        self.sync_play_button(state)
         if not self.current or self.busy:  # 空闲或归档释放句柄时不更新进度。
+            self.seekbar.freeze()
             return  # 避免零进度覆盖数据库。
-        state, length, position = self.player.get_state(), self.player.get_length(), self.player.get_time()  # 读取内核实际状态。
-        from ui import icon  # 复用统一蓝色界面图标。
+        length, position = self.player.get_length(), self.player.get_time()
         playing = state == vlc.State.Playing  # 根据真实播放状态更新可见控件。
-        if getattr(self, '_visible_play_state', None) != playing:  # 仅状态改变时重绘图标。
-            self.play_button.setIcon(icon('pause' if playing else 'play', '#ffffff'))  # 播放时显示暂停，暂停时显示播放。
-            self._visible_play_state = playing  # 缓存最近显示状态。
         self.media_badge.setText('正在播放' if playing else '已暂停' if state == vlc.State.Paused else '播放结束' if state == vlc.State.Ended else '正在加载')  # 状态徽标反映实际播放器状态。
         if self.resume is not None and state == vlc.State.Playing and length > 0:  # 等待时长和解码准备就绪。
-            self.player.set_time(min(self.resume, max(0, length - 1)))  # 恢复进度并夹紧有效范围。
+            self.set_playback_position(min(self.resume, max(0, length - 1)), length)
             if self.resume_paused:  # 评分和标签归档前如果暂停则继续暂停。
                 self.player.set_pause(1)  # 保留原播放状态。
             else:  # 目标继续播放时无需等待暂停确认。
                 self.resume = None  # 普通续播只恢复一次位置。
         elif self.resume is not None and self.resume_paused and state == vlc.State.Paused:  # 暂停请求必须等内核实际确认后才算重载完成。
             self.resume = None  # 连续评分或分类不再将暂停中的短暂播放状态误判为用户意图。
-        self.time_label.setText(f'{format_time(position)} / {format_time(length)}')  # 同时显示当前和总时长。
-        if not self.seekbar.isSliderDown():  # 用户拖动时不抢回滑块位置。
-            self.seekbar.setValue(int(max(0, position) / length * 10000) if length > 0 else 0)  # 同步实际播放比例。
+        if not self.seekbar.isSliderDown() and getattr(self, '_pending_seek', None) is None:
+            self.time_label.setText(f'{format_time(position)} / {format_time(length)}')  # 同时显示当前和总时长。
+        pending = getattr(self, '_pending_seek', None)
+        if pending is not None and (abs(position - pending[0]) < 1000 or time.monotonic() > pending[1]):
+            self._pending_seek = None
+        if not self.seekbar.isSliderDown() and self._pending_seek is None:  # 用户拖动时不抢回滑块位置。
+            self.seekbar.synchronize(position, length, playing, self.playback_options.rate)
         if time.monotonic() - self.last_save > 5:  # 每五秒保存一次进度。
             self.save()  # 异常退出最多损失最近一个保存周期。
             self.last_save = time.monotonic()  # 更新周期基准。
@@ -392,7 +551,7 @@ class Window(QMainWindow):  # 主界面和播放协调层。
             self.advance(1, ended=True)  # 自动连播与 X 使用相同规则。
         elif state == vlc.State.Error and not self.ended:  # 处理不能解码的候选文件。
             self.ended = True  # 错误只提示一次。
-            self.message('无法解码或读取此视频，请检查文件权限、完整性和编码。')  # 扩展名不代表实际兼容。
+            self.fail('无法解码或读取此视频，请检查文件权限、完整性和编码。')
 
     def advance(self, direction, ended=False):  # 按当前播放快照切换。
         if not self.current or self.busy:  # 未播放时快捷键不作用于其他记录。
@@ -414,7 +573,7 @@ class Window(QMainWindow):  # 主界面和播放协调层。
                 if self.busy or cancel.is_set() or self.context is not context or self.location != location or self.current != vid:  # 删除或主动换片后忽略旧请求。
                     return  # 不让晚到结果抢走新播放上下文。
                 if error:  # 扫描失败保持当前视频。
-                    self.message(str(error))  # 明确报告失败原因。
+                    (self.message if isinstance(error, InterruptedError) else self.fail)(str(error))
                 elif next_location:  # 目标目录内存在可播放候选。
                     if ended:  # 自然结束时保留已清零的历史进度。
                         self.resume = 0  # 跳过旧媒体结束时间保存。
@@ -436,14 +595,27 @@ class Window(QMainWindow):  # 主界面和播放协调层。
                 self.play_path(self.store.resolve(self.current), 0, False)  # 重播仍使用当前身份。
             else:  # 正常播放和暂停互相切换。
                 self.player.pause()  # 由 VLC 保留当前时间。
+                self.sync_play_button()
 
     def seek(self, offset):  # 方向键和 A/D 共用带边界保护的毫秒跳转。
         if self.current and not self.busy and self.player.get_length() > 0:  # 只在已知有效时长时跳转。
-            self.player.set_time(min(max(0, self.player.get_time() + offset), self.player.get_length()))  # 严格限制到零和总时长之间。
+            length = self.player.get_length()
+            self.set_playback_position(min(max(0, self.player.get_time() + offset), length), length)
 
-    def seek_slider(self):  # 将进度比例转换成媒体时间。
-        if self.current and not self.busy and self.player.get_length() > 0:  # 防止无媒体时改变其他进度。
-            self.player.set_time(int(self.seekbar.value() / 10000 * self.player.get_length()))  # 比例已被滑块范围限制。
+    def set_playback_position(self, target, length):
+        self._pending_seek = (target, time.monotonic() + 2)
+        self.seekbar.hold(target, length)
+        self.player.set_time(target)
+        self.preview_seek(self.seekbar.value())
+
+    def preview_seek(self, value):
+        length = self.player.get_length()
+        self.time_label.setText(f'{format_time(int(value / 10000 * length))} / {format_time(length)}')
+
+    def seek_slider(self):
+        if self.current and not self.busy and self.player.get_length() > 0:
+            target = int(self.seekbar.value() / 10000 * self.player.get_length())
+            self.set_playback_position(target, self.player.get_length())
 
     def enter_fullscreen(self):  # Enter 和按钮切换仅视频全屏。
         self.video_fullscreen.toggle()  # 目录和导航隐藏，鼠标移动时显示控制栏。
@@ -452,11 +624,21 @@ class Window(QMainWindow):  # 主界面和播放协调层。
         self.video_fullscreen.exit()  # 非全屏状态下不改变用户窗口布局。
 
     def eventFilter(self, obj, event):  # 在应用级统一处理快捷键优先级。
-        if event.type() != QEvent.KeyPress:  # 其余事件交给 Qt。
-            return False  # 不干扰绘制和鼠标。
-        if QApplication.activeModalWidget() or QApplication.activePopupWidget():  # 弹窗和下拉菜单拥有最高优先级。
-            return False  # Esc、Enter 和输入由弹窗自己处理。
-        focus = QApplication.focusWidget()  # 获取真正接收输入的控件。
+        if self.chrome_event_filter(obj, event):
+            return True
+        if event.type() != QEvent.KeyPress:
+            return False
+        if QApplication.activeModalWidget() or QApplication.activePopupWidget():
+            return False  # 菜单与模态窗口先处理 Esc 和方向键，不关闭其所属浮层。
+        if hasattr(self, 'playback_options'):
+            if event.key() == Qt.Key_Escape and self.playback_options.popup_visible():
+                self.playback_options.dismiss()
+                return True
+            if self.playback_options.rating_popup.handle_key(event):
+                return True
+        # Direct Qt dispatch and IME events can target the edit before an owned
+        # tool window has completed activation. Respect that receiver as well.
+        focus = obj if isinstance(obj, (QLineEdit, QTextEdit, QPlainTextEdit, QAbstractSpinBox, QComboBox)) else QApplication.focusWidget()
         if isinstance(focus, (QLineEdit, QTextEdit, QPlainTextEdit, QAbstractSpinBox)) or isinstance(focus, QComboBox) and focus.isEditable():  # 文本编辑时所有普通键保持输入用途。
             return False  # 不触发播放、分类或跳转。
         if event.modifiers() == Qt.ControlModifier and event.key() == Qt.Key_D:  # 仅将精确的 Ctrl+D 组合用于视频删除。
@@ -500,17 +682,17 @@ class Window(QMainWindow):  # 主界面和播放协调层。
         return model.createIndex(row, 0, model.nodes.setdefault(node, node))  # 支持恢复嵌套展开状态。
 
     def clear_player(self):  # 删除完成后解除已不存在的视频身份。
-        self.current, self.resume, self.ended = None, None, True  # 定时器不再访问已删除的数据库行。
+        self.current, self.resume, self.ended = None, None, True
+        self._pending_seek = None
+        self.refresh_title()  # 定时器不再访问已删除的数据库行。
         self.player.stop()  # 确保没有旧媒体读取。
         self.player.set_media(None)  # 释放 VLC 媒体引用及路径。
         self.player_empty.show()  # 恢复播放器空状态。
         self.now.setText('播放器')  # 不显示已删除视频的标题。
         self.media_badge.setText('等待播放')  # 没有后续视频时保持停止。
-        self.seekbar.setValue(0)  # 清空旧进度。
+        self.seekbar.hold(0, 0)
         self.time_label.setText('00:00:00 / 00:00:00')  # 清空已删除视频的时长。
-        from ui import icon  # 复用现有按钮图标。
-        self.play_button.setIcon(icon('play', '#ffffff'))  # 空播放器显示播放图标。
-        self._visible_play_state = False  # 保持下次状态刷新一致。
+        self.sync_play_button()
 
     def after_deleted_current(self, context, location):  # 使用删除前的播放上下文自动寻找下一条。
         self.clear_player()  # 在异步扫描前清除不存在的当前身份。
@@ -522,7 +704,7 @@ class Window(QMainWindow):  # 主界面和播放协调层。
             self.busy = False  # 恢复常规操作。
             self.cancel_button.setEnabled(False)  # 目标扫描结束后恢复按钮状态。
             if error:  # 无权限等失败不伪装成正常连播。
-                self.message(f'删除完成，查找下一个视频失败：{error}')  # 数据已删除的真实状态保持可见。
+                self.fail(f'删除完成，查找下一个视频失败：{error}')
             elif target:  # 与 X 相同的目录边界内存在下一条。
                 self.start(context, target)  # 自动播放，仍保留原来的目录顺序。
                 self.message('已移入回收站，正在播放下一个视频。')  # 简短反馈成功和切换结果。
@@ -539,18 +721,47 @@ class Window(QMainWindow):  # 主界面和播放协调层。
         for process in processes:  # 等待操作系统关闭进程文件句柄。
             process.wait(timeout=5)  # 等待在工作线程执行，不冻结界面。
 
-    def delete_video(self):  # Ctrl+D 优先删除明确选中的视频，否则删除当前播放视频。
+    def delete_video(self, _target=None, _context=None):  # Ctrl+D 优先删除明确选中的视频，否则删除当前播放视频。
+        self.playback_options.flush_pending()
         if self.busy:  # 串行执行文件任务，防止重复回收。
             self.message('文件任务正在处理，请稍候。')  # 明确当前尚未执行新删除。
             return  # 不累计危险快捷键请求。
-        selected = self.tree.selectionModel().selectedIndexes() if self.tree.selectionModel() and not self.video_fullscreen.active else []  # 视频全屏不使用隐藏的旧选择。
-        vid = next((index.data(Qt.UserRole) for index in selected if index.data(Qt.UserRole)), None) or self.current  # 按稳定身份选择唯一目标。
+        selected = self.tree.selectionModel().selectedIndexes() if self.tree.selectionModel() and self.sidebar_mode == 'files' and self.sidebar.isVisible() and not self.video_fullscreen.active else []  # 视频全屏不使用隐藏的旧选择。
+        sidebar_item = self.sidebar_list.currentItem() if self.sidebar_mode != 'files' and self.sidebar.isVisible() and not self.video_fullscreen.active else None
+        vid = _target or (sidebar_item.data(Qt.UserRole) if sidebar_item else None) or next((index.data(Qt.UserRole) for index in selected if index.data(Qt.UserRole)), None) or self.current  # 按稳定身份选择唯一目标。
         if not vid:  # 无选择且无播放对象时不误删历史视频。
             self.message('请先选中或播放一个视频。')  # 给出操作提示。
             return  # 不创建删除任务。
         playing = vid == self.current  # 删除其他选中项时保留当前播放。
         context, location = self.context, self.location  # 固定删除前的原播放顺序。
-        if not playing:  # 删除未播放的选中视频也从其目录顺序继续。
+        if not playing and sidebar_item is not None and _context is None:
+            # Resolve the sidebar's stable ID without borrowing a hidden tree
+            # selection or playing the video before the requested deletion.
+            try:
+                folder = self.store.resolve(vid).parent
+            except OSError as error:
+                self.fail(error)
+                return
+            self.busy = True
+            cancel = threading.Event()
+            self.navigation_cancel = cancel
+            def ready(result, error):
+                self.busy = False
+                if error:
+                    self.fail(error)
+                    return
+                snapshot, _ = result
+                location = next(((directory, number) for directory, (_, files) in snapshot.folders.items()
+                                 for number, (entry_id, _) in enumerate(files) if entry_id == vid), None)
+                if location is None:
+                    self.fail('所选视频已不可访问。')
+                    return
+                self.delete_video(_target=vid, _context=(snapshot, location))
+            self.work(lambda: scan(folder, self.store, cancel), ready)
+            return
+        if _context is not None:
+            context, location = _context
+        elif not playing:  # 删除未播放的选中视频也从其目录顺序继续。
             selected_index = next(index for index in selected if index.data(Qt.UserRole) == vid)  # 查找本次明确选择的模型节点。
             _, folder, number = selected_index.internalPointer()  # 读取浏览快照的原始视频位置。
             context, location = self.browsing, (folder, number)  # 使用选中视频所在的上下文寻找下一条。
@@ -579,7 +790,7 @@ class Window(QMainWindow):  # 主界面和播放协调层。
                         self.play_path(self.store.resolve(vid), position, paused)  # 删除失败保留原进度。
                     except OSError:  # 所有文件已回收但数据库尚未提交时无法重载。
                         self.clear_player()  # 保留任务日志供恢复，不访问失效身份。
-                self.message(f'删除未完成：{error}；可在任务列表中重试。')  # 不因失败自动播放下一条。
+                self.fail(f'删除未完成：{error}；可在任务列表中重试。')
                 return  # 元数据继续由持久日志保护。
             self.refresh_deleted({vid})  # 成功后同步全部可见入口。
             if not playing:  # 切换到选中视频的下一条之前保存原播放器进度。
@@ -587,37 +798,47 @@ class Window(QMainWindow):  # 主界面和播放协调层。
             self.after_deleted_current(context, location)  # 所有成功删除都按目标视频的原目录规则继续播放。
         self.work(remove, completed)  # 回收站和数据库操作不阻塞主线程。
 
-    def favorite(self):  # W 只添加收藏而不切换取消。
-        if self.current and not self.busy:  # 无当前视频不得误改记录。
-            already = self.store.video(self.current)['star']  # 判断是否已收藏。
-            self.store.execute('UPDATE videos SET star=1 WHERE id=?', (self.current,))  # 幂等设置统一收藏标记。
-            self.refresh_title()  # 更新收藏状态。
-            self.message('该视频已在收藏列表中。' if already else '已收藏。')  # 重复按键有简短反馈。
+    def favorite(self, toggle=False):
+        if self.current and not self.busy:
+            star = self.store.video(self.current)['star']
+            value = int(not star) if toggle else 1
+            self.store.execute('UPDATE videos SET star=? WHERE id=?', (value, self.current))
+            self.refresh_title()
 
-    def tags_dialog(self):  # Q 打开可搜索、拖动归类和确认的标签编辑器。
-        if not self.current or self.busy:  # 不存在当前视频时不打开分类界面。
-            return  # 避免误作用于历史记录。
-        from tag_editor import TagEditor  # 按需加载层级标签界面。
-        vid = self.current  # 即使自然播放结束换片，也不改变弹窗绑定身份。
-        dialog = TagEditor(self.store, vid, self)  # 打开期间保留当前播放状态。
-        if dialog.exec() == QDialog.Accepted:  # 所有勾选和结构变化集中确认。
-            self.apply_tags(vid, dialog.chosen(), list(dialog.schema.values()))  # 成功迁移全部相关视频后再要求评分。
+    def tags_dialog(self):
+        if self.current and not self.busy:
+            panel = self.playback_options.tags_popup
+            panel.dismiss() if panel.isVisible() else panel.open_above()
 
-    def rating_dialog(self, vid=None):  # R 或标签完成回调打开十按钮整数评分界面。
-        vid = vid or self.current  # 自动评分绑定原标签操作视频，不追随自然切换。
-        if not vid or self.busy or not self.store.query('SELECT id FROM videos WHERE id=?', (vid,)):  # 不打开不存在或正在迁移的记录。
-            return  # 不操作其他视频。
-        from score_editor import ScoreEditor  # 使用直接点击的十个主评分按钮。
-        dialog = ScoreEditor(self.store.video(vid), self)  # 明确显示需要评价的视频名。
-        if dialog.exec() == QDialog.Accepted:  # 仅确认后持久化。
-            video = self.store.video(vid)  # 获取当前归档状态。
-            if video['archived']:  # 已归档评分改变必须移动全部标签入口。
-                self.archive(vid, dialog.value, json.loads(video['tags']))  # 按全局层级同步路径及大类（小类）文件名。
-            else:  # 未归档只保存评分等待首次 Q。
-                self.store.execute('UPDATE videos SET score=? WHERE id=?', (dialog.value, vid))  # 保留未评分与零分的独立状态。
-                self.refresh_title()  # 立即显示新评分。
+    def rating_dialog(self, vid=None):
+        vid = vid or self.current
+        if not vid or self.busy:
+            return
+        if vid == self.current:
+            panel = self.playback_options.rating_popup
+            panel.dismiss() if panel.isVisible() else panel.open_above()
+            return
+        from score_editor import ScoreEditor
+        dialog = ScoreEditor(self.store.video(vid), self)
+        if dialog.exec() == QDialog.Accepted:
+            self.set_rating(vid, dialog.value)
+
+    def set_rating(self, vid, score):
+        if self.busy or not self.store.query('SELECT id FROM videos WHERE id=?', (vid,)):
+            return
+        video = self.store.video(vid)
+        if video['score'] == score:
+            return
+        if video['archived']:
+            self.archive(vid, score, json.loads(video['tags']))
+        else:
+            self.store.execute('UPDATE videos SET score=? WHERE id=?', (score, vid))
+            self.video_details.pop(vid, None)
+            self.refresh_title()
 
     def refresh_names(self, vids):  # 批次完成或部分失败后显示数据库实际提交的名称。
+        for vid in vids:
+            self.video_details.pop(vid, None)
         names = {vid: self.store.video(vid)['name'] for vid in vids if self.store.query('SELECT id FROM videos WHERE id=?', (vid,))}  # 不访问已删除身份。
         for snapshot in (self.browsing, self.context):  # 两套快照都只更新文字，不重排原序号。
             if snapshot:  # 启动恢复时可能没有目录。
@@ -628,9 +849,9 @@ class Window(QMainWindow):  # 主界面和播放协调层。
                 snapshot.visible_cache.clear()  # 不复用旧显示名称缓存。
         self.tree.viewport().update()  # 只刷新可见区域，不折叠目录。
 
-    def apply_tags(self, vid, tags, schema):  # 全部相关视频完成层级迁移后再弹出评分。
+    def apply_tags(self, vid, tags, schema, prompt_score=True):  # 全部相关视频完成层级迁移后再弹出评分。
         if not self.ensure_storage():  # 首次归档前必须有用户明确选择的位置。
-            return  # 不创建文件任务或移动来源视频。
+            return False  # 不创建文件任务或移动来源视频。
         self.save()  # 释放当前播放文件前保存进度。
         paused = self.resume_paused if self.resume is not None else self.player.get_state() != vlc.State.Playing  # 保留连续重载中的目标暂停状态。
         active = self.current  # 当前视频可能在标签弹窗期间自然切换。
@@ -662,7 +883,8 @@ class Window(QMainWindow):  # 主界面和播放协调层。
                 self.fail(f'{error}\n标签尚未全部应用，请在“更多 → 文件任务”恢复。')  # 明确提示批次实际状态。
             else:  # 全部相关视频均成功才弹出评分。
                 self.message(f'标签已应用，已同步 {len(affected)} 个视频。')  # 成功数量来自实际批次结果。
-                QTimer.singleShot(0, lambda: self.rating_dialog(vid))  # 自动弹窗仍绑定本次操作视频，而非可能换片后的当前视频。
+                if prompt_score:
+                    QTimer.singleShot(0, lambda: self.rating_dialog(vid))  # 自动弹窗仍绑定本次操作视频，而非可能换片后的当前视频。
         self.work(migrate, completed)  # 批次执行期间主界面保持响应。
 
     def archive(self, vid, score, tags):  # 安全释放文件后后台归档。
@@ -887,6 +1109,7 @@ class Window(QMainWindow):  # 主界面和播放协调层。
         self.work(install, completed)  # 网络、解压和 UAC 等待均不阻塞播放界面。
 
     def closeEvent(self, event):  # 正常退出保存进度并保护正在写入的任务。
+        self.playback_options.flush_pending()
         if getattr(self, 'thumbnail_setup_pending', False):  # 系统组件写入期间保持任务与回执完整。
             self.message('系统缩略图正在配置，请等待完成后退出。')  # 提示当前仍有明确任务。
             event.ignore()  # 不在后台提交期间关闭主进程。
@@ -900,6 +1123,8 @@ class Window(QMainWindow):  # 主界面和播放协调层。
         self.thumbnails.closing = True  # 停止接受新的可见行缩略图请求。
         self.save()  # 保存最后播放时间。
         self.timer.stop()  # 停止状态刷新。
+        self.seekbar.animation.stop()
+        self.playback_options.dismiss()
         self.video_fullscreen.exit()  # 关闭浮动控件并恢复其所有权后退出。
         self.player.stop()  # 释放视频文件句柄。
         QApplication.instance().removeEventFilter(self)  # 移除应用快捷键过滤器。
@@ -939,6 +1164,16 @@ def main():  # 程序统一启动入口。
         return 1  # 报告失败退出码。
 
 if __name__ == '__main__':  # 仅直接运行时启动应用。
+    if len(sys.argv) == 3 and sys.argv[1] == '--ui-refresh-test':
+        from verify_ui_refresh import run
+        try:
+            run(sys.argv[2])
+        except Exception:
+            import traceback
+            traceback.print_exc()
+            sys.exit(1)
+        else:
+            sys.exit(0)
     if len(sys.argv) == 3 and sys.argv[1] == '--storage-test':  # 只验证首次选择与设置中更改存储路径。
         from verify_storage import run  # 使用明确指定的隔离数据库和归档文件夹。
         run(sys.argv[2])  # 不打开真实用户数据库。

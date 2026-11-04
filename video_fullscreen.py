@@ -1,7 +1,25 @@
 import time  # 根据真实鼠标活动控制浮层自动隐藏。
-from PySide6.QtCore import QObject, Qt, QTimer, QPoint  # 在 Qt 主线程维护全屏状态。
-from PySide6.QtGui import QCursor  # 即使鼠标在 VLC 原生子窗口上也能检测移动。
-from PySide6.QtWidgets import QApplication, QFrame, QVBoxLayout, QSplitter  # 复用现有播放控件并显示独立浮层。
+from PySide6.QtCore import QObject, QTimer, QPoint, QRect, Qt, QEvent
+from PySide6.QtGui import QCursor
+from PySide6.QtWidgets import QApplication, QVBoxLayout, QSplitter, QPushButton, QSlider, QWidget, QFrame
+from floating_surface import FloatingSurface, owned_by, player_is_active, raise_surface
+
+
+STYLE = '''QFrame#fullscreenControls { background:transparent; border:none; }
+QFrame#fullscreenControls QWidget#playbackPanel { border:none; }
+QFrame#fullscreenControls QLabel { color:#e8edf5; }
+QFrame#fullscreenControls QLabel[role="timecode"] { color:#c4cee0; }
+QFrame#fullscreenControls QPushButton { background:transparent; border:1px solid transparent; border-radius:7px; color:#dde3ee; padding:5px 9px; }
+QFrame#fullscreenControls QPushButton:hover { background:rgba(255,255,255,34); border-color:rgba(255,255,255,46); }
+QFrame#fullscreenControls QPushButton:pressed { background:rgba(255,255,255,56); }
+QFrame#fullscreenControls QPushButton#playButton { background:#3b6fd4; border-color:#3b6fd4; padding:8px; }
+QFrame#fullscreenControls QPushButton#playButton:hover { background:#4a7ee0; border-color:#4a7ee0; }
+QFrame#fullscreenControls QPushButton#speedButton { padding:0; }
+QFrame#fullscreenControls QPushButton[role="action"]:checked { color:#9fc0ff; background:rgba(91,139,223,42); }
+QFrame#fullscreenControls QSlider::groove:horizontal { height:4px; border-radius:2px; background:rgba(255,255,255,52); }
+QFrame#fullscreenControls QSlider::sub-page:horizontal { background:#7ba7f0; border-radius:2px; }
+QFrame#fullscreenControls QSlider::handle:horizontal { width:12px; height:12px; margin:-4px 0; border-radius:6px; background:#ffffff; border:2px solid #7ba7f0; }
+QFrame#fullscreenControls QSlider::handle:horizontal:hover { background:#f2f6ff; border-color:#9dbcf5; }'''  # 深色浮层只影响全屏观看态，不改变普通界面。
 
 def widgets(item):  # 递归找到纯布局中的可隐藏控件。
     if item.widget():  # 独立容器隐藏后其子控件会一起隐藏。
@@ -9,19 +27,30 @@ def widgets(item):  # 递归找到纯布局中的可隐藏控件。
     layout = item.layout()  # 页面标题等内容使用嵌套布局。
     return [child for index in range(layout.count()) for child in widgets(layout.itemAt(index))] if layout else []  # 忽略伸缩空白。
 
-class VideoFullscreen(QObject):  # 保持原生视频句柄不变的全屏布局协调器。
+class VideoFullscreen(QObject):  # 保持视频句柄不变的全屏布局协调器。
     def __init__(self, window):  # 绑定当前播放器窗口。
         super().__init__(window)  # 生命周期随主窗口结束。
         self.window, self.active, self.hidden = window, False, []  # 与浏览和播放上下文完全独立。
-        self.overlay = QFrame(window, Qt.Tool | Qt.FramelessWindowHint)  # 独立原生工具窗可覆盖 VLC 视频子窗口。
+        self.overlay = FloatingSurface(window.canvas, radius=12,
+                                       background='#20252e', border='#3d4654')
+        self.overlay.hide()
         self.overlay.setObjectName('fullscreenControls')  # 为浮层提供单独样式。
-        self.overlay.setAttribute(Qt.WA_ShowWithoutActivating)  # 浮层显示不抢走快捷键焦点。
-        self.overlay.setStyleSheet('QFrame#fullscreenControls{background:#f7f8fa;border:1px solid #cfd6e0;border-radius:5px;}')  # 浮层沿用紧凑的工具栏边界。
+        self.overlay.setFocusPolicy(Qt.NoFocus)
+        self.overlay.setStyleSheet(STYLE)  # 深色浮层与视频画面形成对照。
+
         self.overlay_layout = QVBoxLayout(self.overlay)  # 浮层中复用同一套进度、音量和播放按钮。
-        self.overlay_layout.setContentsMargins(16, 12, 16, 10)  # 浮层只保留必要的点击留白。
-        self.timer = QTimer(self)  # 检测原生视频上的鼠标活动。
+        self.overlay_layout.setContentsMargins(18, 12, 18, 12)  # 留出圆角所需的内边距。
+        self.geometry_cache = QRect()  # 记录上一次浮层位置，避免每轮都触发布局。
+        self.timer = QTimer(self)  # 检测视频上的鼠标活动。
         self.timer.setInterval(100)  # 移动后最多约十分之一秒出现控制栏。
         self.timer.timeout.connect(self.poll)  # 全部界面操作留在 GUI 线程。
+        QApplication.instance().installEventFilter(self)
+
+    def eventFilter(self, watched, event):
+        if (self.active and event.type() == QEvent.MouseMove and
+                isinstance(watched, QWidget) and owned_by(watched, self.window)):
+            self.poll(event.globalPosition().toPoint())
+        return False
 
     def toggle(self):  # 按 Enter 或点击同一个按钮切换模式。
         self.exit() if self.active else self.enter()  # 避免嵌套全屏与重复保存状态。
@@ -30,6 +59,7 @@ class VideoFullscreen(QObject):  # 保持原生视频句柄不变的全屏布局
         if self.active:  # 已全屏时不覆盖原始布局快照。
             return  # 保持当前状态。
         window = self.window  # 简化主窗口访问。
+        window.playback_options.dismiss()
         self.geometry, self.window_state = window.saveGeometry(), window.windowState()  # 恢复普通或最大化窗口。
         self.root = window.canvas.layout()  # 保存最外层卡片布局。
         self.splitter = window.canvas.findChild(QSplitter)  # 复用既有可拖动分隔区域。
@@ -52,28 +82,64 @@ class VideoFullscreen(QObject):  # 保持原生视频句柄不变的全屏布局
             layout.setSpacing(0)  # 不保留隐藏分区之间的空隙。
         self.card.setStyleSheet('QFrame#playerCard{background:black;border:none;border-radius:0;}')  # 不让浅色圆角边框占据全屏画面。
         window.surface.setStyleSheet('QFrame#videoSurface{background:black;border:none;border-radius:0;}')  # 黑色边缘保持视频比例。
-        self.overlay_layout.addWidget(window.playback_panel)  # 只移动控制栏，VLC HWND 及解码状态保持不变。
-        window.fullscreen_button.setText('退出全屏')  # 全屏浮层提供明确退出入口。
+        self.overlay_layout.addWidget(window.playback_panel)  # 在同一主窗口内重排控制栏，视频上下文保持不变。
+        window.playback_panel.show()
+        from ui import icon
+        for control in window.playback_panel.findChildren(QPushButton):
+            if control is window.play_button:
+                continue
+            symbol = control.property('iconName')
+            if symbol:
+                control.setIcon(icon(symbol, '#cbd2dd'))
+        window.sync_play_button(force=True)
+        window.sidebar_toggle.hide()
+        window.fullscreen_button.setToolTip('退出全屏 · Esc')  # 全屏浮层提供明确退出入口。
         self.active = True  # 在窗口改变前发布全屏状态。
+        self.style_popovers()
         self.last_cursor, self.last_activity = QCursor.pos(), time.monotonic()  # 首次进入暂时显示控制栏。
+        self.geometry_cache = QRect()  # 全屏几何改变后必须重新定位。
         window.showFullScreen()  # 整个原生窗口承载视频，其他应用布局已隐藏。
         window.surface.setFocus()  # 快捷键继续作用于播放区域。
-        self.timer.start()  # 原生视频表面的鼠标活动也能被检测。
+        self.timer.start()  # 视频表面的鼠标活动也能被检测。
         QTimer.singleShot(0, self.poll)  # 等全屏几何稳定后定位底部浮层。
 
-    def poll(self):  # 更新控制栏位置和自动隐藏状态。
+    def poll(self, cursor=None):  # 鼠标事件立即响应，定时器只负责空闲回收。
         if not self.active:  # 退出后忽略延迟回调。
             return  # 不再次显示已关闭的浮层。
-        window, cursor = self.window, QCursor.pos()  # 读取真实系统指针位置。
-        if cursor != self.last_cursor:  # 仅真实移动延长显示时间。
-            self.last_cursor, self.last_activity = cursor, time.monotonic()  # 不依赖 VLC 是否转发 Qt 鼠标事件。
-        origin = window.mapToGlobal(QPoint(0, 0))  # 多屏幕使用主窗口实际全屏位置。
-        width = min(1200, max(320, window.width() - 64))  # 浮层留出左右边距并限制超宽。
+        window = self.window
+        cursor = QCursor.pos() if cursor is None else cursor
+        host = window.canvas
+        bounds = QRect(host.mapToGlobal(QPoint()), host.size())
+        inside = bounds.contains(cursor)
+        if cursor != self.last_cursor and inside:  # 其他屏幕上的移动不唤出控件。
+            self.last_cursor, self.last_activity = cursor, time.monotonic()  # 不依赖 视频解码器的事件转发。
+        width = min(1200, max(320, host.width() - 64))
         height = self.overlay.sizeHint().height()  # 控制栏高度跟随字体及 DPI。
-        self.overlay.setGeometry(origin.x() + (window.width() - width) // 2, origin.y() + window.height() - height - 24, width, height)  # 始终放在当前全屏视频的底部。
-        blocked = QApplication.activeModalWidget() or QApplication.activePopupWidget()  # 标签、评分和其他弹窗保持最高优先级。
-        visible = not blocked and (window.isActiveWindow() or self.overlay.isActiveWindow()) and (time.monotonic() - self.last_activity < 2.5 or self.overlay.geometry().contains(cursor))  # 切到其他软件或空闲时不让控制栏浮在桌面。
-        self.overlay.setVisible(bool(visible))  # 鼠标位于控制栏上时保持可操作。
+        target = QRect(bounds.x() + (host.width() - width) // 2,
+                       bounds.bottom() - height - 23, width, height)
+        if target != self.geometry_cache:  # 只有位置或尺寸变化时才重排。
+            self.overlay.setGeometry(target)  # 减少无意义的重复布局。
+            self.geometry_cache = target  # 记录本次结果。
+        options = window.playback_options
+        own_popup = options.owns_active_popup()
+        blocked = QApplication.activeModalWidget() or (QApplication.activePopupWidget() and not own_popup)
+        active = player_is_active(window) or own_popup
+        bottom = inside and cursor.y() >= bounds.bottom() - max(96, height + 48)
+        interacting = any(slider.isSliderDown() for slider in window.playback_panel.findChildren(QSlider))
+        over_controls = self.overlay.geometry().contains(cursor)
+        visible = not blocked and active and (bottom or time.monotonic() - self.last_activity < 2.5 or over_controls or options.popup_visible() or interacting)
+        if blocked or not active:
+            window.playback_options.dismiss()
+        if visible:  # 需要显示时淡入。
+            self.overlay.show()  # 鼠标移动后控制栏平滑出现。
+            raise_surface(self.overlay)
+            for panel in options.panels:
+                if panel.isVisible():
+                    raise_surface(panel)
+        elif blocked:  # 弹窗必须立刻让位。
+            self.overlay.hide()  # 不遮挡标签和评分输入。
+        else:  # 空闲超时或窗口失活。
+            self.overlay.hide()  # 淡出后再隐藏，避免硬切。
 
     def exit(self):  # 恢复用户进入全屏前的完整工作布局。
         if not self.active:  # 普通模式按 Esc 不改变最大化状态。
@@ -81,10 +147,13 @@ class VideoFullscreen(QObject):  # 保持原生视频句柄不变的全屏布局
         self.active = False  # 先阻止延迟轮询重新显示浮层。
         self.timer.stop()  # 普通模式无需监视鼠标。
         self.overlay.hide()  # 恢复布局前先隐藏独立原生浮层。
+        self.geometry_cache = QRect()  # 下次进入重新计算位置。
         window = self.window  # 使用原主窗口恢复控件。
+        window.playback_options.dismiss()
         self.card_layout.insertWidget(self.panel_index, window.playback_panel)  # 将同一套控件放回原位置。
         window.playback_panel.show()  # 控制栏恢复普通常显模式。
-        window.fullscreen_button.setText('全屏')  # 按钮恢复普通状态。
+        window.sidebar_toggle.show()
+        window.fullscreen_button.setToolTip('全屏 · Enter')  # 按钮恢复普通状态。
         self.card.setStyleSheet(self.card_style)  # 恢复用户主题卡片样式。
         window.surface.setStyleSheet(self.surface_style)  # 恢复普通画面圆角与边框。
         for layout, margins, spacing in self.saved_layouts:  # 逐项恢复进入前的布局参数。
@@ -96,4 +165,19 @@ class VideoFullscreen(QObject):  # 保持原生视频句柄不变的全屏布局
         window.restoreGeometry(self.geometry)  # 恢复原窗口位置、屏幕和大小。
         window.setWindowState(self.window_state)  # 保留进入前的最大化状态。
         self.splitter.setSizes(self.split_sizes)  # 恢复用户拖动过的目录宽度。
+        window.statusBar().hide()
+        from theme import apply_theme
+        apply_theme(window, window.theme)
         window.surface.setFocus()  # 返回视频区域继续使用原快捷键。
+
+    def style_popovers(self):
+        from string import Template
+        from theme import STYLE_TEMPLATE, TOKENS
+        for panel in self.window.playback_options.panels:
+            panel.setStyleSheet(Template(STYLE_TEMPLATE).substitute(**TOKENS))
+            panel.set_colors(TOKENS['surface_plain'], TOKENS['line'])
+        from PySide6.QtGui import QColor
+        rating = self.window.playback_options.rating_popup.hearts
+        rating.outline_color = QColor(TOKENS['text_faint'])
+        rating.fill_color = QColor(TOKENS['accent'])
+        rating.update()

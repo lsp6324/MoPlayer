@@ -56,7 +56,7 @@ def run(destination):  # 不运行播放、删除或完整回归。
     editor.entry.setText('新增')  # 验证底部加号操作。
     QTest.mouseClick(editor.add_button, Qt.LeftButton)  # 新增不会自动提交。
     application.processEvents()  # 刷新胶囊。
-    check('新增和多选保留已有展开集合', editor.expanded == {'绝区零'} and set(editor.chosen()) == {'爱丽丝', '黑丝', '新增'})  # 不展开其他父类。
+    check('新增和多选保留已有展开集合', editor.expanded == {'绝区零'} and set(editor.chosen()) == {'爱丽丝', '黑丝'} and '新增' in editor.schema)  # 不展开其他父类。
     editor.grab().save(str(output / 'tags-expanded.png'))  # 保存主动展开的真实画面。
     check('确认前数据库未归类', store.tag_layout()['爱丽丝']['parent'] is None)  # 草稿不移动文件。
     editor.accept()  # 只有确认才向主流程提交草稿。
@@ -66,7 +66,7 @@ def run(destination):  # 不运行播放、删除或完整回归。
     layout = store.tag_layout()  # 重新读取数据库而非草稿。
     check('父子与空父标签持久保存', layout['爱丽丝']['parent'] == '绝区零' and layout['空父类']['is_parent'])  # 空父标签重开仍可接收拖动。
     paths = [Path(row['path']) for row in store.query('SELECT path FROM paths WHERE id=?', (vid,))]  # 获取真实归档入口。
-    check('标签目录和九分文件名同步且共用实体', len(paths) == 3 and all(path.exists() and path.name.startswith('9分 绝区零（爱丽丝）') and identity(path) == identity(paths[0]) for path in paths))  # 不按标签复制内容。
+    check('标签目录和九分文件名同步且共用实体', len(paths) == 2 and all(path.exists() and path.name.startswith('9分 绝区零（爱丽丝）') and identity(path) == identity(paths[0]) for path in paths))  # 不按标签复制内容。
     score = ScoreEditor(store.video(vid))  # 从真实九分记录绘制。
     score.show()  # 显示真实评分卡。
     application.processEvents()  # 绘制四颗半心形。

@@ -16,3 +16,7 @@ __pycache__/
 .venv/
 .env
 .env.*
+# Local UI verification and private backups.
+backups/
+test-evidence/ui-refresh/
+test-evidence/ui-refresh-empty.png

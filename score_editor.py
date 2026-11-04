@@ -53,9 +53,9 @@ class HeartButton(QAbstractButton):  # 一颗心的左右两半分别对应一�
             painter.save()  # 局部裁切不影响最终轮廓。
             if portion == 1:  # 奇数分只点亮当前颗的左半。
                 painter.setClipRect(QRectF(0, 0, self.width() / 2, self.height()))  # 九分显示四颗半红心。
-            painter.fillPath(path, QColor('#ed6070'))  # 所有选中部分统一使用红色。
+            painter.fillPath(path, QColor('#285fbd'))  # 所有选中部分统一使用红色。
             painter.restore()  # 恢复完整绘制区域。
-        painter.setPen(QPen(QColor('#ed6070' if portion else '#929eac'), 1.8))  # 未选中描边为灰色。
+        painter.setPen(QPen(QColor('#285fbd' if portion else '#929eac'), 1.8))  # 未选中描边为灰色。
         painter.drawPath(path)  # 保留整颗心的清晰外轮廓。
 
 class ScoreEditor(QDialog):  # 五颗心仍兼容零分与独立未评分状态。
@@ -72,7 +72,7 @@ class ScoreEditor(QDialog):  # 五颗心仍兼容零分与独立未评分状态�
         card.setObjectName('scoreCard')  # 样式只作用于当前卡片。
         card.setToolTip(video['name'])  # 悬停可确认正在评分的视频。
         root.addWidget(card)  # 不影响主界面和其他弹窗。
-        self.setStyleSheet('#scoreCard { background:white; border:1px solid #dce2ea; border-radius:13px; } QLabel { color:#566174; background:transparent; border:none; font-size:15px; } QPushButton { background:transparent; border:none; color:#647083; padding:3px; font-size:14px; } QPushButton:hover { color:#ed6070; }')  # 贴近白色参考卡片的简洁外观。
+        self.setStyleSheet('#scoreCard { background:white; border:1px solid #dce2ea; border-radius:13px; } QLabel { color:#566174; background:transparent; border:none; font-size:15px; } QPushButton { background:transparent; border:none; color:#647083; padding:3px; font-size:14px; } QPushButton:hover { color:#285fbd; }')  # 贴近白色参考卡片的简洁外观。
         layout = QVBoxLayout(card)  # 上方五颗心，下方零分、读数和清除。
         layout.setContentsMargins(18, 17, 18, 15)  # 使用均匀的卡片边距。
         row = QHBoxLayout()  # 五颗心等间距排列。

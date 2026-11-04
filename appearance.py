@@ -3,17 +3,18 @@ import os  # 原子提交外观配置文件。
 import uuid  # 为背景副本生成无冲突文件名。
 from pathlib import Path  # 将背景副本保存在便携数据目录。
 from PySide6.QtCore import Qt, QRectF, QSize  # 处理背景裁切与图标尺寸。
-from PySide6.QtGui import QColor, QPainter, QPixmap, QLinearGradient, QRadialGradient, QImageReader  # 绘制渐变背景并安全读取用户图片。
-from PySide6.QtWidgets import QWidget, QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSlider, QDialogButtonBox, QFileDialog, QMessageBox  # 构建背景图设置与实时预览。
+from PySide6.QtGui import QColor, QPainter, QPixmap, QImageReader  # 绘制渐变背景并安全读取用户图片。
+from PySide6.QtWidgets import QWidget, QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSlider, QDialogButtonBox, QFileDialog, QMessageBox, QComboBox
 
 class Appearance:  # 独立于视频数据库保存界面偏好。
     def __init__(self, data):  # 初始化当前便携目录的背景设置。
         self.directory = Path(data) / 'appearance'  # 背景副本跟随整个便携目录移动。
         self.directory.mkdir(parents=True, exist_ok=True)  # 建立专用外观数据目录。
         self.file = self.directory / 'settings.json'  # 外观配置不污染视频数据库。
-        self.background, self.strength = None, 60  # 默认使用蓝白渐变及适中背景显示强度。
+        self.background, self.strength, self.theme = None, 60, 'light'
         try:  # 配置损坏或不存在时安全使用默认主题。
             settings = json.loads(self.file.read_text(encoding='utf-8'))  # 读取上次确认的外观偏好。
+            self.theme = 'dark' if settings.get('theme') == 'dark' else 'light'
             self.strength = max(10, min(100, int(settings.get('strength', 60))))  # 限制背景显示强度范围。
             name = settings.get('background')  # 只允许相对于专用目录的文件名。
             if name and Path(name).name == name and (self.directory / name).is_file():  # 拒绝配置中的路径穿越或失效文件。
@@ -34,7 +35,7 @@ class Appearance:  # 独立于视频数据库保存界面偏好。
             raise ValueError('无法读取背景图片：' + reader.errorString())  # 说明格式或文件问题。
         return image  # 原始用户图片从不修改。
 
-    def save(self, path, strength):  # 明确确认后才保存背景和显示强度。
+    def save(self, path, strength, theme=None):
         target = self.background if path and self.background and Path(path) == self.background else None  # 已有副本无需重复写入。
         created = False  # 记录本次是否创建了新文件。
         if path and target is None:  # 将新背景转存为可迁移的独立图片。
@@ -44,6 +45,7 @@ class Appearance:  # 独立于视频数据库保存界面偏好。
                 raise OSError('背景副本写入失败，请检查磁盘空间和权限。')  # 不显示保存成功。
             created = True  # 后续配置失败时只清理本次副本。
         settings = {'background': target.name if target else None, 'strength': max(10, min(100, int(strength)))}  # 只保存相对文件名，支持迁移便携目录。
+        settings['theme'] = theme if theme in ('dark', 'light') else self.theme
         temporary = self.directory / f'settings-{uuid.uuid4().hex}.tmp'  # 用独立临时文件保护旧配置。
         try:  # 配置提交失败仍保持原设置有效。
             with temporary.open('w', encoding='utf-8') as stream:  # 将新配置写入临时文件。
@@ -57,11 +59,13 @@ class Appearance:  # 独立于视频数据库保存界面偏好。
                 target.unlink(missing_ok=True)  # 清理本次未提交的副本。
             raise  # 把真实失败原因交给设置弹窗。
         self.background, self.strength = target, settings['strength']  # 提交成功后更新内存偏好。
+        self.theme = settings['theme']
 
 class BackgroundCanvas(QWidget):  # 用独立底层绘制实现网页般的柔和背景。
     def __init__(self, appearance):  # 读取当前已保存的背景偏好。
         super().__init__()  # 初始化主窗口中央容器。
         self.appearance, self.image, self.strength = appearance, QPixmap(), appearance.strength  # 保存绘制所需状态。
+        self.theme = appearance.theme
         self.setObjectName('appCanvas')  # 为主题样式提供明确选择器。
         try:  # 已保存图片被外部损坏时仍允许启动播放器。
             self.set_background(appearance.background, appearance.strength)  # 启动只恢复外观，不恢复视频或目录。
@@ -76,31 +80,37 @@ class BackgroundCanvas(QWidget):  # 用独立底层绘制实现网页般的柔�
     def paintEvent(self, event):  # 以实际窗口尺寸绘制渐变或自定义图像。
         painter = QPainter(self)  # 在当前窗口背景上绘制。
         painter.setRenderHint(QPainter.SmoothPixmapTransform)  # 平滑缩放背景照片。
-        gradient = QLinearGradient(0, 0, self.width(), self.height())  # 默认使用左上到右下的蓝白渐变。
-        gradient.setColorAt(0, QColor('#eef0f3'))  # 默认使用低饱和度的中性背景。
-        gradient.setColorAt(0.52, QColor('#eef0f3'))  # 不添加装饰性渐变或高光。
-        gradient.setColorAt(1, QColor('#eef0f3'))  # 整个工作区保持一致底色。
-        painter.fillRect(self.rect(), gradient)  # 整个应用始终有完整背景。
+        base = QColor('#f7f8fa' if self.theme == 'light' else '#1a1d23')
+        painter.fillRect(self.rect(), base)
         if not self.image.isNull():  # 自定义图片按覆盖模式居中显示。
             ratio = max(self.width() / self.image.width(), self.height() / self.image.height())  # 等比放大直到覆盖窗口。
             width, height = self.width() / ratio, self.height() / ratio  # 计算不拉伸的源图裁切尺寸。
             source = QRectF((self.image.width() - width) / 2, (self.image.height() - height) / 2, width, height)  # 居中裁切多余边缘。
             painter.drawPixmap(QRectF(self.rect()), self.image, source)  # 背景随窗口缩放且不变形。
-            painter.fillRect(self.rect(), QColor(239, 245, 255, round(255 * (1 - self.strength / 100))))  # 用显示强度控制图片可见程度。
+            base.setAlpha(round(255 * (1 - self.strength / 100)))
+            painter.fillRect(self.rect(), base)
 
 def appearance_dialog(window):  # 提供可预览、可撤销的自定义背景设置。
+    from theme import apply_theme
     appearance = window.appearance  # 使用本便携数据目录的外观偏好。
     selected = [appearance.background]  # 暂存本次选择，确认前不覆盖原配置。
     dialog = QDialog(window)  # 外观弹窗优先接收键盘操作。
-    dialog.setWindowTitle('外观 · 自定义背景')  # 明确设置范围。
+    dialog.setWindowTitle('外观')
     dialog.setObjectName('appearanceDialog')  # 允许主题统一设置背景色。
     dialog.setMinimumWidth(520)  # 给背景预览和设置说明足够空间。
     layout = QVBoxLayout(dialog)  # 按预览、选择、强度、提交组织内容。
     layout.setContentsMargins(28, 24, 28, 24)  # 使用与主界面一致的留白。
     layout.setSpacing(16)  # 拉开控件间距避免拥挤。
-    title = QLabel('背景设置')  # 设置标题只表达功能。
-    title.setProperty('role', 'sectionTitle')  # 应用标题字体样式。
-    layout.addWidget(title)  # 标题位于预览之上。
+    theme_row = QHBoxLayout()
+    theme_row.addWidget(QLabel('主题'))
+    themes = QComboBox()
+    themes.setObjectName('themeChoice')
+    themes.addItem('深色', 'dark')
+    themes.addItem('浅色', 'light')
+    themes.setCurrentIndex(themes.findData(appearance.theme))
+    theme_row.addWidget(themes, 1)
+    themes.currentIndexChanged.connect(lambda: apply_theme(window, themes.currentData()))
+    layout.addLayout(theme_row)
     preview = QLabel()  # 展示当前选中的背景图片。
     preview.setObjectName('backgroundPreview')  # 设置蓝白预览卡片样式。
     preview.setFixedSize(464, 190)  # 保持固定宽屏预览比例。
@@ -122,12 +132,8 @@ def appearance_dialog(window):  # 提供可预览、可撤销的自定义背景�
     strength.setRange(10, 100)  # 避免意外选择完全不可见的自定义背景。
     strength.setValue(appearance.strength)  # 默认沿用用户已经保存的强度。
     layout.addWidget(strength)  # 添加滑块。
-    note = QLabel('支持 PNG、JPG、WebP、BMP。图片将保存到便携数据目录，原图不会被修改。')  # 说明迁移和原文件保护行为。
-    note.setWordWrap(True)  # 长说明自然换行。
-    note.setProperty('role', 'muted')  # 次要说明使用低强调文字。
-    layout.addWidget(note)  # 放置简短说明。
     def refresh():  # 同时刷新弹窗和主界面预览。
-        strength_text.setText(f'背景显示强度  {strength.value()}%')  # 显示精确调节比例。
+        strength_text.setText(f'背景强度  {strength.value()}%')  # 显示精确调节比例。
         window.canvas.set_background(selected[0], strength.value())  # 仅修改临时可见效果。
         if selected[0]:  # 选择图片时展示等比预览。
             pixmap = QPixmap.fromImage(appearance.image(selected[0]))  # 使用同一安全图片加载逻辑。
@@ -148,11 +154,11 @@ def appearance_dialog(window):  # 提供可预览、可撤销的自定义背景�
     reset.clicked.connect(lambda: (selected.__setitem__(0, None), refresh()))  # 恢复默认也允许取消撤销。
     strength.valueChanged.connect(refresh)  # 拖动强度滑块立即更新预览。
     confirm = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)  # 用户明确保存或放弃修改。
-    confirm.button(QDialogButtonBox.Ok).setText('保存外观')  # 提示确认才持久化。
+    confirm.button(QDialogButtonBox.Ok).setText('保存')
     confirm.button(QDialogButtonBox.Cancel).setText('取消')  # 使用中文取消文案。
     def commit():  # 提交成功后才关闭弹窗。
         try:  # 处理磁盘满和无权限错误。
-            appearance.save(selected[0], strength.value())  # 原子保存背景副本与相对路径配置。
+            appearance.save(selected[0], strength.value(), themes.currentData())
             window.canvas.set_background(appearance.background, appearance.strength)  # 切换到已保存的便携副本。
             dialog.accept()  # 表示外观保存完成。
         except (OSError, ValueError) as error:  # 失败时保留弹窗方便调整。
@@ -162,4 +168,5 @@ def appearance_dialog(window):  # 提供可预览、可撤销的自定义背景�
     layout.addWidget(confirm)  # 提交按钮位于设置底部。
     refresh()  # 首次展示读取已保存偏好。
     if dialog.exec() != QDialog.Accepted:  # 用户关闭或取消设置时撤销临时预览。
+        apply_theme(window, appearance.theme)
         window.canvas.set_background(appearance.background, appearance.strength)  # 恢复打开弹窗之前的已保存背景。
