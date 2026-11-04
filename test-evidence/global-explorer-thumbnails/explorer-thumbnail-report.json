@@ -1,0 +1,230 @@
+{
+  "frozen": true,
+  "checks": [
+    {
+      "name": "36种视频类型已配置统一处理程序",
+      "ok": true
+    },
+    {
+      "name": "新视频自动提取 h264.mp4",
+      "ok": true
+    },
+    {
+      "name": "新视频自动提取 hevc.mkv",
+      "ok": true
+    },
+    {
+      "name": "新视频自动提取 mpeg4.avi",
+      "ok": true
+    },
+    {
+      "name": "新视频自动提取 h264.mov",
+      "ok": true
+    },
+    {
+      "name": "新视频自动提取 wmv2.wmv",
+      "ok": true
+    },
+    {
+      "name": "新视频自动提取 vp9.webm",
+      "ok": true
+    },
+    {
+      "name": "新视频自动提取 hevc10.mp4",
+      "ok": true
+    },
+    {
+      "name": "新视频自动提取 av1.mp4",
+      "ok": true
+    },
+    {
+      "name": "新视频自动提取 h264.ts",
+      "ok": true
+    },
+    {
+      "name": "隔离测试关联原先不存在 .moplayer-thumbnail-test-0",
+      "ok": true
+    },
+    {
+      "name": "MoPlayer关联保留视频缩略图 MoPlayer.Video",
+      "ok": true
+    },
+    {
+      "name": "隔离测试关联原先不存在 .moplayer-thumbnail-test-1",
+      "ok": true
+    },
+    {
+      "name": "MoPlayer关联保留视频缩略图 Applications\\MoPlayer.exe",
+      "ok": true
+    },
+    {
+      "name": "HEVC VP9 AV1隔离缓存全部成功",
+      "ok": true
+    }
+  ],
+  "codecs": [
+    {
+      "name": "h264.mp4",
+      "encoder": "libx264",
+      "pixel_format": "yuv420p",
+      "normal_shell_result": {
+        "ok": true,
+        "hresult": "0x0",
+        "thumbnail_only": true
+      }
+    },
+    {
+      "name": "hevc.mkv",
+      "encoder": "libx265",
+      "pixel_format": "yuv420p",
+      "normal_shell_result": {
+        "ok": true,
+        "hresult": "0x0",
+        "thumbnail_only": true
+      }
+    },
+    {
+      "name": "mpeg4.avi",
+      "encoder": "mpeg4",
+      "pixel_format": "yuv420p",
+      "normal_shell_result": {
+        "ok": true,
+        "hresult": "0x0",
+        "thumbnail_only": true
+      }
+    },
+    {
+      "name": "h264.mov",
+      "encoder": "libx264",
+      "pixel_format": "yuv420p",
+      "normal_shell_result": {
+        "ok": true,
+        "hresult": "0x0",
+        "thumbnail_only": true
+      }
+    },
+    {
+      "name": "wmv2.wmv",
+      "encoder": "wmv2",
+      "pixel_format": "yuv420p",
+      "normal_shell_result": {
+        "ok": true,
+        "hresult": "0x0",
+        "thumbnail_only": true
+      }
+    },
+    {
+      "name": "vp9.webm",
+      "encoder": "libvpx-vp9",
+      "pixel_format": "yuv420p",
+      "normal_shell_result": {
+        "ok": true,
+        "hresult": "0x0",
+        "thumbnail_only": true
+      }
+    },
+    {
+      "name": "hevc10.mp4",
+      "encoder": "libx265",
+      "pixel_format": "yuv420p10le",
+      "normal_shell_result": {
+        "ok": true,
+        "hresult": "0x0",
+        "thumbnail_only": true
+      }
+    },
+    {
+      "name": "av1.mp4",
+      "encoder": "libaom-av1",
+      "pixel_format": "yuv420p",
+      "normal_shell_result": {
+        "ok": true,
+        "hresult": "0x0",
+        "thumbnail_only": true
+      }
+    },
+    {
+      "name": "h264.ts",
+      "encoder": "libx264",
+      "pixel_format": "yuv420p",
+      "normal_shell_result": {
+        "ok": true,
+        "hresult": "0x0",
+        "thumbnail_only": true
+      }
+    }
+  ],
+  "provider": "{c5aec3ec-e812-4677-a9a7-4fee1f9aa000}",
+  "cache_results": [
+    {
+      "file": "E:\\Tools\\videoplayerenv\\verification\\global-video-thumbnails\\exe-v1\\hevc.mkv",
+      "sizes": [
+        {
+          "size": 96,
+          "ok": true,
+          "hresult": "0x0",
+          "flags": 2
+        },
+        {
+          "size": 256,
+          "ok": true,
+          "hresult": "0x0",
+          "flags": 2
+        },
+        {
+          "size": 1024,
+          "ok": true,
+          "hresult": "0x0",
+          "flags": 2
+        }
+      ]
+    },
+    {
+      "file": "E:\\Tools\\videoplayerenv\\verification\\global-video-thumbnails\\exe-v1\\vp9.webm",
+      "sizes": [
+        {
+          "size": 96,
+          "ok": true,
+          "hresult": "0x0",
+          "flags": 2
+        },
+        {
+          "size": 256,
+          "ok": true,
+          "hresult": "0x0",
+          "flags": 2
+        },
+        {
+          "size": 1024,
+          "ok": true,
+          "hresult": "0x0",
+          "flags": 2
+        }
+      ]
+    },
+    {
+      "file": "E:\\Tools\\videoplayerenv\\verification\\global-video-thumbnails\\exe-v1\\av1.mp4",
+      "sizes": [
+        {
+          "size": 96,
+          "ok": true,
+          "hresult": "0x0",
+          "flags": 2
+        },
+        {
+          "size": 256,
+          "ok": true,
+          "hresult": "0x0",
+          "flags": 2
+        },
+        {
+          "size": 1024,
+          "ok": true,
+          "hresult": "0x0",
+          "flags": 2
+        }
+      ]
+    }
+  ],
+  "success": true
+}

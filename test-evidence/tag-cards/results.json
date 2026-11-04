@@ -1,0 +1,66 @@
+[
+  {
+    "name": "右键设为父标签且默认折叠",
+    "passed": true
+  },
+  {
+    "name": "拖入父类后保持全部折叠",
+    "passed": true
+  },
+  {
+    "name": "只展开主动点击的父标签",
+    "passed": true
+  },
+  {
+    "name": "新增和多选保留已有展开集合",
+    "passed": true
+  },
+  {
+    "name": "确认前数据库未归类",
+    "passed": true
+  },
+  {
+    "name": "父子与空父标签持久保存",
+    "passed": true
+  },
+  {
+    "name": "标签目录和九分文件名同步且共用实体",
+    "passed": true
+  },
+  {
+    "name": "评分只有五颗心且九分读数正确",
+    "passed": true
+  },
+  {
+    "name": "第五颗左半提交九分",
+    "passed": true
+  },
+  {
+    "name": "十个半颗点击覆盖一至十分",
+    "passed": true
+  },
+  {
+    "name": "独立状态 score_0",
+    "passed": true
+  },
+  {
+    "name": "独立状态 score_unrated",
+    "passed": true
+  },
+  {
+    "name": "评分变化同步标签路径和原视频身份",
+    "passed": true
+  },
+  {
+    "name": "悬停预览不修改实际评分",
+    "passed": true
+  },
+  {
+    "name": "Esc 取消评分",
+    "passed": true
+  },
+  {
+    "name": "归类不跳顶部且不展开父类",
+    "passed": true
+  }
+]

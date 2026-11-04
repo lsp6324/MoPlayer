@@ -1,0 +1,46 @@
+[
+  {
+    "name": "打开3D自动关闭游戏",
+    "passed": true
+  },
+  {
+    "name": "父标签拖入父标签保留原有子标签",
+    "passed": true
+  },
+  {
+    "name": "子父标签单独展开并有返回入口",
+    "passed": true
+  },
+  {
+    "name": "禁止把祖先拖入后代",
+    "passed": true
+  },
+  {
+    "name": "多层目录与嵌套名称同步",
+    "passed": true
+  },
+  {
+    "name": "嵌套后仍共用硬链接实体",
+    "passed": true
+  },
+  {
+    "name": "右键删除确认前只改草稿",
+    "passed": true
+  },
+  {
+    "name": "删除标签全局移除且不复活",
+    "passed": true
+  },
+  {
+    "name": "删除标签保留视频及未归档状态",
+    "passed": true
+  },
+  {
+    "name": "删除父标签提升子节点并同步路径",
+    "passed": true
+  },
+  {
+    "name": "删除最后标签仍保留视频在未分类",
+    "passed": true
+  }
+]

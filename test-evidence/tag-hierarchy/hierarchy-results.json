@@ -1,0 +1,86 @@
+[
+  {
+    "name": "来源异步扫描完成",
+    "passed": true
+  },
+  {
+    "name": "视频真实解码播放",
+    "passed": true
+  },
+  {
+    "name": "播放暂停准备完成",
+    "passed": true
+  },
+  {
+    "name": "每个标签最右侧显示类型选择",
+    "passed": true
+  },
+  {
+    "name": "小类类型与拖放建立层级",
+    "passed": true
+  },
+  {
+    "name": "搜索小类保留所属大类",
+    "passed": true
+  },
+  {
+    "name": "确认前全局结构和文件不变",
+    "passed": true
+  },
+  {
+    "name": "Esc 取消不应用层级",
+    "passed": true
+  },
+  {
+    "name": "标签全部应用后自动评分",
+    "passed": true
+  },
+  {
+    "name": "主评分区十按钮且无下拉框",
+    "passed": true
+  },
+  {
+    "name": "小类路径与大类括号文件名正确",
+    "passed": true
+  },
+  {
+    "name": "父子不重复入口且所有入口硬链接同一实体",
+    "passed": true
+  },
+  {
+    "name": "另一评分的视频同步全局角色归属",
+    "passed": true
+  },
+  {
+    "name": "原平级入口全部清理",
+    "passed": true
+  },
+  {
+    "name": "历史收藏进度保持原身份",
+    "passed": true
+  },
+  {
+    "name": "归档和评分保持原播放顺序及暂停",
+    "passed": true
+  },
+  {
+    "name": "标签部分失败不提前弹出评分",
+    "passed": true
+  },
+  {
+    "name": "失败批次保留恢复日志及有效文件",
+    "passed": true
+  },
+  {
+    "name": "恢复全部标签后再自动评分",
+    "passed": true
+  },
+  {
+    "name": "独立评分状态 score_0",
+    "passed": true
+  },
+  {
+    "name": "独立评分状态 score_unrated",
+    "passed": true
+  }
+]

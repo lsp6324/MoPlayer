@@ -1,0 +1,66 @@
+[
+  {
+    "name": "异步导入四条样例",
+    "passed": true
+  },
+  {
+    "name": "首条实际播放",
+    "passed": true
+  },
+  {
+    "name": "文本输入不触发删除",
+    "passed": true
+  },
+  {
+    "name": "模态弹窗不触发删除",
+    "passed": true
+  },
+  {
+    "name": "替换浏览目录保留播放",
+    "passed": true
+  },
+  {
+    "name": "外部占用句柄建立",
+    "passed": true
+  },
+  {
+    "name": "外部占用失败不换片且保留数据",
+    "passed": true
+  },
+  {
+    "name": "播放占用释放并回收原文件",
+    "passed": true
+  },
+  {
+    "name": "下一条真正解码播放",
+    "passed": true
+  },
+  {
+    "name": "删除身份历史收藏同步清理",
+    "passed": true
+  },
+  {
+    "name": "删除不改变原播放上下文",
+    "passed": true
+  },
+  {
+    "name": "剩余目录加载完成",
+    "passed": true
+  },
+  {
+    "name": "单击选择优先且删除后播放其下一条",
+    "passed": true
+  },
+  {
+    "name": "第四条实际播放",
+    "passed": true
+  },
+  {
+    "name": "多标签视频实际播放",
+    "passed": true
+  },
+  {
+    "name": "全部标签入口回收且末尾停止",
+    "passed": true
+  }
+]
