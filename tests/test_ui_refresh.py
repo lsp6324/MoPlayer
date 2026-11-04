@@ -354,6 +354,90 @@ def test_fullscreen_restores_layout_and_video_handle(window):
     apply_theme(window, 'light')
 
 
+def test_fullscreen_title_and_cursor_share_visibility_without_resizing_video(window, tmp_path):
+    window.enter_fullscreen()
+    full = window.video_fullscreen
+    full.cursor_position = lambda: window.canvas.mapToGlobal(window.canvas.rect().center())
+    QApplication.processEvents()
+    full.timer.stop()
+    center = window.canvas.mapToGlobal(window.canvas.rect().center())
+    original_geometry = window.surface.geometry()
+    full.last_cursor, full.last_activity = center, 0
+    full.poll(center)
+    assert not full.overlay.isVisible() and not full.title.isVisible()
+    assert full.cursor.hidden and window.surface.cursor().shape() == Qt.BlankCursor
+    second = tmp_path / 'second.mp4'
+    second.write_bytes(b'Isolated metadata fixture; not decoded')
+    window.current = window.store.register(second)
+    window.store.execute('UPDATE videos SET score=9 WHERE id=?', (window.current,))
+    window.refresh_title()
+    QApplication.processEvents()
+    assert window.player_header.isHidden() and window.surface.geometry() == original_geometry
+    assert full.title.filename == 'second.mp4' and not full.title.isVisible()
+    full.poll(center + QPoint(1, 0))
+    assert full.overlay.isVisible() and full.title.isVisible() and not full.cursor.hidden
+    assert window.surface.cursor().shape() != Qt.BlankCursor
+    assert abs(full.title.geometry().center().x() - center.x()) <= 1
+    full.set_title('Very long video filename ' * 40 + '.mp4')
+    assert '…' in full.title.label.text() and full.title.width() <= 900
+    assert window.surface.geometry() == original_geometry
+    window.exit_fullscreen()
+    QApplication.processEvents()
+    assert window.player_header.isVisible() and not full.title.isVisible()
+
+
+def test_fullscreen_interactions_restart_shared_idle_deadline(window, monkeypatch):
+    from types import SimpleNamespace
+    import video_fullscreen
+    now = [100.0]
+    monkeypatch.setattr(video_fullscreen, 'time', SimpleNamespace(monotonic=lambda: now[0]))
+    window.enter_fullscreen()
+    full = window.video_fullscreen
+    full.cursor_position = lambda: window.canvas.mapToGlobal(window.canvas.rect().center())
+    QApplication.processEvents()
+    full.timer.stop()
+    center = window.canvas.mapToGlobal(window.canvas.rect().center())
+    full.last_cursor = center
+    now[0] = 103
+    full.poll(center)
+    assert full.cursor.hidden
+    full.poll(center + QPoint(1, 0))
+    window.playback_options.speed_popup.open_above()
+    full.poll(center)
+    assert full.title.isVisible() and full.overlay.isVisible() and not full.cursor.hidden
+    window.playback_options.dismiss()
+    now[0] = 104
+    full.poll(center)
+    now[0] = 106
+    full.poll(center)
+    assert full.title.isVisible() and not full.cursor.hidden
+    now[0] = 106.6
+    full.poll(center)
+    assert not full.title.isVisible() and not full.overlay.isVisible() and full.cursor.hidden
+    window.activateWindow()
+    QApplication.processEvents()
+    full.poll(center + QPoint(1, 0))
+    window.seekbar.setSliderDown(True)
+    now[0] = 120
+    full.poll(center)
+    assert full.title.isVisible() and not full.cursor.hidden
+    window.seekbar.setSliderDown(False)
+
+
+def test_fullscreen_exit_restores_preexisting_video_cursor(window):
+    window.surface.setCursor(Qt.CrossCursor)
+    window.enter_fullscreen()
+    QApplication.processEvents()
+    full = window.video_fullscreen
+    full.timer.stop()
+    center = window.canvas.mapToGlobal(window.canvas.rect().center())
+    full.last_cursor, full.last_activity = center, 0
+    full.poll(center)
+    assert window.surface.cursor().shape() == Qt.BlankCursor
+    window.exit_fullscreen()
+    assert not full.cursor.hidden and window.surface.cursor().shape() == Qt.CrossCursor
+
+
 def test_cancelled_storage_keeps_tag_draft(window):
     window.apply_tags = Mock(return_value=False)
     window.tags_dialog()

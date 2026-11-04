@@ -71,7 +71,7 @@ def run(destination):
     def snapshot(name):
         application.processEvents()
         window.grab().save(str(output / (name + '.png')))
-        for number, surface in enumerate([*window.playback_options.panels, window.video_fullscreen.overlay]):
+        for number, surface in enumerate([*window.playback_options.panels, window.video_fullscreen.overlay, window.video_fullscreen.title]):
             if surface.isVisible():
                 surface.grab().save(str(output / f'{name}-surface-{number}.png'))
     def button_matches(state):
@@ -141,6 +141,8 @@ def run(destination):
             'anullsrc=channel_layout=stereo:sample_rate=44100', '-t', '45', '-c:a', 'aac', '-c:v', 'libx264',
             '-threads', '2', '-y', str(sample)], check=True, capture_output=True,
             creationflags=subprocess.CREATE_NO_WINDOW)
+        import shutil
+        shutil.copyfile(sample, sample_dir / 'second.mp4')
         context, _ = scan(sample_dir, window.store, threading.Event())
         window.browsing = context
         from app import TreeModel
@@ -299,9 +301,35 @@ def run(destination):
             fullscreen.last_cursor, fullscreen.last_activity = center, 0
             fullscreen.poll(center)
             check(f'fullscreen {cycle}: idle hidden', not fullscreen.overlay.isVisible())
+            check(f'fullscreen {cycle}: title and Qt cursor hide with controls',
+                  not fullscreen.title.isVisible() and fullscreen.cursor.hidden and
+                  window.surface.cursor().shape() == Qt.BlankCursor)
+            native_cursor = fullscreen.cursor
+            saved_classes = dict(native_cursor.native_classes)
+            check(f'fullscreen {cycle}: native video cursor classes hidden',
+                  len(saved_classes) >= 2 and all(native_cursor.user.GetClassLongPtrW(hwnd, -12) == 0 for hwnd in saved_classes))
+            if cycle == 0:
+                video_geometry = window.surface.geometry()
+                window.advance(1)
+                check('fullscreen switch: next clip actually plays', wait(lambda: window.current == context.folders[str(sample_dir)][1][1][0] and button_matches(vlc.State.Playing)))
+                fullscreen.poll(center)
+                check('fullscreen switch: title updates without showing or shrinking video',
+                      fullscreen.title.filename == 'second.mp4' and not fullscreen.title.isVisible() and
+                      window.player_header.isHidden() and window.surface.geometry() == video_geometry)
+                def recreated_cursor_hidden():
+                    fullscreen.poll(center)
+                    return len(native_cursor.native_classes) >= 2 and all(native_cursor.user.GetClassLongPtrW(hwnd, -12) == 0 for hwnd in native_cursor.native_classes)
+                check('fullscreen switch: recreated video cursor classes stay hidden', wait(recreated_cursor_hidden))
+                saved_classes = dict(native_cursor.native_classes)
             fullscreen.poll(bottom)
             application.processEvents()
             check(f'fullscreen {cycle}: bottom reveals native controls', fullscreen.overlay.isVisible() and hit_layer(fullscreen.overlay))
+            check(f'fullscreen {cycle}: title and cursor restore with controls',
+                  fullscreen.title.isVisible() and not fullscreen.cursor.hidden and
+                  window.surface.cursor().shape() != Qt.BlankCursor and
+                  fullscreen.title.filename == window.store.video(window.current)['name'])
+            check(f'fullscreen {cycle}: native video cursor classes restored',
+                  not native_cursor.native_classes and all(native_cursor.user.GetClassLongPtrW(hwnd, -12) == cursor for hwnd, (name, cursor) in saved_classes.items()))
             check(f'fullscreen {cycle}: compositor alpha has smooth corners', smooth_surface(fullscreen.overlay))
             fullscreen.last_activity = 0
             fullscreen.poll(bottom)
@@ -316,9 +344,19 @@ def run(destination):
             check(f'fullscreen {cycle}: rating stays above controls and video', wait(lambda: options.rating_popup.isVisible() and hit_layer(options.rating_popup)))
             snapshot(f'fullscreen-{cycle}')
             options.dismiss()
+            fullscreen.last_cursor, fullscreen.last_activity = center, 0
+            fullscreen.was_interacting = False
+            fullscreen.poll(center)
+            exit_classes = dict(fullscreen.cursor.native_classes)
+            check(f'fullscreen {cycle}: idle cursor hidden before exit',
+                  fullscreen.cursor.hidden and len(exit_classes) >= 2)
             window.exit_fullscreen()
             application.processEvents()
             check(f'fullscreen {cycle}: handle and left sidebar restored', int(window.surface.winId()) == handle and window.sidebar.isVisible() and window.playback_panel.parentWidget().objectName() == 'playerCard')
+            check(f'fullscreen {cycle}: exit restores title layout and cursor',
+                  window.player_header.isVisible() and not fullscreen.title.isVisible() and
+                  not fullscreen.cursor.hidden and not fullscreen.cursor.native_classes and
+                  all(native_cursor.user.GetClassLongPtrW(hwnd, -12) == cursor for hwnd, (name, cursor) in exit_classes.items()))
             check(f'fullscreen {cycle}: exit preserves playing icon pixels', button_matches(vlc.State.Playing))
         window.enter_fullscreen()
         check('ownership: fullscreen active', wait(lambda: window.isFullScreen() and window.isActiveWindow()))
@@ -356,6 +394,7 @@ def run(destination):
         check('ownership: separate window active', wait(other.isActiveWindow))
         fullscreen.poll(middle)
         check('ownership: no surfaces remain over another window', wait(lambda: not fullscreen.overlay.isVisible() and not options.popup_visible()))
+        check('ownership: unrelated window restores cursor and hides title', not fullscreen.title.isVisible() and not fullscreen.cursor.hidden)
         panel.open_above()
         check('ownership: inactive player cannot reopen a hover surface', not panel.isVisible())
         other.close()
@@ -363,8 +402,17 @@ def run(destination):
         check('ownership: player reactivated', wait(window.isActiveWindow))
         fullscreen.poll(bottom)
         check('ownership: controls return over the player', wait(lambda: fullscreen.overlay.isVisible() and hit_layer(fullscreen.overlay)))
+        fullscreen.last_cursor, fullscreen.last_activity = middle, 0
+        fullscreen.was_interacting = False
+        fullscreen.poll(middle)
+        minimize_classes = dict(fullscreen.cursor.native_classes)
+        check('ownership: idle cursor hidden before minimizing', fullscreen.cursor.hidden and len(minimize_classes) >= 2)
         window.showMinimized()
         check('ownership: minimizing hides all surfaces', wait(lambda: not fullscreen.overlay.isVisible() and not options.popup_visible()))
+        fullscreen.poll(middle)
+        check('ownership: minimizing restores cursor and hides title',
+              not fullscreen.title.isVisible() and not fullscreen.cursor.hidden and
+              all(fullscreen.cursor.user.GetClassLongPtrW(hwnd, -12) == cursor for hwnd, (name, cursor) in minimize_classes.items()))
         window.showFullScreen()
         window.activateWindow()
         check('ownership: fullscreen restored', wait(window.isActiveWindow))

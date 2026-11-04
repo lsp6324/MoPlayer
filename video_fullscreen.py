@@ -1,8 +1,9 @@
 import time  # 根据真实鼠标活动控制浮层自动隐藏。
 from PySide6.QtCore import QObject, QTimer, QPoint, QRect, Qt, QEvent
-from PySide6.QtGui import QCursor
-from PySide6.QtWidgets import QApplication, QVBoxLayout, QSplitter, QPushButton, QSlider, QWidget, QFrame
+from PySide6.QtGui import QCursor, QColor
+from PySide6.QtWidgets import QApplication, QVBoxLayout, QSplitter, QPushButton, QSlider, QWidget, QFrame, QLabel, QSizePolicy
 from floating_surface import FloatingSurface, owned_by, player_is_active, raise_surface
+from video_cursor import VideoCursor
 
 
 STYLE = '''QFrame#fullscreenControls { background:transparent; border:none; }
@@ -27,10 +28,52 @@ def widgets(item):  # 递归找到纯布局中的可隐藏控件。
     layout = item.layout()  # 页面标题等内容使用嵌套布局。
     return [child for index in range(layout.count()) for child in widgets(layout.itemAt(index))] if layout else []  # 忽略伸缩空白。
 
+
+class FullscreenTitle(FloatingSurface):
+    def __init__(self, host):
+        super().__init__(host, radius=10, background=QColor(26, 30, 38, 232),
+                         border=QColor(255, 255, 255, 35))
+        self.setObjectName('fullscreenTitle')
+        self.setWindowFlag(Qt.WindowTransparentForInput)
+        self.setWindowFlag(Qt.WindowDoesNotAcceptFocus)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.setStyleSheet('''QFrame#fullscreenTitle { background:transparent; border:none; }
+            QLabel { background:transparent; border:none; color:#f2f4f8;
+                     font-family:"Microsoft YaHei UI"; font-size:16px; font-weight:600; }''')
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 12, 20, 12)
+        self.label = QLabel()
+        self.label.setTextFormat(Qt.PlainText)
+        self.label.setAlignment(Qt.AlignCenter)
+        self.label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        layout.addWidget(self.label)
+        self.filename = ''
+
+    def set_title(self, text):
+        self.filename = text
+        self.label.setAccessibleName(text)
+        self.elide()
+
+    def elide(self):
+        self.label.setText(self.label.fontMetrics().elidedText(
+            self.filename, Qt.ElideRight, max(1, self.width() - 40)))
+
+    def reposition(self, bounds):
+        width = min(900, max(1, bounds.width() - 64),
+                    max(180, self.label.fontMetrics().horizontalAdvance(self.filename) + 40))
+        self.setGeometry(bounds.x() + (bounds.width() - width) // 2,
+                         bounds.y() + 24, width, self.sizeHint().height())
+        self.elide()
+
 class VideoFullscreen(QObject):  # 保持视频句柄不变的全屏布局协调器。
     def __init__(self, window):  # 绑定当前播放器窗口。
         super().__init__(window)  # 生命周期随主窗口结束。
         self.window, self.active, self.hidden = window, False, []  # 与浏览和播放上下文完全独立。
+        self.cursor = VideoCursor(window.surface)
+        self.title = FullscreenTitle(window.canvas)
+        self.presentation_visible = False
+        self.was_interacting = False
+        self.cursor_position = QCursor.pos
         self.overlay = FloatingSurface(window.canvas, radius=12,
                                        background='#20252e', border='#3d4654')
         self.overlay.hide()
@@ -50,7 +93,39 @@ class VideoFullscreen(QObject):  # 保持视频句柄不变的全屏布局协调
         if (self.active and event.type() == QEvent.MouseMove and
                 isinstance(watched, QWidget) and owned_by(watched, self.window)):
             self.poll(event.globalPosition().toPoint())
+        elif self.active and watched is self.window:
+            if event.type() in (QEvent.Hide, QEvent.Close):
+                self.set_presentation(False)
+            elif event.type() in (QEvent.WindowDeactivate, QEvent.WindowStateChange):
+                QTimer.singleShot(0, self, self.poll)
         return False
+
+    def set_title(self, text):
+        self.title.set_title(text)
+        if self.active:
+            bounds = QRect(self.window.canvas.mapToGlobal(QPoint()), self.window.canvas.size())
+            self.title.reposition(bounds)
+            if self.presentation_visible and text:
+                self.title.show()
+                raise_surface(self.title)
+            elif not text:
+                self.title.hide()
+
+    def set_presentation(self, visible, hide_cursor=False):
+        self.presentation_visible = visible
+        if visible:
+            self.overlay.show()
+            raise_surface(self.overlay)
+            if self.title.filename:
+                self.title.show()
+                raise_surface(self.title)
+            for panel in self.window.playback_options.panels:
+                if panel.isVisible():
+                    raise_surface(panel)
+        else:
+            self.overlay.hide()
+            self.title.hide()
+        self.cursor.set_hidden(hide_cursor and not visible)
 
     def toggle(self):  # 按 Enter 或点击同一个按钮切换模式。
         self.exit() if self.active else self.enter()  # 避免嵌套全屏与重复保存状态。
@@ -95,6 +170,8 @@ class VideoFullscreen(QObject):  # 保持视频句柄不变的全屏布局协调
         window.sidebar_toggle.hide()
         window.fullscreen_button.setToolTip('退出全屏 · Esc')  # 全屏浮层提供明确退出入口。
         self.active = True  # 在窗口改变前发布全屏状态。
+        self.set_title(window.now.full_text if window.current else '')
+        self.was_interacting = False
         self.style_popovers()
         self.last_cursor, self.last_activity = QCursor.pos(), time.monotonic()  # 首次进入暂时显示控制栏。
         self.geometry_cache = QRect()  # 全屏几何改变后必须重新定位。
@@ -107,7 +184,7 @@ class VideoFullscreen(QObject):  # 保持视频句柄不变的全屏布局协调
         if not self.active:  # 退出后忽略延迟回调。
             return  # 不再次显示已关闭的浮层。
         window = self.window
-        cursor = QCursor.pos() if cursor is None else cursor
+        cursor = self.cursor_position() if cursor is None else cursor
         host = window.canvas
         bounds = QRect(host.mapToGlobal(QPoint()), host.size())
         inside = bounds.contains(cursor)
@@ -120,6 +197,7 @@ class VideoFullscreen(QObject):  # 保持视频句柄不变的全屏布局协调
         if target != self.geometry_cache:  # 只有位置或尺寸变化时才重排。
             self.overlay.setGeometry(target)  # 减少无意义的重复布局。
             self.geometry_cache = target  # 记录本次结果。
+        self.title.reposition(bounds)
         options = window.playback_options
         own_popup = options.owns_active_popup()
         blocked = QApplication.activeModalWidget() or (QApplication.activePopupWidget() and not own_popup)
@@ -127,26 +205,21 @@ class VideoFullscreen(QObject):  # 保持视频句柄不变的全屏布局协调
         bottom = inside and cursor.y() >= bounds.bottom() - max(96, height + 48)
         interacting = any(slider.isSliderDown() for slider in window.playback_panel.findChildren(QSlider))
         over_controls = self.overlay.geometry().contains(cursor)
-        visible = not blocked and active and (bottom or time.monotonic() - self.last_activity < 2.5 or over_controls or options.popup_visible() or interacting)
+        held = bottom or over_controls or options.popup_visible() or interacting or own_popup
+        if held or self.was_interacting:
+            self.last_activity = time.monotonic()
+        self.was_interacting = bool(held)
+        visible = not blocked and active and (held or time.monotonic() - self.last_activity < 2.5)
         if blocked or not active:
             window.playback_options.dismiss()
-        if visible:  # 需要显示时淡入。
-            self.overlay.show()  # 鼠标移动后控制栏平滑出现。
-            raise_surface(self.overlay)
-            for panel in options.panels:
-                if panel.isVisible():
-                    raise_surface(panel)
-        elif blocked:  # 弹窗必须立刻让位。
-            self.overlay.hide()  # 不遮挡标签和评分输入。
-        else:  # 空闲超时或窗口失活。
-            self.overlay.hide()  # 淡出后再隐藏，避免硬切。
+        self.set_presentation(visible, hide_cursor=active and not blocked and inside)
 
     def exit(self):  # 恢复用户进入全屏前的完整工作布局。
         if not self.active:  # 普通模式按 Esc 不改变最大化状态。
             return  # 不执行多余窗口切换。
         self.active = False  # 先阻止延迟轮询重新显示浮层。
         self.timer.stop()  # 普通模式无需监视鼠标。
-        self.overlay.hide()  # 恢复布局前先隐藏独立原生浮层。
+        self.set_presentation(False)
         self.geometry_cache = QRect()  # 下次进入重新计算位置。
         window = self.window  # 使用原主窗口恢复控件。
         window.playback_options.dismiss()
@@ -166,6 +239,7 @@ class VideoFullscreen(QObject):  # 保持视频句柄不变的全屏布局协调
         window.setWindowState(self.window_state)  # 保留进入前的最大化状态。
         self.splitter.setSizes(self.split_sizes)  # 恢复用户拖动过的目录宽度。
         window.statusBar().hide()
+        window.player_header.setVisible(bool(window.current))
         from theme import apply_theme
         apply_theme(window, window.theme)
         window.surface.setFocus()  # 返回视频区域继续使用原快捷键。

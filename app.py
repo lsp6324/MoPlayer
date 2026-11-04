@@ -452,7 +452,10 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
         from ui import icon
         from theme import theme_tokens
         video = self.store.video(self.current) if self.current else None
-        self.player_header.setVisible(bool(video))
+        fullscreen = getattr(self, 'video_fullscreen', None)
+        self.player_header.setVisible(bool(video) and not (fullscreen and fullscreen.active))
+        if fullscreen:
+            fullscreen.set_title(video['name'] if video else '')
         active = bool(video) and not self.busy
         self.classify_bar.setVisible(bool(video))
         for button in self.transport_buttons + self.classify_buttons:
