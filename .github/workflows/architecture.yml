@@ -17,4 +17,4 @@ jobs:
         with:
           python-version: '3.12'
       - run: python -m pip install pytest==8.4.2
-      - run: python -m pytest -q tests/test_architecture.py tests/test_application.py tests/test_library_repository.py
+      - run: python -m pytest -q tests/test_architecture.py tests/test_application.py tests/test_library_controller.py tests/test_library_repository.py

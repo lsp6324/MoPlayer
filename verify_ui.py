@@ -52,7 +52,7 @@ def run(destination):  # 源码与打包 EXE 共用真实界面验收。
         moved = Appearance(output / 'moved')  # 从新位置读取相对路径。
         check('移动目录后背景仍有效', moved.background.is_file() and moved.background.parent == output / 'moved/appearance')  # 配置不依赖开发机路径。
         window.grab().save(str(output / 'custom-background.png'))  # 记录自定义背景效果。
-        check('外观调整不导入或播放视频', window.current is None and window.browsing is None)  # 保持启动交互约束。
+        check('外观调整不导入或播放视频', window.current is None and window.library_controller.browsing is None)  # 保持启动交互约束。
         broken = output / 'broken.png'  # 构造损坏图像。
         broken.write_bytes(b'not an image')  # 写入不能解码的数据。
         rejected = False  # 记录是否正确拒绝坏图。

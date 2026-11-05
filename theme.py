@@ -84,7 +84,7 @@ QPushButton[role="caption"]:focus { border-bottom:2px solid $accent_ring; }
 QPushButton#closeWindow:hover { background:#e94a53; }
 QPushButton#closeWindow:pressed { background:#d83b45; }
 QPushButton::menu-indicator { image:none; width:0; }
-QTreeView#libraryTree,QListWidget#sidebarList { border:none; outline:none; background:transparent; padding:0; selection-background-color:transparent; }
+QTreeView#libraryTree,QListView#sidebarList { border:none; outline:none; background:transparent; padding:0; selection-background-color:transparent; }
 QTreeView#libraryTree::branch { background:transparent; }
 QTreeView#libraryTree::item { min-height:30px; }
 QTreeView#libraryTree::item:selected { color:$accent; }
@@ -148,9 +148,7 @@ def apply_theme(window, theme=None):
             color = '#ffffff' if primary else colors['accent'] if symbol == 'starFilled' else colors['text_mid']
             control.setIcon(icon(symbol, color))
     window.sync_play_button(force=True)
-    for view in (window.tree, window.sidebar_list):
-        view.setPalette(palette)
-        view.viewport().update()
+    window.library_view.apply_palette(palette)
     window.control_row.adapt()
     if hasattr(window, 'playback_options'):
         for panel in window.playback_options.panels:

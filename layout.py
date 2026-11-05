@@ -2,22 +2,17 @@
 from PySide6.QtCore import Qt, QSize
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (QWidget, QFrame, QLabel, QPushButton, QVBoxLayout,
-    QHBoxLayout, QSplitter, QSlider, QMenu, QStackedWidget, QListWidget, QAbstractItemView)
+    QHBoxLayout, QSplitter, QSlider, QMenu)
 from appearance import Appearance, BackgroundCanvas, appearance_dialog
 from theme import apply_theme
 from window_chrome import TitleBar
 from playback_controls import PlaybackControls
 from playback_options import PlaybackOptions
 from seek_slider import PlaybackTimeline
+from library_view import LibraryView
 
 
-class ScanButton(QPushButton):
-    def setEnabled(self, enabled):
-        super().setEnabled(enabled)
-        self.setVisible(enabled)
-
-
-def build_interface(window, tree_class, delegate_class, bundle):
+def build_interface(window, bundle):
     from ui import PathLabel, icon, label, button
 
     def tool(name, action, symbol):
@@ -56,7 +51,7 @@ def build_interface(window, tree_class, delegate_class, bundle):
     more = tool('更多', lambda: None, 'more')
     more.setObjectName('settingsButton')
     menu = QMenu(more)
-    for text, action in [('历史文件夹', lambda: window.library('folders')),
+    for text, action in [('历史文件夹', window.folder_history),
                          ('存储路径', window.storage_dialog),
                          ('系统缩略图', window.explorer_thumbnail_dialog),
                          ('文件任务', window.task_dialog), ('帮助', window.help_dialog)]:
@@ -85,61 +80,9 @@ def build_interface(window, tree_class, delegate_class, bundle):
     window.splitter.setHandleWidth(6)
     window.splitter.setChildrenCollapsible(False)
     root.addWidget(window.splitter, 1)
-    window.sidebar = QFrame()
-    window.sidebar.setObjectName('libraryCard')
-    window.sidebar.setMinimumWidth(320)
-    left = QVBoxLayout(window.sidebar)
-    left.setContentsMargins(16, 8, 12, 12)
-    left.setSpacing(8)
-    navigation = QHBoxLayout()
-    navigation.setSpacing(4)
-    window.sidebar_tabs = {}
-    for text, mode in [('文件', 'files'), ('最近', 'videos'), ('收藏', 'stars')]:
-        tab = button(text, lambda checked=False, mode=mode: window.show_sidebar(mode), role='tab')
-        tab.setCheckable(True)
-        tab.setChecked(mode == 'files')
-        window.sidebar_tabs[mode] = tab
-        navigation.addWidget(tab)
-    navigation.addStretch()
-    left.addLayout(navigation)
-    folder_row = QHBoxLayout()
-    window.folder_label = PathLabel('')
-    folder_row.addWidget(window.folder_label, 1)
-    window.file_count = label('', 'badge')
-    folder_row.addWidget(window.file_count)
-    window.import_button = tool('导入文件夹', window.choose_folder, 'plus')
-    folder_row.addWidget(window.import_button)
-    left.addLayout(folder_row)
-    window.library_stack = QStackedWidget()
-    window.tree = tree_class()
-    window.tree.setObjectName('libraryTree')
-    window.tree.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-    window.tree.setIndentation(16)
-    window.tree.setItemDelegate(delegate_class(window.thumbnails, window.tree, current_video=lambda: window.current, details=window.video_details, theme_owner=window))
-    window.thumbnails.changed.connect(window.tree.viewport().update)
-    window.tree.dropped.connect(window.load_folder)
-    window.tree.doubleClicked.connect(window.open_index)
-    window.library_stack.addWidget(window.tree)
-    window.sidebar_list = QListWidget()
-    window.sidebar_list.setObjectName('sidebarList')
-    window.sidebar_list.setMouseTracking(True)
-    window.sidebar_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-    window.sidebar_list.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
-    window.sidebar_list.setItemDelegate(delegate_class(window.thumbnails, window.sidebar_list, current_video=lambda: window.current, details=window.video_details, theme_owner=window))
-    window.thumbnails.changed.connect(window.sidebar_list.viewport().update)
-    window.sidebar_list.itemDoubleClicked.connect(window.open_sidebar_item)
-    window.library_stack.addWidget(window.sidebar_list)
-    left.addWidget(window.library_stack, 1)
-    window.sidebar_mode = 'files'
-    window.cancel_button = ScanButton('取消扫描')
-    window.cancel_button.setProperty('role', 'quiet')
-    window.cancel_button.clicked.connect(lambda: (window.scan_cancel.set(), window.navigation_cancel.set()))
-    window.cancel_button.setEnabled(False)
-    window.remove_favorite = button('取消收藏', window.remove_sidebar_favorite, 'star', 'quiet')
-    window.remove_favorite.hide()
-    left.addWidget(window.cancel_button)
-    left.addWidget(window.remove_favorite)
-    window.splitter.addWidget(window.sidebar)
+    window.library_view = LibraryView(window.library_controller, window.thumbnails,
+                                      lambda: window.current, window)
+    window.splitter.addWidget(window.library_view)
 
     right = QFrame()
     right.setObjectName('playerCard')
@@ -179,7 +122,7 @@ def build_interface(window, tree_class, delegate_class, bundle):
     emblem.setPixmap(icon('play', '#424a59', 48).pixmap(48, 48))
     emblem.setAlignment(Qt.AlignCenter)
     empty.addWidget(emblem, 0, Qt.AlignHCenter)
-    window.empty_import = button('导入文件夹', window.choose_folder, 'plus', 'primary')
+    window.empty_import = button('导入文件夹', window.library_view.choose_folder, 'plus', 'primary')
     window.empty_import.setFixedHeight(38)
     window.empty_import.setToolTip('也可将文件夹拖入左侧列表')
     empty.addWidget(window.empty_import, 0, Qt.AlignHCenter)

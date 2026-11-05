@@ -59,8 +59,8 @@ def run(destination):  # 源码和便携 EXE 使用相同验收入口。
     try:  # 任意失败仍保留报告和界面证据。
         window.thumbnail_service.pause(True)  # 构造旧版样例期间不让缩略图读取马上要移动的来源路径。
         window.load_folder(str(samples))  # 使用正式异步扫描建立原播放上下文。
-        check('来源异步扫描完成', wait(lambda: window.browsing is not None))  # 等待完整快照。
-        context = window.browsing  # 归档后仍需保持原播放顺序。
+        check('来源异步扫描完成', wait(lambda: window.library_controller.browsing is not None))  # 等待完整快照。
+        context = window.library_controller.browsing  # 归档后仍需保持原播放顺序。
         vids = [entry[0] for entry in context.folders[str(samples)][1]]  # 保存两个稳定身份。
         tags = ['绝区零', '爱丽丝', '黑丝', '足交', 'ASMR', 'cosplay']  # 使用用户给出的六标签场景。
         window.archiver.submit(vids[0], 8, tags)  # 创建旧版平级六入口样例。

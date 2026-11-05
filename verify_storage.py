@@ -26,7 +26,7 @@ def run(destination):  # 不运行播放或完整回归测试。
     check('首次没有默认盘符或归档目录', window.storage.root is None and window.archiver.root is None)  # 不默认使用开发者的文件夹。
     QTimer.singleShot(0, cancel_first)  # 在模态循环中取消首次设置。
     window.initialize_storage()  # 使用正常启动调用的同一入口。
-    check('首次取消不保存配置且不自动播放', not window.storage.file.exists() and window.current is None and window.browsing is None)  # 可以先正常浏览。
+    check('首次取消不保存配置且不自动播放', not window.storage.file.exists() and window.current is None and window.library_controller.browsing is None)  # 可以先正常浏览。
     sample = output / 'sample.mp4'  # 创建无需解码的归档样例。
     sample.write_bytes(b'isolated storage settings fixture')  # 不读取真实视频。
     vid = window.store.register(sample)  # 记录稳定身份。

@@ -4,9 +4,10 @@ import subprocess  # 生成本次回归专用的真实视频样例。
 import sys  # 读取自检输出目录。
 import time  # 等待异步图片显示。
 from pathlib import Path  # 管理独立验证数据。
-from PySide6.QtCore import Qt, QTimer, QRect, QThreadPool  # 驱动真实 Qt 列表与事件循环。
+from PySide6.QtCore import Qt, QRect, QThreadPool  # 驱动真实 Qt 列表与事件循环。
 from PySide6.QtGui import QImage, QImageReader  # 验证实际图像文件与可见像素。
-from PySide6.QtWidgets import QApplication, QListWidget  # 验证目录树和模态视频列表。
+from PySide6.QtWidgets import QApplication  # 验证目录树和侧栏视频列表。
+from library_views import THUMB_VIEW, THUMB_ROW
 
 def run(destination):  # 源码和打包后的 EXE 使用同一可见性检查。
     from app import Window, BUNDLE  # 使用生产窗口及随包资源路径。
@@ -39,11 +40,13 @@ def run(destination):  # 源码和打包后的 EXE 使用同一可见性检查�
         return False  # 超时返回失败而不伪报成功。
     def colored_pixels(view, index):  # 直接检查可见缩略图区域的像素而非只看缓存文件。
         row = view.visualRect(index)  # 取得视图实际布局中的视频行区域。
-        region = QRect(row.left() + 6, row.top() + 8, 180, 120)  # 与生产委托使用的画布坐标一致。
+        region = QRect(row.left() + 10, row.top() + 8, *THUMB_VIEW)
         frame = view.viewport().grab(region).toImage()  # 抓取实际视口中已绘制的缩略图。
-        colors = {frame.pixelColor(x, y).rgb() for x in range(5, 175, 5) for y in range(5, 115, 5)}  # 排除空白或只有占位文字的假阳性。
-        colorful = sum(1 for x in range(5, 175, 5) for y in range(5, 115, 5) if frame.pixelColor(x, y).saturation() > 170)  # 样例画面应显示大面积彩色色块。
-        return row.height() >= 136 and len(colors) > 30 and colorful > 100  # 同时验证行尺寸与真实视频画面。
+        ratio = frame.devicePixelRatio()
+        colors = [frame.pixelColor(round(x * ratio), round(y * ratio))
+                  for x in range(5, THUMB_VIEW[0] - 5, 5) for y in range(5, THUMB_VIEW[1] - 5, 5)]
+        colorful = sum(color.saturation() > 170 for color in colors)
+        return row.height() >= THUMB_ROW and len({color.rgb() for color in colors}) > 30 and colorful > 100
     try:  # 无论成功或失败都保存截图证据。
         vid = window.store.register(first)  # 为旧缓存迁移测试提前登记身份。
         cache = output / 'data/thumbnails'  # 使用生产缓存位置。
@@ -53,27 +56,21 @@ def run(destination):  # 源码和打包后的 EXE 使用同一可见性检查�
         old.save(str(cache / f'{vid}.jpg'))  # 保存需要自动重建的旧图片。
         window.show()  # 必须展示真实列表，不只测试后台函数。
         window.load_folder(str(samples))  # 通过正式异步导入流程加载目录。
-        check('无需选择视频自动显示缩略图', wait_until(lambda: window.browsing is not None and vid in window.thumbnails.images))  # 导入展开后无需点击视频。
-        root = window.tree.model().index(0, 0)  # 获取导入根目录节点。
-        first_index = window.tree.model().index(0, 0, root)  # 获取第一部视频的真实模型索引。
-        second_index = window.tree.model().index(1, 0, root)  # 获取同内容的第二个硬链接入口。
-        check('目录树实际绘制180×120视频画面', colored_pixels(window.tree, first_index))  # 检查真实可见图片区域。
-        check('两个硬链接入口均显示且共用缓存', colored_pixels(window.tree, second_index) and len(window.thumbnails.images) == 1)  # 不重复解码同一个视频。
+        check('无需选择视频自动显示缩略图', wait_until(lambda: window.library_controller.browsing is not None and vid in window.thumbnails.images))  # 导入展开后无需点击视频。
+        root = window.library_view.tree.model().index(0, 0)  # 获取导入根目录节点。
+        first_index = window.library_view.tree.model().index(0, 0, root)  # 获取第一部视频的真实模型索引。
+        second_index = window.library_view.tree.model().index(1, 0, root)  # 获取同内容的第二个硬链接入口。
+        check('目录树实际绘制140×79视频画面', colored_pixels(window.library_view.tree, first_index))
+        check('两个硬链接入口均显示且共用缓存', colored_pixels(window.library_view.tree, second_index) and len(window.thumbnails.images) == 1)  # 不重复解码同一个视频。
         check('旧32×32缓存重建为240×160', QImageReader(str(cache / f'{vid}.jpg')).size().width() == 240 and QImageReader(str(cache / f'{vid}.jpg')).size().height() == 160)  # 检查实际缓存迁移。
         check('生成缩略图不自动播放', window.current is None)  # 保持启动和导入时不自动播放规则。
         window.grab().save(str(output / 'directory-thumbnails.png'))  # 保存可供人工查看的目录缩略图截图。
         window.store.execute('UPDATE videos SET played=1,star=1 WHERE id=?', (vid,))  # 将测试视频加入历史和收藏。
         for mode in ['videos', 'stars']:  # 验证两个常用列表也无需选中才显示。
-            captured = []  # 将模态事件中的结果传回同步断言。
-            def capture_list():  # 在弹窗已渲染后抓取实际列表画面。
-                dialog = QApplication.activeModalWidget()  # 获取当前历史或收藏弹窗。
-                listing = dialog.findChild(QListWidget)  # 获取视频记录列表。
-                captured.append(colored_pixels(listing, listing.model().index(0, 0)))  # 检查第一行直接显示真实画面。
-                dialog.grab().save(str(output / f'{mode}-thumbnails.png'))  # 保存弹窗可见缩略图证据。
-                dialog.reject()  # 关闭弹窗但不播放测试视频。
-            QTimer.singleShot(400, capture_list)  # 等待首次绘制完成再检查。
-            window.library(mode)  # 使用正式导航弹窗。
-            check(f'{mode}列表直接显示180×120画面', captured == [True])  # 不依赖底部选中预览。
+            window.library_view.show_mode(mode)
+            listing = window.library_view.lists[mode]
+            check(f'{mode}列表直接显示缩略图', wait_until(lambda: colored_pixels(listing, listing.model().index(0, 0))))
+            window.grab().save(str(output / f'{mode}-thumbnails.png'))
         check('解码线程与排队数受限', window.thumbnails.pool.maxThreadCount() == 2 and len(window.thumbnails.pending) <= 24)  # 保证批量目录不无限启动解码器。
         report['success'] = True  # 本次所有可见性检查已通过。
     except Exception as error:  # 记录实际界面或解码失败。

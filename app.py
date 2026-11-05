@@ -1,7 +1,6 @@
 import json  # 读取视频标签和诊断数据。
 import logging  # 记录可追踪的运行错误。
 import sys  # 区分源码和便携运行方式。
-import threading  # 提供扫描取消信号。
 import time  # 管理周期保存时间。
 from pathlib import Path  # 处理便携数据路径。
 if len(sys.argv) == 3 and sys.argv[1] in ('--ui-refresh-test', '--seek-notice-test'):
@@ -13,11 +12,12 @@ if len(sys.argv) == 3 and sys.argv[1] in ('--ui-refresh-test', '--seek-notice-te
     import faulthandler
     faulthandler.enable(file=_test_console)
 from PySide6.QtCore import Qt, QTimer, QThreadPool, QEvent, QLockFile
-from PySide6.QtGui import QIcon, QPixmap
-from PySide6.QtWidgets import QApplication, QVBoxLayout, QPushButton, QLabel, QFileDialog, QMessageBox, QDialog, QListWidget, QListWidgetItem, QLineEdit, QComboBox, QAbstractSpinBox, QTextEdit, QPlainTextEdit
+from PySide6.QtGui import QIcon
+from PySide6.QtWidgets import QApplication, QVBoxLayout, QPushButton, QMessageBox, QDialog, QListWidget, QListWidgetItem, QLineEdit, QComboBox, QAbstractSpinBox, QTextEdit, QPlainTextEdit
 from background_work import Work
 from thumbnail_cache import ThumbnailCache
-from library_views import DropTree, TreeModel, VideoDelegate
+from application.library import LibraryController
+from infrastructure.library_scanner import LibraryScanner
 from infrastructure.thumbnails import ThumbnailService
 from ui import format_time
 from application.operations import Operation, UserActions
@@ -25,7 +25,7 @@ from application.tag_drafts import TagDrafts
 from application.playback import PlaybackSession
 from application.file_tasks import FileTasks, FileTaskPolicy
 from infrastructure.library_repository import LibraryRepository
-from core import Store, Archiver, ScanRequired, scan
+from core import Store, Archiver
 from video_delete import DeletionManager  # 以可恢复任务回收全部登记入口。
 from tag_migration import TagMigration  # 以可恢复批次同步全局标签层级。
 from storage_settings import StorageSettings, StorageDialog  # 加载每位用户独立的存储路径与设置窗口。
@@ -46,12 +46,12 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
         self.archiver = Archiver(self.store, ARCHIVE_ROOT if self.legacy_storage_recovery else self.storage.root)  # 正常新安装不再依赖 E 盘。
         self.deleter = DeletionManager(self.store)  # 将删除阶段与元数据提交持久记账。
         self.tag_migration = TagMigration(self.store, self.archiver)  # 全局分类复用逐视频硬链接归档和恢复日志。
-        self.video_details = {}
         self.thumbnail_service = ThumbnailService(self.store.directory, self.catalog.resolve, BUNDLE)
         self.thumbnails = ThumbnailCache(self.thumbnail_service, lambda: self.busy, self)
-        self.browsing, self.context, self.location, self.current = None, None, None, None  # 浏览快照与播放快照严格分离。
-        self.scan_cancel, self.scan_serial, self.jobs, self.busy = threading.Event(), 0, [], False  # 管理取消和后台任务。
-        self.navigation_cancel = threading.Event()  # 同级目录延迟扫描也支持取消。
+        self.context, self.location, self.current = None, None, None
+        self.jobs, self.busy = [], False
+        self.library_controller = LibraryController(self.catalog, LibraryScanner(self.store),
+            lambda function, callback: self.work(function, callback))
         self.playback = PlaybackSession()
         self.user_actions = UserActions()
         self.tag_drafts = TagDrafts(self.catalog,
@@ -64,7 +64,10 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
         self.resize(1440, 920)  # 为品牌导航、双层控制和大缩略图保留舒适留白。
         self.setMinimumSize(900, 580)  # 避免窗口过小造成导航和分类按钮重叠。
         from layout import build_interface  # 按独立视觉模块构建蓝色卡片布局。
-        build_interface(self, DropTree, VideoDelegate, BUNDLE)  # 保留所有既有控件变量和业务回调。
+        build_interface(self, BUNDLE)
+        self.library_view.folderRequested.connect(self.load_folder)
+        self.library_view.videoRequested.connect(self.open_library_video)
+        self.library_view.unfavoriteRequested.connect(self.remove_library_favorite)
         self.setWindowIcon(QIcon(str(BUNDLE / 'assets/yunli.ico')))  # 窗口与任务栏使用同一云璃 Q 版图标。
         from video_fullscreen import VideoFullscreen  # 独立管理视频全屏与控制栏浮层。
         self.video_fullscreen = VideoFullscreen(self)  # 不移动 VLC 原生播放窗口，保持解码连续。
@@ -94,10 +97,6 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
     def fail(self, error):  # 明确报告失败而不显示成功。
         QMessageBox.warning(self, '操作未完成', str(error))  # 用户可看到真实失败原因。
 
-    def choose_folder(self):  # 支持按钮选择目录。
-        folder = QFileDialog.getExistingDirectory(self, '选择视频文件夹')  # 使用系统目录选择器。
-        if folder:  # 取消对话框不触发扫描。
-            self.load_folder(folder)  # 复用拖放导入流程。
 
     def has_pending_file_tasks(self):  # 未完成文件意图必须先按原目标恢复。
         return bool(self.catalog.pending_tasks())  # 仅查询内部固定表名。
@@ -121,47 +120,37 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
             return True  # 已配置时不重复弹窗。
         return self.storage_dialog(first_run=True)  # 稍后设置会取消本次归档操作。
 
-    def load_folder(self, folder, play_id=None):  # 替换浏览树而不改变当前播放。
-        if self.busy:  # 归档期间不启动会改变当前视频的操作。
-            self.message('归档处理中，请等待完成。')  # 说明暂时不可操作的原因。
-            return  # 保持当前上下文。
-        self.scan_cancel.set()  # 取消上一次尚未完成的扫描。
-        self.scan_cancel = threading.Event()  # 每次扫描拥有独立取消对象。
-        self.scan_serial += 1  # 用代次丢弃晚到的旧扫描结果。
-        serial, cancel = self.scan_serial, self.scan_cancel  # 在线程启动前捕获变量。
-        self.cancel_button.setEnabled(True)  # 允许用户中断扫描。
-        self.message(f'正在扫描：{folder}')  # 展示扫描任务状态。
-        def ready(result, error):  # 接收完整扫描快照。
-            if serial != self.scan_serial:  # 旧扫描不覆盖新目录。
-                return  # 丢弃过期结果。
-            self.cancel_button.setEnabled(False)  # 当前扫描结束。
-            if error:  # 取消或访问错误不清空旧浏览树。
-                (self.message if isinstance(error, InterruptedError) else self.fail)(str(error))
-                return  # 保持既有播放器状态。
-            self.browsing, errors = result  # 只替换浏览快照。
-            ids = (vid for _, files in self.browsing.folders.values() for vid, _ in files)
-            self.video_details.update(self.catalog.video_details(ids))
-            self.tree.setModel(TreeModel(self.browsing))  # 按需显示新目录树。
-            self.tree.expand(self.tree.model().index(0, 0))  # 默认展开导入根目录。
-            self.folder_label.setText(str(folder))  # 显示当前浏览位置。
-            self.file_count.setText(f'{sum(len(files) for children, files in self.browsing.folders.values())} 部')  # 同步当前目录快照中的视频数量。
-            self.catalog.remember_folder(folder)  # 历史文件夹独立记录。
-            self.message(f'扫描完成，{len(self.browsing.folders)} 个目录；跳过 {len(errors)} 个无法访问的条目。')  # 给出扫描结果。
-            for error_text in errors:  # 保存具体无法访问的路径。
-                logging.warning(error_text)  # 可通过日志进一步诊断。
-            if play_id:  # 历史或收藏明确请求恢复某个视频。
-                for directory, (_, files) in self.browsing.folders.items():  # 在恢复的浏览目录内查找稳定 ID。
-                    for index, (vid, name) in enumerate(files):  # 不使用同名匹配。
-                        if vid == play_id:  # 找到原身份的有效入口。
-                            self.start(self.browsing, (directory, index))  # 此时主动建立新的播放上下文。
-                            return  # 只播放一条记录。
-                self.fail('扫描后未找到原视频身份；文件可能已被移动或替换。')  # 明确处理扫描期间外部变化。
-        self.work(lambda: scan(folder, self.store, cancel), ready)  # 完整递归在后台运行。
+    def load_folder(self, folder, play_id=None):
+        if self.busy:
+            self.message('文件任务正在处理，请稍候。')
+            return Operation.cancelled()
+        self.message(f'正在扫描：{folder}')
+        operation = self.library_controller.load_folder(folder, play_id)
+        def ready(outcome):
+            if outcome.error:
+                self.fail(outcome.error)
+            elif outcome.succeeded:
+                result = outcome.value
+                self.message(f'扫描完成，{len(result.snapshot.folders)} 个目录；跳过 {len(result.errors)} 个无法访问的条目。')
+                for error in result.errors:
+                    logging.warning(error)
+                if result.location is not None:
+                    self.start(result.snapshot, result.location)
+        return operation.on_finished(ready)
 
-    def open_index(self, index):  # 双击文件时建立播放上下文。
-        kind, folder, number = index.internalPointer()  # 从当前浏览模型读取逻辑位置。
-        if kind == 'video':  # 文件夹双击由树负责展开收起。
-            self.start(self.browsing, (folder, number))  # 用户主动选择才改变上下文。
+    def open_library_video(self, selection):
+        if self.busy and not self.tag_drafts.saving:
+            return
+        if selection.context is not None:
+            self.start(selection.context, selection.location)
+            return
+        def opened():
+            try:
+                self.load_folder(str(self.catalog.resolve(selection.video_id).parent), selection.video_id)
+            except OSError as error:
+                self.fail(error)
+        self.user_actions.request(opened, self.playback_options.flush_pending)
+
 
     def save(self):
         if self.current and not self.busy:
@@ -169,8 +158,7 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
                 self.player.get_time(), ended=self.player.get_state() == self.vlc.State.Ended)
             if position is not None:
                 self.catalog.progress(self.current, position)
-            if self.current in self.video_details:
-                self.video_details[self.current]['position'] = position
+                self.library_controller.refresh((self.current,))
 
     def start(self, context, location):
         if self.busy and not self.tag_drafts.saving:
@@ -186,9 +174,10 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
             self.fail(error)
             return
         self.save()
+        self.library_controller.cancel_playback_requests()
+        previous = self.current
         self.context, self.location, self.current = context, location, vid
-        if self.tree.currentIndex().data(Qt.UserRole) != vid:
-            self.tree.clearSelection()
+        self.library_view.playback_changed(previous, vid)
         self.catalog.mark_played(vid)
         self.play_path(path, self.catalog.video(vid)['position'], False)
         self.refresh_title()
@@ -245,61 +234,23 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
             details = ([f"{video['score']} 分"] if video['score'] is not None else []) + json.loads(video['tags'])
             self.metadata.setText(' · '.join(details))
             self.metadata.setVisible(bool(details))
-            self.video_details[self.current] = video
-        self.tree.viewport().update()
-        self.show_sidebar(self.sidebar_mode)
+            self.library_controller.refresh((self.current,), self.context)
 
-    def show_sidebar(self, mode):
-        self.sidebar_mode = mode
-        for key, tab in self.sidebar_tabs.items():
-            tab.setChecked(key == mode)
-        self.library_stack.setCurrentIndex(0 if mode == 'files' else 1)
-        self.folder_label.setVisible(mode == 'files')
-        self.file_count.setVisible(mode == 'files')
-        self.remove_favorite.setVisible(mode == 'stars')
-        if mode == 'files':
-            return
-        scroll = self.sidebar_list.verticalScrollBar().value()
-        current = self.sidebar_list.currentItem()
-        selected = current.data(Qt.UserRole) if current else None
-        self.sidebar_list.clear()
-        for row in self.catalog.videos(mode):
-            self.video_details[row['id']] = row
-            item = QListWidgetItem(row['name'], self.sidebar_list)
-            item.setData(Qt.UserRole, row['id'])
-            item.setToolTip(row['name'])
-            if row['id'] == selected:
-                self.sidebar_list.setCurrentItem(item)
-        self.sidebar_list.verticalScrollBar().setValue(scroll)
 
-    def open_sidebar_item(self, item):
-        if self.busy and not self.tag_drafts.saving:
-            return
-        vid = item.data(Qt.UserRole)
-        def open_video():
-            try:
-                self.load_folder(str(self.catalog.resolve(vid).parent), vid)
-            except OSError as error:
-                self.fail(error)
-        self.user_actions.request(open_video, self.playback_options.flush_pending)
 
-    def remove_sidebar_favorite(self):
-        item = self.sidebar_list.currentItem()
-        if item:
-            vid = item.data(Qt.UserRole)
-            self.catalog.set_favorite(vid, False)
-            self.video_details[vid] = self.catalog.video(vid) or {}
-            self.refresh_title()
+    def remove_library_favorite(self, video_id):
+        self.library_controller.remove_favorite(video_id)
+        self.refresh_title()
 
     def toggle_sidebar(self):
         if self.video_fullscreen.active:
             return
-        if self.sidebar.isHidden():
-            self.sidebar.show()
+        if self.library_view.isHidden():
+            self.library_view.show()
             self.splitter.setSizes(getattr(self, '_sidebar_sizes', [380, 1020]))
         else:
             self._sidebar_sizes = self.splitter.sizes()
-            self.sidebar.hide()
+            self.library_view.hide()
 
     def tick(self):
         state = self.player.get_state() if self.current else self.vlc.State.NothingSpecial
@@ -335,37 +286,22 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
             return
         self.user_actions.request(lambda: self._advance(direction, ended), self.playback_options.flush_pending)
 
-    def _advance(self, direction, ended=False):  # 按当前播放快照切换。
-        if not self.current or self.busy:  # 未播放时快捷键不作用于其他记录。
-            return  # 保持状态。
-        try:  # 常规目录内切换直接使用已有快照。
-            target = self.context.step(self.location, direction)  # 严格执行同目录及同级目录规则。
-        except ScanRequired:  # 导入根的下一个同级目录需要延迟扫描。
-            context, location, vid = self.context, self.location, self.current  # 固定本次请求的原始播放上下文。
-            if getattr(self, 'navigation_pending', False):  # 连续按 X 不重复启动同一目标扫描。
-                return  # 等待已有跨目录请求。
-            self.navigation_pending = True  # 标记正在补齐播放上下文。
-            self.navigation_cancel = threading.Event()  # 为本次延迟扫描创建独立取消标记。
-            cancel = self.navigation_cancel  # 捕获标记避免后续导航替换引用。
-            self.cancel_button.setEnabled(True)  # 大型同级目录扫描提供可见取消入口。
-            self.message('正在扫描下一个同级目录；当前视频保持原状态。')  # 明确后台切换状态。
-            def next_ready(next_location, error):  # 在主线程执行已准备的切换。
-                self.navigation_pending = False  # 允许后续导航请求。
-                self.cancel_button.setEnabled(False)  # 当前导航扫描已经结束。
-                if self.busy or cancel.is_set() or self.context is not context or self.location != location or self.current != vid:  # 删除或主动换片后忽略旧请求。
-                    return  # 不让晚到结果抢走新播放上下文。
-                if error:  # 扫描失败保持当前视频。
-                    (self.message if isinstance(error, InterruptedError) else self.fail)(str(error))
-                elif next_location:  # 目标目录内存在可播放候选。
-                    self.start(context, next_location)  # 仍沿用原上下文而不替换浏览树。
-                else:  # 后续同级目录全部为空时停止。
-                    self.message('没有后续可播放的同级目录。')  # 不向更高祖先寻找。
-            self.work(lambda: context.step_loaded(location, direction, self.store, cancel), next_ready)  # 递归扫描在后台执行且可由取消按钮中断。
-            return  # 等待异步目标准备完成。
-        if target:  # 存在下一个或上一个逻辑视频。
-            self.start(self.context, target)  # 浏览树改变不影响这个上下文。
-        else:  # 已到规则边界。
-            self.message('没有后续视频，播放已停止。' if direction > 0 and ended else '已到当前切换范围边界。')  # 不回绕播放。
+    def _advance(self, direction, ended=False):
+        if not self.current or self.busy or self.library_controller.navigation_pending:
+            return
+        context, location, vid = self.context, self.location, self.current
+        operation = self.library_controller.advance(context, location, direction)
+        def ready(outcome):
+            if self.busy or self.context is not context or self.location != location or self.current != vid:
+                return
+            if outcome.error:
+                self.fail(outcome.error)
+            elif outcome.succeeded:
+                if outcome.value:
+                    self.start(context, outcome.value)
+                else:
+                    self.message('没有后续视频，播放已停止。' if direction > 0 and ended else '已到当前切换范围边界。')
+        operation.on_finished(ready)
 
     def toggle(self):  # 空格或按钮切换暂停状态。
         if self.current and not self.busy:  # 不操作空播放器或归档中的句柄。
@@ -434,36 +370,22 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
             return True  # 避免树视图再次消费方向键。
         return False  # 其他按键保持默认行为。
 
-    def refresh_deleted(self, vids):  # 删除后刷新浏览显示而不重排原播放索引。
-        self.thumbnail_service.mark_deleted(vids)  # 后台旧请求不再生成已删除视频的缓存。
-        for snapshot in (self.browsing, self.context):  # 浏览目录与播放上下文各自维护排除身份。
-            if snapshot:  # 启动任务恢复时可能尚无目录。
-                snapshot.excluded.update(vids)  # 所有已知硬链接行同时消失。
-        for vid in vids:  # 清除同一身份共用的缩略图缓存。
-            self.thumbnails.images.pop(vid, None)  # 释放内存图片。
-            self.thumbnails.errors.pop(vid, None)  # 不保留失效错误。
-            try:  # 派生缓存清理失败不应阻止已成功删除后的连播。
-                (self.store.directory / 'thumbnails' / f'{vid}.jpg').unlink(missing_ok=True)  # 仅删除本应用的派生缓存。
-            except OSError:  # 病毒扫描等短暂占用可留待后续缓存清理。
-                logging.warning('删除后的缩略图缓存暂时无法清理：%s', vid)  # 视频文件操作成功状态仍然准确。
-        if self.browsing:  # 保留导入目录和已展开层级。
-            model = self.tree.model()  # 获取当前轻量树模型。
-            expanded = {node[1] for node in model.nodes if node[0] == 'folder' and self.tree.isExpanded(self.folder_index(node[1]))}  # 保存用户展开的目录。
-            model.beginResetModel()  # 告知视图原显示行数已经改变。
-            model.endResetModel()  # 原快照视频索引仍保持有效。
-            for folder in expanded:  # 恢复可见目录层级。
-                self.tree.expand(self.folder_index(folder))  # 不强制重新折叠用户目录。
-            self.file_count.setText(f'{sum(len(self.browsing.visible_files(folder)) for folder in self.browsing.folders)} 部')  # 数量不包含已删除视频。
+    def refresh_deleted(self, vids):
+        self.thumbnail_service.mark_deleted(vids)
+        self.library_controller.exclude(vids, self.context)
+        for vid in vids:
+            self.thumbnails.images.pop(vid, None)
+            self.thumbnails.errors.pop(vid, None)
+            try:
+                (self.store.directory / 'thumbnails' / f'{vid}.jpg').unlink(missing_ok=True)
+            except OSError:
+                logging.warning('删除后的缩略图缓存暂时无法清理：%s', vid)
 
-    def folder_index(self, folder):  # 从浏览快照构造一个文件夹索引。
-        model = self.tree.model()  # 使用当前模型的稳定节点引用。
-        row = 0 if folder == self.browsing.root else self.browsing.folders[str(Path(folder).parent)][0].index(folder)  # 文件夹顺序不会随视频删除变化。
-        node = ('folder', folder, -1)  # 与 TreeModel 的目录节点格式一致。
-        return model.createIndex(row, 0, model.nodes.setdefault(node, node))  # 支持恢复嵌套展开状态。
 
     def clear_player(self):
         self.seek_notice.clear()
-        self.current = None
+        previous, self.current = self.current, None
+        self.library_view.playback_changed(previous, None)
         self.playback.clear()
         self.refresh_title()
         self.player.stop()
@@ -475,68 +397,50 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
         self.time_label.setText('00:00 / 00:00')
         self.sync_play_button()
 
-    def after_deleted_current(self, context, location):  # 使用删除前的播放上下文自动寻找下一条。
-        self.clear_player()  # 在异步扫描前清除不存在的当前身份。
-        self.busy = True  # 防止等待下一条时收到重复删除或切换请求。
-        cancel = threading.Event()  # 允许沿用同一套可取消导航规则。
-        self.navigation_cancel = cancel  # 正常退出时可取消后续扫描。
-        self.cancel_button.setEnabled(True)  # 删除后的大型同级目录扫描也允许取消。
-        def ready(target, error):  # 目标准备完成后回到主线程播放。
-            self.busy = False  # 恢复常规操作。
-            self.cancel_button.setEnabled(False)  # 目标扫描结束后恢复按钮状态。
-            if error:  # 无权限等失败不伪装成正常连播。
-                self.fail(f'删除完成，查找下一个视频失败：{error}')
-            elif target:  # 与 X 相同的目录边界内存在下一条。
-                self.start(context, target)  # 自动播放，仍保留原来的目录顺序。
-                self.message('已移入回收站，正在播放下一个视频。')  # 简短反馈成功和切换结果。
-            else:  # 没有后续视频时不循环到开头。
-                self.message('已移入回收站，没有下一个视频，播放已停止。')  # 明确停止原因。
-        self.work(lambda: context.step_loaded(location, 1, self.store, cancel), ready)  # 跨同级目录扫描不阻塞界面。
+    def after_deleted_current(self, context, location):
+        self.clear_player()
+        self.busy = True
+        operation = self.library_controller.advance(context, location, 1)
+        def ready(outcome):
+            self.busy = False
+            if outcome.error:
+                self.fail(f'删除完成，查找下一个视频失败：{outcome.error}')
+            elif outcome.succeeded and outcome.value:
+                self.start(context, outcome.value)
+                self.message('已移入回收站，正在播放下一个视频。')
+            else:
+                self.message('已移入回收站，没有下一个视频，播放已停止。')
+        operation.on_finished(ready)
 
 
     def delete_video(self, _target=None, _context=None):
         if self.busy and not self.tag_drafts.saving:
             self.message('文件任务正在处理，请稍候。')
             return
-        selected = self.tree.selectionModel().selectedIndexes() if self.tree.selectionModel() and self.sidebar_mode == 'files' and self.sidebar.isVisible() and not self.video_fullscreen.active else []
-        item = self.sidebar_list.currentItem() if self.sidebar_mode != 'files' and self.sidebar.isVisible() and not self.video_fullscreen.active else None
-        vid = _target or (item.data(Qt.UserRole) if item else None) or next((index.data(Qt.UserRole) for index in selected if index.data(Qt.UserRole)), None) or self.current
+        selected = self.library_view.selection() if self.library_view.isVisible() and not self.video_fullscreen.active else None
+        vid = _target or (selected.video_id if selected else None) or self.current
         if not vid:
             self.message('请先选中或播放一个视频。')
             return
         context = _context
         if context is None and vid == self.current:
             context = (self.context, self.location)
-        elif context is None and item is None:
-            index = next(index for index in selected if index.data(Qt.UserRole) == vid)
-            _, folder, number = index.internalPointer()
-            context = (self.browsing, (folder, number))
+        elif context is None and selected and selected.video_id == vid and selected.context is not None:
+            context = (selected.context, selected.location)
         self.user_actions.request(lambda: self._delete_video(vid, context), self.playback_options.flush_pending)
 
     def _delete_video(self, vid, context):
         playing = vid == self.current
         if context is None:
-            try:
-                folder = self.catalog.resolve(vid).parent
-            except OSError as error:
-                self.fail(error)
-                return
             self.busy = True
-            cancel = threading.Event()
-            self.navigation_cancel = cancel
-            def ready(result, error):
+            operation = self.library_controller.locate_video(vid)
+            def ready(outcome):
                 self.busy = False
-                if error:
-                    self.fail(error)
-                    return
-                snapshot, _ = result
-                location = next(((directory, number) for directory, (_, files) in snapshot.folders.items()
-                                 for number, (entry_id, _) in enumerate(files) if entry_id == vid), None)
-                if location is None:
-                    self.fail('所选视频已不可访问。')
-                    return
-                self._delete_video(vid, (snapshot, location))
-            self.work(lambda: scan(folder, self.store, cancel), ready)
+                if outcome.error:
+                    self.fail(outcome.error)
+                elif outcome.succeeded:
+                    self._delete_video(vid, outcome.value)
+            operation.on_finished(ready)
             return
         snapshot, location = context
         self.thumbnail_service.mark_deleting({vid}, True)
@@ -589,21 +493,11 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
             self.archive(vid, score, json.loads(video['tags']))
         else:
             self.catalog.set_score(vid, score)
-            self.video_details[vid] = self.catalog.video(vid) or {}
+            self.library_controller.refresh((vid,), self.context)
             self.refresh_title()
 
-    def refresh_names(self, vids):  # 批次完成或部分失败后显示数据库实际提交的名称。
-        rows = self.catalog.video_details(vids)
-        self.video_details.update(rows)
-        names = {vid: row['name'] for vid, row in rows.items()}
-        for snapshot in (self.browsing, self.context):  # 两套快照都只更新文字，不重排原序号。
-            if snapshot:  # 启动恢复时可能没有目录。
-                for children, files in snapshot.folders.values():  # 遍历现有显示与播放条目。
-                    for number, (entry_id, entry_name) in enumerate(files):  # 使用视频身份定位全部硬链接入口。
-                        if entry_id in names:  # 同一视频的多个行同步显示名称。
-                            files[number] = (entry_id, names[entry_id])  # 保持原目录上下文和索引。
-                snapshot.visible_cache.clear()  # 不复用旧显示名称缓存。
-        self.tree.viewport().update()  # 只刷新可见区域，不折叠目录。
+    def refresh_names(self, vids):
+        self.library_controller.refresh(vids, self.context)
 
     def _begin_file_task(self, policy):
         self.save()
@@ -615,10 +509,7 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
         self.thumbnail_service.pause(True)
         try:
             if policy.cancel_navigation:
-                self.scan_cancel.set()
-                self.scan_serial += 1
-                self.navigation_cancel.set()
-                self.cancel_button.setEnabled(False)
+                self.library_controller.cancel()
             if policy.release_media:
                 self.player.stop()
                 self.player.set_media(None)
@@ -684,62 +575,28 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
         operation.on_finished(completed)
         return operation
 
-    def library(self, mode):  # 显示互相独立的历史和收藏列表。
-        if self.busy:  # 归档过程中不恢复其他视频。
-            self.message('请等待归档完成。')  # 明确忙碌状态。
-            return  # 不打开可切换视频的列表。
-        dialog, layout = QDialog(self), QVBoxLayout()  # 创建列表弹窗。
-        dialog.setWindowTitle({'videos': '历史视频 · 双击续播', 'folders': '历史文件夹 · 双击仅加载目录', 'stars': '收藏列表 · 双击续播'}[mode])  # 明确不同打开行为。
-        dialog.resize(760, 480)  # 为完整路径和缩略图留出空间。
-        dialog.setLayout(layout)  # 安装列表布局。
-        listing = QListWidget()  # 创建可双击列表。
-        if mode != 'folders':  # 视频历史和收藏直接逐行显示大缩略图。
-            listing.setItemDelegate(VideoDelegate(self.thumbnails, listing, current_video=lambda: self.current, details=self.video_details, theme_owner=self))  # 不要求先选中记录才显示画面。
-            self.thumbnails.changed.connect(listing.viewport().update)  # 异步完成后刷新当前可见列表。
-        layout.addWidget(listing)  # 列表填满弹窗。
-        rows = self.catalog.folders() if mode == 'folders' else self.catalog.videos(mode)  # 独立查询三类记录。
-        for row in rows:  # 为每条历史或收藏创建一行。
-            item = QListWidgetItem(row['path'] if mode == 'folders' else f'{row["name"]}  ·  {format_time(row["position"])}  ·  {"未评分" if row["score"] is None else str(row["score"]) + "分"}', listing)  # 显示身份对应的进度评分。
-            item.setData(Qt.UserRole, row['path'] if mode == 'folders' else row['id'])  # 视频列表以 ID 而非路径识别。
-        def opened(item):  # 双击列表项执行对应恢复。
-            key = item.data(Qt.UserRole)  # 读取视频 ID 或历史目录。
-            try:  # 提前处理文件失效问题。
-                folder = Path(key) if mode == 'folders' else self.catalog.resolve(key).parent  # 恢复当前有效所在目录。
-                if not folder.is_dir():  # 历史目录可能已被删除。
-                    raise FileNotFoundError(f'目录不存在：{folder}')  # 明确提示失效位置。
-                dialog.accept()  # 关闭列表后开始扫描。
-                self.load_folder(str(folder), None if mode == 'folders' else key)  # 历史文件夹绝不自动播放。
-            except OSError as error:  # 缺失记录不匹配同名文件。
-                QMessageBox.warning(dialog, '无法打开', str(error))  # 保留列表方便选择其他项目。
-        listing.itemDoubleClicked.connect(opened)  # 双击才触发恢复。
-        if mode == 'stars':  # 收藏列表提供明确取消操作。
-            remove = QPushButton('取消选中视频的收藏')  # 不借用 W 作为取消开关。
-            def remove_star():  # 仅取消当前列表选中条目。
-                item = listing.currentItem()  # 获取选择的视频。
-                if item:  # 空选择不修改记录。
-                    self.catalog.set_favorite(item.data(Qt.UserRole), False)  # 收藏取消不移动文件。
-                    listing.takeItem(listing.row(item))  # 从当前列表移除显示。
-                    self.refresh_title()  # 同步当前视频收藏标志。
-            remove.clicked.connect(remove_star)  # 绑定取消收藏操作。
-            layout.addWidget(remove)  # 放置独立取消入口。
-        preview = QLabel('选择视频后异步读取缓存缩略图')  # 缩略图只为实际选中记录生成。
-        layout.addWidget(preview)  # 明确软件内部的预览位置。
-        if mode != 'folders':  # 文件夹历史不需要视频缩略图。
-            def selection():  # 为当前选择请求共享缩略图。
-                item = listing.currentItem()  # 获取当前视频项。
-                if not item:  # 空列表不执行解码。
-                    return  # 保持初始提示。
-                vid = item.data(Qt.UserRole)  # 多个硬链接入口共用视频 ID。
-                def thumb_ready(path, error):  # 后台完成后只更新仍打开的弹窗。
-                    if dialog.isVisible() and listing.currentItem() and listing.currentItem().data(Qt.UserRole) == vid:  # 防止晚到结果覆盖新选择。
-                        if error:  # 不支持的编码显示文字而非卡死。
-                            preview.setText('缩略图不可用：' + str(error))  # 与播放器兼容性分开报告。
-                        else:  # 已生成的图片可安全在主线程显示。
-                            from PySide6.QtGui import QPixmap  # 图片对象只在 GUI 线程构造。
-                            preview.setPixmap(QPixmap(str(path)))  # 展示共享缓存图片。
-                self.work(lambda: self.thumbnail_service.generate(vid), thumb_ready)  # 解码和文件读取均在后台。
-            listing.currentItemChanged.connect(selection)  # 选中视频才请求预览。
-        dialog.exec()  # 模态窗口优先处理所有按键。
+    def folder_history(self):
+        if self.busy:
+            self.message('请等待文件任务完成。')
+            return
+        dialog = QDialog(self)
+        dialog.setWindowTitle('历史文件夹 · 双击仅加载目录')
+        dialog.resize(760, 480)
+        layout = QVBoxLayout(dialog)
+        listing = QListWidget(dialog)
+        layout.addWidget(listing)
+        for row in self.catalog.folders():
+            item = QListWidgetItem(row['path'], listing)
+            item.setData(Qt.UserRole, row['path'])
+        def opened(item):
+            folder = Path(item.data(Qt.UserRole))
+            if not folder.is_dir():
+                QMessageBox.warning(dialog, '无法打开', f'目录不存在：{folder}')
+                return
+            dialog.accept()
+            self.load_folder(str(folder))
+        listing.itemDoubleClicked.connect(opened)
+        dialog.exec()
 
 
     def task_dialog(self):  # 展示真实归档阶段和失败信息。
@@ -837,8 +694,7 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
         if not operation.outcome.succeeded:
             event.ignore()
             return
-        self.scan_cancel.set()
-        self.navigation_cancel.set()
+        self.library_controller.cancel()
         self.thumbnails.closing = True
         self.save()
         self.timer.stop()

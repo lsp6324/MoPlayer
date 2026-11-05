@@ -44,7 +44,7 @@ def require_private_desktop():
 
 def run(destination):
     desktop = require_private_desktop()
-    from PySide6.QtCore import Qt, QPoint, QThreadPool, QTimer
+    from PySide6.QtCore import Qt, QPoint, QThreadPool, QTimer, QPersistentModelIndex
     from PySide6.QtTest import QTest
     from PySide6.QtWidgets import QApplication, QWidget
     from app import Window, BUNDLE
@@ -148,10 +148,8 @@ def run(destination):
         import shutil
         shutil.copyfile(sample, sample_dir / 'second.mp4')
         context, _ = scan(sample_dir, window.store, threading.Event())
-        window.browsing = context
-        from library_views import TreeModel
-        window.tree.setModel(TreeModel(context))
-        window.tree.expandAll()
+        window.library_controller.adopt_snapshot(context)
+        window.library_view.tree.expandAll()
         window.start(context, (str(sample_dir), 0))
         check('real VLC playback advances', wait(lambda: window.player.get_state() == vlc.State.Playing and window.player.get_time() > 500))
         check('transport shows actual pause action while playing', wait(lambda: button_matches(vlc.State.Playing)))
@@ -171,6 +169,32 @@ def run(destination):
         paused_fraction = window.seekbar.visual_fraction
         QTest.qWait(120)
         check('paused timeline stays still', window.seekbar.visual_fraction == paused_fraction and not window.seekbar.animation.isActive())
+        library = window.library_view
+        library.show_mode('videos')
+        recent = library.lists['videos']
+        recent.setCurrentIndex(recent.model().index_for_id(window.current))
+        selected = QPersistentModelIndex(recent.currentIndex())
+        check('recent page uses stable video identity', selected.data(Qt.UserRole) == window.current)
+        window.catalog.set_score(window.current, 5)
+        window.library_controller.refresh([window.current])
+        check('metadata refresh keeps selected native list row', selected.isValid() and recent.currentIndex().data(Qt.UserRole) == window.current)
+        window.catalog.set_score(window.current, None)
+        window.library_controller.refresh([window.current])
+        window.favorite_button.click()
+        library.show_mode('stars')
+        stars = library.lists['stars']
+        stars.setCurrentIndex(stars.model().index_for_id(window.current))
+        check('favorite page has its own model and selection', stars.model() is not recent.model() and stars.currentIndex().data(Qt.UserRole) == window.current)
+        library.remove_favorite.click()
+        check('unfavorite updates native list without changing playback', stars.model().rowCount() == 0 and window.current == selected.data(Qt.UserRole) and window.player.get_state() == vlc.State.Paused)
+        library.show_mode('files')
+        other_folder = output / 'other-folder'
+        other_folder.mkdir(exist_ok=True)
+        browsing = window.load_folder(str(other_folder))
+        check('native directory scan completes through controller', wait(lambda: not browsing.pending) and browsing.outcome.succeeded and window.library_controller.browsing.root == str(other_folder))
+        check('browsing another directory preserves paused playback context', window.context is context and window.current == selected.data(Qt.UserRole) and window.player.get_state() == vlc.State.Paused)
+        browsing = window.load_folder(str(sample_dir))
+        check('native file tree can return to original directory', wait(lambda: not browsing.pending) and browsing.outcome.succeeded and library.tree.model().rowCount(library.tree.model().index(0, 0)) == 2)
         before_seek = max(0, window.player.get_time())
         target = min(window.player.get_length(), before_seek + 5000)
         QTest.keyClick(window.surface, Qt.Key_D)
@@ -355,7 +379,7 @@ def run(destination):
                   fullscreen.cursor.hidden and len(exit_classes) >= 2)
             window.exit_fullscreen()
             application.processEvents()
-            check(f'fullscreen {cycle}: handle and left sidebar restored', int(window.surface.winId()) == handle and window.sidebar.isVisible() and window.playback_panel.parentWidget().objectName() == 'playerCard')
+            check(f'fullscreen {cycle}: handle and left sidebar restored', int(window.surface.winId()) == handle and window.library_view.isVisible() and window.playback_panel.parentWidget().objectName() == 'playerCard')
             check(f'fullscreen {cycle}: exit restores title layout and cursor',
                   window.player_header.isVisible() and not fullscreen.title.isVisible() and
                   not fullscreen.cursor.hidden and not fullscreen.cursor.native_classes and

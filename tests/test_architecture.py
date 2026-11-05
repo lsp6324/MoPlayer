@@ -7,7 +7,7 @@ import re
 ROOT = Path(__file__).resolve().parents[1]
 UI = {
     'appearance', 'background_work', 'file_open', 'floating_surface', 'heart_rating',
-    'hover_panel', 'layout', 'library_views', 'playback_controls', 'playback_options',
+    'hover_panel', 'layout', 'library_view', 'library_views', 'playback_controls', 'playback_options',
     'score_editor', 'seek_notice', 'seek_slider', 'tag_editor', 'tag_popover',
     'theme', 'thumbnail_cache', 'ui', 'video_cursor', 'video_fullscreen', 'window_chrome',
 }
@@ -118,10 +118,26 @@ def test_native_runtime_only_loads_at_explicit_bootstrap():
 def test_window_does_not_reclaim_application_or_thumbnail_owned_state():
     owned = {'resume', 'resume_paused', '_pending_seek', 'ended', 'last_save',
              'thumbnail_guard', 'thumbnail_processes', 'file_task_thumbnail_pause',
-             'deleting_ids', 'deleted_ids'}
-    for node in ast.walk(production_modules()['app']):
-        if isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Store):
-            assert node.attr not in owned, f'app:{node.lineno}: {node.attr} belongs to its application/thumbnail owner'
+             'deleting_ids', 'deleted_ids', 'browsing', 'video_details',
+             'scan_cancel', 'scan_serial', 'navigation_cancel', 'navigation_pending',
+             'tree', 'sidebar', 'sidebar_mode', 'sidebar_list', 'sidebar_tabs',
+             'folder_label', 'file_count', 'library_stack', 'cancel_button', 'remove_favorite'}
+    modules = production_modules()
+    for name in ('app', 'layout'):
+        for node in ast.walk(modules[name]):
+            if isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Store):
+                assert node.attr not in owned, f'{name}:{node.lineno}: {node.attr} belongs to its application/library/thumbnail owner'
+
+
+def test_library_controls_and_task_state_stay_with_their_owners():
+    modules = production_modules()
+    for name in ('layout', 'app'):
+        for node in ast.walk(modules[name]):
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+                assert node.func.id not in {'DropTree', 'TreeModel', 'VideoListModel', 'VideoDelegate', 'ScanButton'}, f'{name}:{node.lineno}: library controls belong to LibraryView'
+    for name in ('library_view', 'library_views'):
+        dependencies = imports(modules[name], name)
+        assert not any(dep.split('.')[0] in {'core', 'infrastructure', 'threading'} for dep in dependencies), f'{name}: use the library application protocol'
 
 
 def test_item_painting_never_performs_repository_queries():

@@ -10,7 +10,7 @@ from PySide6.QtTest import QTest  # 发送真实鼠标和键盘事件。
 from PySide6.QtWidgets import QApplication, QLineEdit, QDialog  # 检查文本和弹窗优先规则。
 from core import scan, Archiver  # 验证正式上下文与多标签归档。
 
-def run(destination):  # 源码和便携 EXE 共用验收流程。
+def run(destination, *, recycle=None):  # 默认核对真实回收站；测试可显式注入保留文件的回收器。
     from app import Window, BUNDLE  # 使用生产播放器与随包依赖。
     from runtime import load_vlc
     vlc = load_vlc()
@@ -28,6 +28,12 @@ def run(destination):  # 源码和便携 EXE 共用验收流程。
         shutil.copyfile(first, samples / name)  # 只复制测试生成内容。
     application = QApplication.instance() or QApplication([])  # 运行真实 Qt 窗口。
     window = Window(output / 'data')  # 使用完全独立数据库。
+    if recycle is not None:
+        from video_delete import DeletionManager
+        window.deleter = DeletionManager(window.store, recycle=recycle)
+    # Expected external-lock errors must not block an unattended test on a modal.
+    failures = []
+    window.fail = lambda error: failures.append(str(error))
     window.show()  # VLC 需要真实原生视频表面。
     checks = []  # 保留逐项验收证据。
     def wait(predicate, seconds=20):  # 持续处理 GUI 事件而不阻塞回调。
@@ -47,8 +53,8 @@ def run(destination):  # 源码和便携 EXE 共用验收流程。
         QTest.keyClick(window.surface, Qt.Key_D, Qt.ControlModifier)  # 经过生产事件过滤器。
     try:  # 出错仍保存验收结果并安全关闭。
         window.load_folder(str(samples))  # 通过异步导入建立浏览树。
-        check('异步导入四条样例', wait(lambda: window.browsing is not None))  # 等待完整快照。
-        context = window.browsing  # 固定原播放上下文。
+        check('异步导入四条样例', wait(lambda: window.library_controller.browsing is not None))  # 等待完整快照。
+        context = window.library_controller.browsing  # 固定原播放上下文。
         vids = [entry[0] for entry in context.folders[str(samples)][1]]  # 记录自然排序身份。
         window.start(context, (str(samples), 0))  # 开始真实 VLC 解码。
         check('首条实际播放', wait(lambda: window.playback.resume is None and window.player.get_time() > 500))  # 确认正在读取目标文件。
@@ -69,7 +75,7 @@ def run(destination):  # 源码和便携 EXE 共用验收流程。
         replacement = output / 'other'  # 模拟更换左侧浏览目录。
         replacement.mkdir()  # 与播放上下文完全分离。
         window.load_folder(str(replacement))  # 导入空浏览目录。
-        check('替换浏览目录保留播放', wait(lambda: window.browsing.root == str(replacement)) and window.context is context)  # 不用新目录寻找下一条。
+        check('替换浏览目录保留播放', wait(lambda: window.library_controller.browsing.root == str(replacement)) and window.context is context)  # 不用新目录寻找下一条。
         window.store.execute('UPDATE videos SET star=1 WHERE id=?', (vids[0],))  # 验证删除同步移除收藏。
         kernel = ctypes.windll.kernel32  # 使用实际 Windows 文件共享限制模拟外部占用。
         kernel.CreateFileW.argtypes = [ctypes.c_wchar_p, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_void_p, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_void_p]  # 正确声明六十四位句柄参数。
@@ -86,14 +92,14 @@ def run(destination):  # 源码和便携 EXE 共用验收流程。
         check('播放占用释放并回收原文件', wait(lambda: not window.busy and window.current == vids[1]) and not first.exists())  # 下一条来自原上下文。
         check('下一条真正解码播放', wait(lambda: window.playback.resume is None and window.player.get_time() > 500))  # 不只检查当前 ID。
         check('删除身份历史收藏同步清理', not window.store.query('SELECT * FROM videos WHERE id=?', (vids[0],)))  # 无失效收藏记录。
-        check('删除不改变原播放上下文', window.context is context and window.browsing.root == str(replacement))  # 浏览与播放继续独立。
+        check('删除不改变原播放上下文', window.context is context and window.library_controller.browsing.root == str(replacement))  # 浏览与播放继续独立。
         window.load_folder(str(samples))  # 重新显示剩余视频以测试单击选择。
-        check('剩余目录加载完成', wait(lambda: window.browsing.root == str(samples)))  # 等待异步模型。
-        root = window.tree.model().index(0, 0)  # 取得根目录索引。
-        selected = window.tree.model().index(1, 0, root)  # 当前顺序为二、三、四，选择第三条。
-        window.tree.scrollTo(selected)  # 保证鼠标目标可见。
+        check('剩余目录加载完成', wait(lambda: window.library_controller.browsing.root == str(samples)))  # 等待异步模型。
+        root = window.library_view.tree.model().index(0, 0)  # 取得根目录索引。
+        selected = window.library_view.tree.model().index(1, 0, root)  # 当前顺序为二、三、四，选择第三条。
+        window.library_view.tree.scrollTo(selected)  # 保证鼠标目标可见。
         application.processEvents()  # 刷新可见位置。
-        QTest.mouseClick(window.tree.viewport(), Qt.LeftButton, Qt.NoModifier, window.tree.visualRect(selected).center())  # 真实鼠标单击选择第三条。
+        QTest.mouseClick(window.library_view.tree.viewport(), Qt.LeftButton, Qt.NoModifier, window.library_view.tree.visualRect(selected).center())  # 真实鼠标单击选择第三条。
         press()  # 选中优先于当前播放的第二条。
         check('单击选择优先且删除后播放其下一条', wait(lambda: not window.busy and window.current == vids[3]) and not (samples / '3.mp4').exists() and (samples / '2.mp4').exists())  # 不误删正在播放的其他视频。
         check('第四条实际播放', wait(lambda: window.playback.resume is None and window.player.get_time() > 500))  # 确认自动开始解码。

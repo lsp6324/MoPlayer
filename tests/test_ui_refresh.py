@@ -46,9 +46,9 @@ def window(tmp_path):
 def test_integrated_layout_and_quiet_feedback(window):
     assert window.theme == 'light'
     assert window.windowFlags() & Qt.FramelessWindowHint
-    assert window.splitter.widget(0) is window.sidebar
+    assert window.splitter.widget(0) is window.library_view
     from PySide6.QtCore import QModelIndex
-    assert window.tree.itemDelegate().sizeHint(None, QModelIndex()).height() == 32
+    assert window.library_view.tree.itemDelegate().sizeHint(None, QModelIndex()).height() == 32
     height = window.surface.height()
     window.message('saved')
     QApplication.processEvents()
@@ -57,15 +57,70 @@ def test_integrated_layout_and_quiet_feedback(window):
     assert window.control_row.center.isVisible()
 
 
+def test_library_refresh_preserves_selection_and_visible_scroll_anchor(window, tmp_path):
+    from PySide6.QtCore import QPoint
+    from PySide6.QtTest import QSignalSpy
+    window.thumbnails.request = lambda vid: None
+    ids = []
+    for number in range(55):
+        path = tmp_path / f'library-{number}.mp4'
+        path.write_bytes(str(number).encode())
+        vid = window.catalog.register(path)
+        window.store.execute('UPDATE videos SET star=1,played=? WHERE id=?', (number + 10, vid))
+        ids.append(vid)
+    panel = window.library_view
+    panel.show_mode('stars')
+    view = panel.lists['stars']
+    model = view.model()
+    view.setCurrentIndex(model.index_for_id(ids[30]))
+    view.scrollTo(model.index_for_id(ids[30]))
+    QApplication.processEvents()
+    view.verticalScrollBar().setValue(view.verticalScrollBar().value() + 23)
+    anchor = view.indexAt(QPoint(1, 1)).data(Qt.UserRole)
+    offset = view.visualRect(model.index_for_id(anchor)).top()
+    resets = QSignalSpy(model.modelReset)
+    # A different video moves to the front; the selected identity and visible
+    # anchor must not follow its old row number or old numeric scroll value.
+    window.store.execute('UPDATE videos SET played=9999,score=8 WHERE id=?', (ids[0],))
+    window.library_controller.refresh([ids[0]])
+    QApplication.processEvents()
+    assert view.currentIndex().data(Qt.UserRole) == ids[30]
+    assert view.indexAt(QPoint(1, 1)).data(Qt.UserRole) == anchor
+    assert view.visualRect(model.index_for_id(anchor)).top() == offset
+    assert resets.count() == 0
+    scroll = view.verticalScrollBar().value()
+    panel.show_mode('videos')
+    panel.show_mode('stars')
+    QApplication.processEvents()
+    assert view.currentIndex().data(Qt.UserRole) == ids[30]
+    assert view.verticalScrollBar().value() == scroll
+
+
+def test_cancel_button_cancels_all_library_work_and_ignores_late_result(window, tmp_path):
+    from core import Snapshot
+    tasks = []
+    window.work = lambda function, ready: tasks.append((function, ready))
+    window.library_controller.adopt_snapshot(Snapshot(str(tmp_path), {str(tmp_path): ([], [])}))
+    previous = window.library_controller.browsing
+    operation = window.load_folder('never published')
+    assert window.library_view.cancel_button.isVisible()
+    window.library_view.cancel_button.click()
+    QApplication.processEvents()
+    assert not operation.pending and not operation.outcome.succeeded
+    assert not window.library_view.cancel_button.isVisible()
+    tasks[0][1]((previous, [], {}), None)
+    assert window.library_controller.browsing is previous
+
+
 def test_favorite_button_toggles_and_shortcut_is_idempotent(window):
     window.favorite_button.click()
     assert window.store.video(window.current)['star'] == 1
     assert window.favorite_button.property('iconName') == 'starFilled'
-    window.show_sidebar('stars')
-    assert window.sidebar_list.count() == 1
+    window.library_view.show_mode('stars')
+    assert window.library_view.lists['stars'].model().rowCount() == 1
     window.favorite_button.click()
     assert window.store.video(window.current)['star'] == 0
-    assert window.sidebar_list.count() == 0
+    assert window.library_view.lists['stars'].model().rowCount() == 0
     window.favorite()
     window.favorite()
     assert window.store.video(window.current)['star'] == 1
@@ -350,7 +405,7 @@ def test_fullscreen_restores_layout_and_video_handle(window):
     window.exit_fullscreen()
     QApplication.processEvents()
     assert window.playback_panel.parentWidget().objectName() == 'playerCard'
-    assert window.sidebar.isVisible() and window.splitter.sizes() == sizes
+    assert window.library_view.isVisible() and window.splitter.sizes() == sizes
     assert not window.statusBar().isVisible()
     apply_theme(window, 'dark')
     assert window.theme == 'dark'
@@ -710,8 +765,8 @@ def test_sidebar_delete_freezes_selected_id_without_playing(window, tmp_path):
     second.write_bytes(b'second')
     selected_id = window.store.register(second)
     window.store.execute('UPDATE videos SET star=1 WHERE id=?', (selected_id,))
-    window.show_sidebar('stars')
-    window.sidebar_list.setCurrentRow(0)
+    window.library_view.show_mode('stars')
+    window.library_view.lists['stars'].setCurrentIndex(window.library_view.lists['stars'].model().index(0, 0))
     tasks = []
     window.work = lambda function, callback: tasks.append((function, callback))
     window.play_path = Mock()
@@ -720,7 +775,7 @@ def test_sidebar_delete_freezes_selected_id_without_playing(window, tmp_path):
     assert window.busy and window.current == original and len(tasks) == 1
     function, ready = tasks.pop()
     # Changing selection during the scan cannot retarget the requested delete.
-    window.sidebar_list.clearSelection()
+    window.library_view.lists['stars'].clearSelection()
     ready(function(), None)
     assert window.busy and len(tasks) == 1
     assert window.thumbnail_service.is_deleting(selected_id) and not window.thumbnail_service.is_deleting(original)

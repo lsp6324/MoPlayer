@@ -83,7 +83,7 @@ def run(destination):  # 执行源码与便携版共用的实际验收。
         QTimer.singleShot(30, poll)  # 与真实标签确认流程并行等待。
         return completed  # 用于断言自动评分实际发生。
     try:  # 任意失败均写出报告与截图。
-        check('启动不恢复目录和播放', window.current is None and window.browsing is None)  # 验证启动规则。
+        check('启动不恢复目录和播放', window.current is None and window.library_controller.browsing is None)  # 验证启动规则。
         specs = [('h264.mp4', 'libx264', 'aac'), ('hevc.mkv', 'libx265', 'ac3'), ('mpeg4.avi', 'mpeg4', 'libmp3lame'), ('h264.mov', 'libx264', 'aac'), ('wmv2.wmv', 'wmv2', 'wmav2'), ('vp9.webm', 'libvpx-vp9', 'libopus')]  # 每种容器绑定实际测试的视频和音频编码。
         for filename, codec, audio_codec in specs:  # 逐个生成真实可解码样例。
             sample = output / 'samples' / filename  # 将生成文件集中存放。
@@ -111,21 +111,21 @@ def run(destination):  # 执行源码与便携版共用的实际验收。
         mime = QMimeData()  # 构造来自文件管理器的本地 URL 数据。
         mime.setUrls([QUrl.fromLocalFile(str(source))])  # 每次仅拖入一个根文件夹。
         drag_event = QDragEnterEvent(QPoint(20, 20), Qt.CopyAction, mime, Qt.LeftButton, Qt.NoModifier)  # 模拟进入左侧目录区域。
-        app.sendEvent(window.tree.viewport(), drag_event)  # 经 Qt 事件分发而非直接调用导入函数。
+        app.sendEvent(window.library_view.tree.viewport(), drag_event)  # 经 Qt 事件分发而非直接调用导入函数。
         check('左侧接受文件夹拖放', drag_event.isAccepted())  # 验证实际拖放过滤规则。
         drop_event = QDropEvent(QPointF(20, 20), Qt.CopyAction, mime, Qt.LeftButton, Qt.NoModifier)  # 构造实际释放事件。
-        app.sendEvent(window.tree.viewport(), drop_event)  # 触发左侧导入信号和异步扫描。
-        check('异步目录加载', wait_until(lambda: window.browsing and window.browsing.root == str(source)))  # 等待实际发布目录树。
-        context = window.browsing  # 保存原始浏览快照。
+        app.sendEvent(window.library_view.tree.viewport(), drop_event)  # 触发左侧导入信号和异步扫描。
+        check('异步目录加载', wait_until(lambda: window.library_controller.browsing and window.library_controller.browsing.root == str(source)))  # 等待实际发布目录树。
+        context = window.library_controller.browsing  # 保存原始浏览快照。
         folder = str(source / '第1组')  # 选择第一组视频。
-        root_index = window.tree.model().index(0, 0)  # 获取可见根节点。
-        folder_index = window.tree.model().index(0, 0, root_index)  # 获取第一个子目录。
-        video_index = window.tree.model().index(0, 0, folder_index)  # 获取自然排序的第一部视频。
-        window.tree.doubleClicked.emit(video_index)  # 触发实际双击信号连接。
+        root_index = window.library_view.tree.model().index(0, 0)  # 获取可见根节点。
+        folder_index = window.library_view.tree.model().index(0, 0, root_index)  # 获取第一个子目录。
+        video_index = window.library_view.tree.model().index(0, 0, folder_index)  # 获取自然排序的第一部视频。
+        window.library_view.tree.doubleClicked.emit(video_index)  # 触发实际双击信号连接。
         check('双击播放接线', wait_until(lambda: window.player.get_time() > 300))  # 验证右侧开始播放。
         original = window.current  # 保存当前视频身份。
         window.load_folder(str(output / 'samples'))  # 播放时替换浏览目录。
-        check('替换浏览保留播放上下文', wait_until(lambda: window.browsing.root == str(output / 'samples')) and window.context is context and window.current == original)  # 确认浏览与播放分离。
+        check('替换浏览保留播放上下文', wait_until(lambda: window.library_controller.browsing.root == str(output / 'samples')) and window.context is context and window.current == original)  # 确认浏览与播放分离。
         QTest.keyClick(window.surface, Qt.Key_Space)  # 发送真实空格事件。
         check('空格暂停', wait_until(lambda: window.player.get_state() == vlc.State.Paused))  # 验证暂停响应。
         QTest.keyClick(window.surface, Qt.Key_Left)  # 从短视频当前位置后退五秒。
@@ -141,7 +141,7 @@ def run(destination):  # 执行源码与便携版共用的实际验收。
         original_sizes = window.canvas.findChild(QSplitter).sizes()  # 记录用户工作区比例。
         QTest.keyClick(window.surface, Qt.Key_Return)  # 发送 Enter 全屏。
         app.processEvents()  # 等待全屏窗口与原生视频重新布局。
-        check('仅视频全屏隐藏目录', window.isFullScreen() and not window.tree.isVisible() and window.surface.isVisible())  # 按用户修订要求隐藏目录。
+        check('仅视频全屏隐藏目录', window.isFullScreen() and not window.library_view.tree.isVisible() and window.surface.isVisible())  # 按用户修订要求隐藏目录。
         check('全屏画面铺满窗口', window.surface.width() >= window.width() - 2 and window.surface.height() >= window.height() - 2)  # 不保留卡片留白和其他应用区域。
         check('全屏保留视频句柄和暂停状态', int(window.surface.winId()) == original_handle and window.player.get_state() == vlc.State.Paused and window.context is context and window.current == original)  # 不重载或改变播放身份。
         QTest.keyClick(window.surface, Qt.Key_A)  # 视频全屏仍接受 A 后退。
@@ -176,14 +176,14 @@ def run(destination):  # 执行源码与便携版共用的实际验收。
         check('Esc 优先关闭弹窗保留全屏', not fullscreen_modal.isVisible() and window.isFullScreen())  # 不让同一个 Esc 同时退出两层状态。
         QTest.keyClick(window.surface, Qt.Key_Escape)  # 发送 Esc 退出全屏。
         app.processEvents()  # 等待普通布局恢复。
-        check('Esc 退出并恢复目录和控制栏', not window.isFullScreen() and window.tree.isVisible() and window.playback_panel.parentWidget() is window.surface.parentWidget())  # 恢复同一套工作控件。
+        check('Esc 退出并恢复目录和控制栏', not window.isFullScreen() and window.library_view.tree.isVisible() and window.playback_panel.parentWidget() is window.surface.parentWidget())  # 恢复同一套工作控件。
         check('退出全屏恢复窗口大小与目录比例', window.geometry() == original_geometry and window.video_fullscreen.splitter.sizes() == original_sizes)  # 不丢失用户进入前布局。
         QTest.mouseClick(window.fullscreen_button, Qt.LeftButton)  # 验证可见按钮与 Enter 使用同一实现。
         app.processEvents()  # 应用按钮进入全屏。
-        check('全屏按钮进入视频模式', window.isFullScreen() and not window.tree.isVisible())  # 不仅验证快捷键。
+        check('全屏按钮进入视频模式', window.isFullScreen() and not window.library_view.tree.isVisible())  # 不仅验证快捷键。
         QTest.keyClick(window.surface, Qt.Key_Return)  # 再按 Enter 应退出全屏。
         app.processEvents()  # 应用恢复布局。
-        check('Enter 再次退出全屏', not window.isFullScreen() and window.tree.isVisible())  # 支持直接切换而非只进不出。
+        check('Enter 再次退出全屏', not window.isFullScreen() and window.library_view.tree.isVisible())  # 支持直接切换而非只进不出。
         QTest.keyClick(window.surface, Qt.Key_W)  # 收藏当前视频。
         QTest.keyClick(window.surface, Qt.Key_W)  # 重复收藏不新增身份。
         check('W 幂等收藏', len(window.store.query('SELECT * FROM videos WHERE star=1')) == 1)  # 只有一条收藏。
@@ -269,13 +269,9 @@ def run(destination):  # 执行源码与便携版共用的实际验收。
         check('续播进度准备', wait_until(lambda: window.player.get_state() == vlc.State.Paused and window.player.get_time() >= 1100))  # 等待内核应用位置。
         window.save()  # 持久保存当前视频进度。
         saved = window.store.video(original)['position']  # 记录稍后应该恢复的时间。
-        def open_saved():  # 在收藏列表双击原视频身份。
-            dialog = QApplication.activeModalWidget()  # 获取实际收藏列表窗口。
-            listing = dialog.findChild(QListWidget)  # 获取列表控件。
-            item = next(listing.item(i) for i in range(listing.count()) if listing.item(i).data(Qt.UserRole) == original)  # 按稳定 ID 定位收藏。
-            listing.itemDoubleClicked.emit(item)  # 触发正式恢复逻辑。
-        QTimer.singleShot(100, open_saved)  # 在弹窗打开后执行双击。
-        window.library('stars')  # 从独立收藏列表打开视频。
+        window.library_view.show_mode('stars')
+        listing = window.library_view.lists['stars']
+        listing.doubleClicked.emit(listing.model().index_for_id(original))
         check('收藏归档后续播', wait_until(lambda: window.context.root == str(window.store.resolve(original).parent) and window.playback.resume is None and window.player.get_time() >= saved - 100))  # 验证当前路径恢复和进度保留。
         window.player.set_pause(1)  # 防止短样例在文件夹历史测试期间自然切换。
         active_context = window.context  # 保存恢复后的播放上下文。
@@ -285,8 +281,8 @@ def run(destination):  # 执行源码与便携版共用的实际验收。
             item = next(listing.item(i) for i in range(listing.count()) if listing.item(i).data(Qt.UserRole) == str(source))  # 按完整目录路径定位。
             listing.itemDoubleClicked.emit(item)  # 仅恢复浏览目录。
         QTimer.singleShot(100, open_folder_history)  # 在弹窗事件循环中操作。
-        window.library('folders')  # 打开独立文件夹历史。
-        check('历史文件夹只恢复目录', wait_until(lambda: window.browsing.root == str(source)) and window.context is active_context and window.current == original)  # 不切换当前视频或上下文。
+        window.folder_history()  # 打开独立文件夹历史。
+        check('历史文件夹只恢复目录', wait_until(lambda: window.library_controller.browsing.root == str(source)) and window.context is active_context and window.current == original)  # 不切换当前视频或上下文。
         from core import Store  # 使用新数据库连接验证持久数据。
         reopened = Store(output / 'data')  # 模拟重新启动读取数据库。
         check('评分收藏进度持久化', reopened.video(original)['score'] == 8 and reopened.video(original)['star'] == 1 and reopened.video(original)['position'] > 0)  # 验证数据落盘。
