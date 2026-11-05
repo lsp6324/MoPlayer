@@ -7,7 +7,7 @@ import re
 ROOT = Path(__file__).resolve().parents[1]
 UI = {
     'appearance', 'background_work', 'file_open', 'floating_surface', 'heart_rating',
-    'hover_panel', 'layout', 'library_view', 'library_views', 'playback_controls', 'playback_options',
+    'hover_panel', 'layout', 'library_view', 'library_views', 'player_view', 'playback_controls', 'playback_options',
     'score_editor', 'seek_notice', 'seek_slider', 'tag_editor', 'tag_popover',
     'theme', 'thumbnail_cache', 'ui', 'video_cursor', 'video_fullscreen', 'window_chrome',
 }
@@ -138,6 +138,36 @@ def test_library_controls_and_task_state_stay_with_their_owners():
     for name in ('library_view', 'library_views'):
         dependencies = imports(modules[name], name)
         assert not any(dep.split('.')[0] in {'core', 'infrastructure', 'threading'} for dep in dependencies), f'{name}: use the library application protocol'
+
+
+def test_player_widgets_and_rendering_are_not_owned_by_window_or_layout():
+    controls = {'surface', 'player_header', 'header', 'now', 'metadata', 'media_badge',
+                'player_empty', 'empty_import', 'playback_panel', 'seekbar', 'time_label',
+                'control_row', 'transport_buttons', 'play_button', 'playback_options',
+                'volume', 'volume_button', 'speed_button', 'sidebar_toggle', 'fullscreen_button',
+                'classify_bar', 'classify_buttons', 'tags_button', 'rating_button', 'favorite_button',
+                'video_fullscreen', 'seek_notice'}
+    modules = production_modules()
+    for name in ('app', 'layout'):
+        for node in ast.walk(modules[name]):
+            if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id in {'self', 'window'}:
+                assert node.attr not in controls, f'{name}:{node.lineno}: {node.attr} belongs to PlayerView'
+            if isinstance(node, ast.FunctionDef):
+                assert node.name not in {'sync_play_button', 'preview_seek', 'seek_slider'}, f'{name}:{node.lineno}: remove the old rendering/slider path'
+    assert not ({'PlaybackControls', 'PlaybackOptions', 'PlaybackTimeline', 'VideoFullscreen', 'SeekNotice'} &
+                {node.func.id for node in ast.walk(modules['layout']) if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)}), 'Build player children inside PlayerView'
+
+
+def test_player_presentation_has_no_backend_or_repository_access():
+    modules = production_modules()
+    for name in ('player_view', 'playback_options', 'video_fullscreen', 'seek_notice'):
+        dependencies = imports(modules[name], name)
+        assert not any(dep.split('.')[0] in {'app', 'core', 'infrastructure', 'runtime', 'vlc', 'sqlite3'} for dep in dependencies), name
+        for node in ast.walk(modules[name]):
+            if isinstance(node, ast.Attribute):
+                assert node.attr not in {'catalog', 'store', 'player'}, f'{name}:{node.lineno}: inject presentation data and emit an intent'
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+                assert node.func.attr not in {'audio_set_mute', 'audio_set_volume', 'get_state', 'get_time', 'get_length', 'set_media', 'set_hwnd', 'set_pause'}, f'{name}:{node.lineno}: native playback belongs to the adapter'
 
 
 def test_item_painting_never_performs_repository_queries():

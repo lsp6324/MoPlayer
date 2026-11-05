@@ -1,7 +1,6 @@
 import json  # 读取视频标签和诊断数据。
 import logging  # 记录可追踪的运行错误。
 import sys  # 区分源码和便携运行方式。
-import time  # 管理周期保存时间。
 from pathlib import Path  # 处理便携数据路径。
 if len(sys.argv) == 3 and sys.argv[1] in ('--ui-refresh-test', '--seek-notice-test'):
     # A windowed EXE has no stderr; keep explicit test failures reviewable.
@@ -19,10 +18,10 @@ from thumbnail_cache import ThumbnailCache
 from application.library import LibraryController
 from infrastructure.library_scanner import LibraryScanner
 from infrastructure.thumbnails import ThumbnailService
-from ui import format_time
 from application.operations import Operation, UserActions
 from application.tag_drafts import TagDrafts
-from application.playback import PlaybackSession
+from application.playback import PlaybackSession, PlaybackStatus
+from player_view import PlayerInfo
 from application.file_tasks import FileTasks, FileTaskPolicy
 from infrastructure.library_repository import LibraryRepository
 from core import Store, Archiver
@@ -69,10 +68,19 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
         self.library_view.videoRequested.connect(self.open_library_video)
         self.library_view.unfavoriteRequested.connect(self.remove_library_favorite)
         self.setWindowIcon(QIcon(str(BUNDLE / 'assets/yunli.ico')))  # 窗口与任务栏使用同一云璃 Q 版图标。
-        from video_fullscreen import VideoFullscreen  # 独立管理视频全屏与控制栏浮层。
-        self.video_fullscreen = VideoFullscreen(self)  # 不移动 VLC 原生播放窗口，保持解码连续。
-        from seek_notice import SeekNotice
-        self.seek_notice = SeekNotice(self)  # 独立浮层按界面分辨率绘制，普通和全屏共用。
+        self.player.set_hwnd(self.player_view.video_handle())
+        self.player.audio_set_volume(80)
+        self.player_view.playRequested.connect(self.toggle)
+        self.player_view.stepRequested.connect(self.advance)
+        self.player_view.seekRequested.connect(self.seek_fraction)
+        self.player_view.importRequested.connect(self.library_view.choose_folder)
+        self.player_view.sidebarRequested.connect(self.toggle_sidebar)
+        self.player_view.favoriteRequested.connect(lambda: self.favorite(toggle=True))
+        self.player_view.ratingRequested.connect(self.set_rating)
+        self.player_view.volumeRequested.connect(lambda value: self.player.audio_set_volume(value))
+        self.player_view.muteRequested.connect(lambda value: self.player.audio_set_mute(value))
+        self.player_view.rateRequested.connect(self.set_playback_rate)
+        self.player_view.transportRefreshRequested.connect(self.refresh_transport)
         self.timer = QTimer(self)  # 主线程定时刷新播放器状态。
         self.timer.timeout.connect(self.tick)  # 保留既有进度和自动连播逻辑。
         self.timer.start(250)  # 每四分之一秒刷新一次。
@@ -149,7 +157,7 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
                 self.load_folder(str(self.catalog.resolve(selection.video_id).parent), selection.video_id)
             except OSError as error:
                 self.fail(error)
-        self.user_actions.request(opened, self.playback_options.flush_pending)
+        self.user_actions.request(opened, self.player_view.options.flush_pending)
 
 
     def save(self):
@@ -164,7 +172,7 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
         if self.busy and not self.tag_drafts.saving:
             self.message('文件任务正在处理，请稍候。')
             return
-        self.user_actions.request(lambda: self._start(context, location), self.playback_options.flush_pending)
+        self.user_actions.request(lambda: self._start(context, location), self.player_view.options.flush_pending)
 
     def _start(self, context, location):
         vid = context.folders[location[0]][1][location[1]][0]
@@ -184,58 +192,50 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
 
     def play_path(self, path, position, paused):
         self.playback.begin(position, paused)
-        self.seekbar.hold(0, 0)
-        self.playback_options.dismiss()
-        self.seek_notice.clear()
+        self.player_view.media_loading()
         self.player.stop()
-        self.player_empty.hide()
         media = self.instance.media_new(str(path))
         self.player.set_media(media)
         media.release()
         self.player.play()
-        self.sync_play_button()
+        self.refresh_transport()
 
-    def sync_play_button(self, state=None, force=False):
-        """The transport button has one rendering path, driven by VLC state."""
-        from ui import icon
-        if state is None:
-            state = self.player.get_state() if self.current else self.vlc.State.NothingSpecial
-        running = bool(self.current) and state in (self.vlc.State.Opening, self.vlc.State.Buffering, self.vlc.State.Playing)
-        symbol = 'pause' if running else 'play'
-        action = '暂停' if running else '重新播放' if state == self.vlc.State.Ended and self.current else '播放'
-        tooltip = action + ' · 空格'
-        self.play_button.setEnabled(bool(self.current) and not self.busy)
-        if (force or self.play_button.property('iconName') != symbol or
-                self.play_button.toolTip() != tooltip):
-            self.play_button.setProperty('iconName', symbol)
-            self.play_button.setIcon(icon(symbol, '#ffffff'))
-            self.play_button.setToolTip(tooltip)
-            self.play_button.setAccessibleName(action)
+    def refresh_transport(self, state=None):
+        state = self.player.get_state() if state is None and self.current else state
+        status = {
+            self.vlc.State.Opening: PlaybackStatus.LOADING,
+            self.vlc.State.Buffering: PlaybackStatus.LOADING,
+            self.vlc.State.Playing: PlaybackStatus.PLAYING,
+            self.vlc.State.Paused: PlaybackStatus.PAUSED,
+            self.vlc.State.Ended: PlaybackStatus.ENDED,
+            self.vlc.State.Error: PlaybackStatus.ERROR,
+        }.get(state, PlaybackStatus.IDLE)
+        self.player_view.present_transport(status, bool(self.current), self.busy)
 
     def refresh_title(self):
-        from ui import icon
-        from theme import theme_tokens
         video = self.catalog.video(self.current) if self.current else None
-        fullscreen = getattr(self, 'video_fullscreen', None)
-        self.player_header.setVisible(bool(video) and not (fullscreen and fullscreen.active))
-        if fullscreen:
-            fullscreen.set_title(video['name'] if video else '')
-        active = bool(video) and not self.busy
-        self.classify_bar.setVisible(bool(video))
-        for button in self.transport_buttons + self.classify_buttons:
-            button.setEnabled(active)
-        self.seekbar.setEnabled(active)
-        self.favorite_button.setChecked(bool(video and video['star']))
-        symbol = 'starFilled' if video and video['star'] else 'star'
-        self.favorite_button.setProperty('iconName', symbol)
-        self.favorite_button.setIcon(icon(symbol, theme_tokens(self)['accent' if symbol == 'starFilled' else 'text_mid']))
+        info = PlayerInfo(video['name'], video['score'], tuple(json.loads(video['tags'])), bool(video['star'])) if video else None
+        self.player_view.present_video(info)
+        self.refresh_transport()
         if video:
-            self.now.setText(video['name'])
-            details = ([f"{video['score']} 分"] if video['score'] is not None else []) + json.loads(video['tags'])
-            self.metadata.setText(' · '.join(details))
-            self.metadata.setVisible(bool(details))
             self.library_controller.refresh((self.current,), self.context)
 
+    def rating_value(self):
+        if self.current and not self.busy:
+            video = self.catalog.video(self.current)
+            if video is not None:
+                return self.current, video['score']
+        return None
+
+    def set_playback_rate(self, rate):
+        try:
+            if self.player.set_rate(rate) == -1:
+                raise ValueError('当前视频无法应用此播放速度。')
+        except (RuntimeError, ValueError) as error:
+            self.player_view.reject_rate()
+            self.fail(error)
+        else:
+            self.player_view.accept_rate(rate)
 
 
     def remove_library_favorite(self, video_id):
@@ -243,7 +243,7 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
         self.refresh_title()
 
     def toggle_sidebar(self):
-        if self.video_fullscreen.active:
+        if self.player_view.fullscreen.active:
             return
         if self.library_view.isHidden():
             self.library_view.show()
@@ -254,23 +254,20 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
 
     def tick(self):
         state = self.player.get_state() if self.current else self.vlc.State.NothingSpecial
-        self.sync_play_button(state)
+        self.refresh_transport(state)
         if not self.current or (self.busy and not self.tag_drafts.saving):
-            self.seekbar.freeze()
+            self.player_view.freeze_progress()
             return
         length, position = self.player.get_length(), self.player.get_time()
         playing = state == self.vlc.State.Playing
-        self.media_badge.setText('正在播放' if playing else '已暂停' if state == self.vlc.State.Paused else '播放结束' if state == self.vlc.State.Ended else '正在加载')
         restore = self.playback.restore(playing=playing, paused=state == self.vlc.State.Paused, duration=length)
         if restore is not None:
             self.set_playback_position(restore.position, length)
             if restore.pause:
                 self.player.set_pause(1)
-        if not self.seekbar.isSliderDown() and self.playback.pending_seek is None:
-            self.time_label.setText(f'{format_time(position)} / {format_time(length)}')
         self.playback.acknowledge(position)
-        if not self.seekbar.isSliderDown() and self.playback.pending_seek is None:
-            self.seekbar.synchronize(position, length, playing, self.playback_options.rate)
+        self.player_view.present_progress(position, length, playing=playing,
+                                          pending_seek=self.playback.pending_seek is not None)
         if self.playback.save_due():
             self.save()
             self.playback.saved()
@@ -284,7 +281,7 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
     def advance(self, direction, ended=False):
         if not self.current or (self.busy and not self.tag_drafts.saving):
             return
-        self.user_actions.request(lambda: self._advance(direction, ended), self.playback_options.flush_pending)
+        self.user_actions.request(lambda: self._advance(direction, ended), self.player_view.options.flush_pending)
 
     def _advance(self, direction, ended=False):
         if not self.current or self.busy or self.library_controller.navigation_pending:
@@ -309,35 +306,26 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
                 self.play_path(self.catalog.resolve(self.current), 0, False)  # 重播仍使用当前身份。
             else:  # 正常播放和暂停互相切换。
                 self.player.pause()  # 由 VLC 保留当前时间。
-                self.sync_play_button()
+                self.refresh_transport()
 
     def seek(self, offset):
         if self.current and not self.busy and self.player.get_length() > 0:
             total = self.player.get_length()
             before, after = self.playback.relative_seek(self.player.get_time(), offset, total)
             self.set_playback_position(after, total)
-            self.seek_notice.show(before, after, total)
+            self.player_view.seek_notice.show(before, after, total)
 
     def set_playback_position(self, target, length):
         target = self.playback.seek(target, length)
-        self.seekbar.hold(target, length)
+        self.player_view.hold_position(target, length)
         self.player.set_time(target)
-        self.preview_seek(self.seekbar.value())
 
-    def preview_seek(self, value):
-        length = self.player.get_length()
-        self.time_label.setText(f'{format_time(int(value / 10000 * length))} / {format_time(length)}')
 
-    def seek_slider(self):
+    def seek_fraction(self, fraction):
         if self.current and not self.busy and self.player.get_length() > 0:
-            target = int(self.seekbar.value() / 10000 * self.player.get_length())
-            self.set_playback_position(target, self.player.get_length())
+            length = self.player.get_length()
+            self.set_playback_position(int(fraction * length), length)
 
-    def enter_fullscreen(self):  # Enter 和按钮切换仅视频全屏。
-        self.video_fullscreen.toggle()  # 目录和导航隐藏，鼠标移动时显示控制栏。
-
-    def exit_fullscreen(self):  # Esc 恢复进入全屏前的窗口与分隔比例。
-        self.video_fullscreen.exit()  # 非全屏状态下不改变用户窗口布局。
 
     def eventFilter(self, obj, event):  # 在应用级统一处理快捷键优先级。
         if self.chrome_event_filter(obj, event):
@@ -346,12 +334,8 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
             return False
         if QApplication.activeModalWidget() or QApplication.activePopupWidget():
             return False  # 菜单与模态窗口先处理 Esc 和方向键，不关闭其所属浮层。
-        if hasattr(self, 'playback_options'):
-            if event.key() == Qt.Key_Escape and self.playback_options.popup_visible():
-                self.playback_options.dismiss()
-                return True
-            if self.playback_options.rating_popup.handle_key(event):
-                return True
+        if self.player_view.handle_popup_key(event):
+            return True
         # Direct Qt dispatch and IME events can target the edit before an owned
         # tool window has completed activation. Respect that receiver as well.
         focus = obj if isinstance(obj, (QLineEdit, QTextEdit, QPlainTextEdit, QAbstractSpinBox, QComboBox)) else QApplication.focusWidget()
@@ -363,7 +347,7 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
             return True  # 不让目录控件重复处理组合键。
         if event.modifiers() & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier):  # 保留其他系统和编辑组合键。
             return False  # 不拦截复制粘贴等操作。
-        actions = {Qt.Key_Space: self.toggle, Qt.Key_X: lambda: self.advance(1), Qt.Key_Z: lambda: self.advance(-1), Qt.Key_Left: lambda: self.seek(-5000), Qt.Key_Right: lambda: self.seek(5000), Qt.Key_A: lambda: self.seek(-5000), Qt.Key_D: lambda: self.seek(5000), Qt.Key_Return: self.enter_fullscreen, Qt.Key_Enter: self.enter_fullscreen, Qt.Key_Escape: self.exit_fullscreen, Qt.Key_Q: self.tags_dialog, Qt.Key_R: self.rating_dialog, Qt.Key_W: self.favorite}  # 左/A 后退五秒，右/D 快进五秒，组合键及输入优先。
+        actions = {Qt.Key_Space: self.toggle, Qt.Key_X: lambda: self.advance(1), Qt.Key_Z: lambda: self.advance(-1), Qt.Key_Left: lambda: self.seek(-5000), Qt.Key_Right: lambda: self.seek(5000), Qt.Key_A: lambda: self.seek(-5000), Qt.Key_D: lambda: self.seek(5000), Qt.Key_Return: self.player_view.fullscreen.toggle, Qt.Key_Enter: self.player_view.fullscreen.toggle, Qt.Key_Escape: self.player_view.fullscreen.exit, Qt.Key_Q: self.player_view.toggle_tags, Qt.Key_R: self.rating_dialog, Qt.Key_W: self.favorite}  # 左/A 后退五秒，右/D 快进五秒，组合键及输入优先。
         if event.key() in actions:  # 仅拦截已定义的按键。
             if not event.isAutoRepeat() or event.key() in (Qt.Key_Left, Qt.Key_Right, Qt.Key_A, Qt.Key_D):  # 四个进度键均允许长按连续跳转，其他字母不重复操作。
                 actions[event.key()]()  # 在主线程执行操作。
@@ -383,19 +367,15 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
 
 
     def clear_player(self):
-        self.seek_notice.clear()
+        self.player_view.seek_notice.clear()
         previous, self.current = self.current, None
         self.library_view.playback_changed(previous, None)
         self.playback.clear()
         self.refresh_title()
         self.player.stop()
         self.player.set_media(None)
-        self.player_empty.show()
-        self.now.setText('播放器')
-        self.media_badge.setText('等待播放')
-        self.seekbar.hold(0, 0)
-        self.time_label.setText('00:00 / 00:00')
-        self.sync_play_button()
+        self.player_view.clear_media()
+        self.refresh_transport()
 
     def after_deleted_current(self, context, location):
         self.clear_player()
@@ -417,7 +397,7 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
         if self.busy and not self.tag_drafts.saving:
             self.message('文件任务正在处理，请稍候。')
             return
-        selected = self.library_view.selection() if self.library_view.isVisible() and not self.video_fullscreen.active else None
+        selected = self.library_view.selection() if self.library_view.isVisible() and not self.player_view.fullscreen.active else None
         vid = _target or (selected.video_id if selected else None) or self.current
         if not vid:
             self.message('请先选中或播放一个视频。')
@@ -427,7 +407,7 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
             context = (self.context, self.location)
         elif context is None and selected and selected.video_id == vid and selected.context is not None:
             context = (selected.context, selected.location)
-        self.user_actions.request(lambda: self._delete_video(vid, context), self.playback_options.flush_pending)
+        self.user_actions.request(lambda: self._delete_video(vid, context), self.player_view.options.flush_pending)
 
     def _delete_video(self, vid, context):
         playing = vid == self.current
@@ -465,18 +445,13 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
             self.catalog.set_favorite(self.current, value)
             self.refresh_title()
 
-    def tags_dialog(self):
-        if self.current and not self.busy:
-            panel = self.playback_options.tags_popup
-            panel.dismiss() if panel.isVisible() else panel.open_above()
 
     def rating_dialog(self, vid=None):
         vid = vid or self.current
         if not vid or self.busy:
             return
         if vid == self.current:
-            panel = self.playback_options.rating_popup
-            panel.dismiss() if panel.isVisible() else panel.open_above()
+            self.player_view.toggle_rating()
             return
         from score_editor import ScoreEditor
         dialog = ScoreEditor(self.catalog.video(vid), self)
@@ -507,6 +482,7 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
                     policy.release_media)
         self.busy = True
         self.thumbnail_service.pause(True)
+        self.refresh_transport()
         try:
             if policy.cancel_navigation:
                 self.library_controller.cancel()
@@ -516,6 +492,7 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
         except Exception:
             self.busy = False
             self.thumbnail_service.pause(False)
+            self.refresh_transport()
             raise
         return bookmark
 
@@ -532,6 +509,7 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
                 except OSError:
                     self.clear_player()
                     raise
+        self.refresh_transport()
 
     def _file_work(self, function):
         def run():
@@ -686,9 +664,9 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
             self.message('文件任务正在处理，请等待完成后退出。')
             event.ignore()
             return
-        operation = self.playback_options.flush_pending()
+        operation = self.player_view.options.flush_pending()
         if operation.pending:
-            self.user_actions.request(lambda: QTimer.singleShot(0, self.close), self.playback_options.flush_pending, closing=True)
+            self.user_actions.request(lambda: QTimer.singleShot(0, self.close), self.player_view.options.flush_pending, closing=True)
             event.ignore()
             return
         if not operation.outcome.succeeded:
@@ -698,10 +676,7 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
         self.thumbnails.closing = True
         self.save()
         self.timer.stop()
-        self.seekbar.animation.stop()
-        self.playback_options.dismiss()
-        self.seek_notice.clear()
-        self.video_fullscreen.exit()
+        self.player_view.shutdown()
         self.player.stop()
         QApplication.instance().removeEventFilter(self)
         event.accept()

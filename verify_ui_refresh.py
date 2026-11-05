@@ -75,7 +75,7 @@ def run(destination):
     def snapshot(name):
         application.processEvents()
         window.grab().save(str(output / (name + '.png')))
-        for number, surface in enumerate([*window.playback_options.panels, window.video_fullscreen.overlay, window.video_fullscreen.title]):
+        for number, surface in enumerate([*window.player_view.options.panels, window.player_view.fullscreen.overlay, window.player_view.fullscreen.title]):
             if surface.isVisible():
                 surface.grab().save(str(output / f'{name}-surface-{number}.png'))
     def button_matches(state):
@@ -83,9 +83,9 @@ def run(destination):
         symbol = 'pause' if state == vlc.State.Playing else 'play'
         action = '暂停' if state == vlc.State.Playing else '播放'
         return (window.player.get_state() == state and
-                window.play_button.property('iconName') == symbol and
-                window.play_button.accessibleName() == action and
-                window.play_button.icon().pixmap(24, 24).toImage() == icon(symbol, '#ffffff').pixmap(24, 24).toImage())
+                window.player_view.play_button.property('iconName') == symbol and
+                window.player_view.play_button.accessibleName() == action and
+                window.player_view.play_button.icon().pixmap(24, 24).toImage() == icon(symbol, '#ffffff').pixmap(24, 24).toImage())
     def hit_layer(widget):
         # Read native z-order on this thread's private desktop. No global input.
         user = ctypes.WinDLL('user32')
@@ -156,19 +156,19 @@ def run(destination):
         def timeline_moves_between_decoder_polls():
             window.timer.stop()
             window.tick()
-            start = window.seekbar.visual_fraction
+            start = window.player_view.seekbar.visual_fraction
             QTest.qWait(120)
-            end = window.seekbar.visual_fraction
+            end = window.player_view.seekbar.visual_fraction
             window.timer.start()
-            return end > start and window.seekbar.animation.isActive()
+            return end > start and window.player_view.seekbar.animation.isActive()
         check('timeline animates between decoder polls', timeline_moves_between_decoder_polls())
-        window.play_button.click()
+        window.player_view.play_button.click()
         check('pause acknowledged', wait(lambda: window.player.get_state() == vlc.State.Paused))
         check('transport shows actual play action after pause', wait(lambda: button_matches(vlc.State.Paused)))
         window.tick()
-        paused_fraction = window.seekbar.visual_fraction
+        paused_fraction = window.player_view.seekbar.visual_fraction
         QTest.qWait(120)
-        check('paused timeline stays still', window.seekbar.visual_fraction == paused_fraction and not window.seekbar.animation.isActive())
+        check('paused timeline stays still', window.player_view.seekbar.visual_fraction == paused_fraction and not window.player_view.seekbar.animation.isActive())
         library = window.library_view
         library.show_mode('videos')
         recent = library.lists['videos']
@@ -180,7 +180,7 @@ def run(destination):
         check('metadata refresh keeps selected native list row', selected.isValid() and recent.currentIndex().data(Qt.UserRole) == window.current)
         window.catalog.set_score(window.current, None)
         window.library_controller.refresh([window.current])
-        window.favorite_button.click()
+        window.player_view.favorite_button.click()
         library.show_mode('stars')
         stars = library.lists['stars']
         stars.setCurrentIndex(stars.model().index_for_id(window.current))
@@ -197,25 +197,25 @@ def run(destination):
         check('native file tree can return to original directory', wait(lambda: not browsing.pending) and browsing.outcome.succeeded and library.tree.model().rowCount(library.tree.model().index(0, 0)) == 2)
         before_seek = max(0, window.player.get_time())
         target = min(window.player.get_length(), before_seek + 5000)
-        QTest.keyClick(window.surface, Qt.Key_D)
+        QTest.keyClick(window.player_view.surface, Qt.Key_D)
         check('keyboard jump updates timeline and shows independent seek surface',
-              abs(window.seekbar.visual_fraction - target / window.player.get_length()) < .0001 and
-              window.seek_notice.overlay.isVisible() and
+              abs(window.player_view.seekbar.visual_fraction - target / window.player.get_length()) < .0001 and
+              window.player_view.seek_notice.overlay.isVisible() and
               window.player.video_get_marquee_int(vlc.VideoMarqueeOption.Enable) == 0)
         check('keyboard jump confirmation preserves paused timeline',
               wait(lambda: window.playback.pending_seek is None and abs(window.player.get_time() - target) < 100) and
-              abs(window.seekbar.visual_fraction - target / window.player.get_length()) < .003 and
-              not window.seekbar.animation.isActive())
-        handle = int(window.surface.winId())
+              abs(window.player_view.seekbar.visual_fraction - target / window.player.get_length()) < .003 and
+              not window.player_view.seekbar.animation.isActive())
+        handle = int(window.player_view.surface.winId())
         frame = output / 'decoded-frame.png'
         check('VLC decoded frame snapshot', window.player.video_take_snapshot(0, str(frame), 320, 180) == 0 and wait(frame.exists))
         snapshot('playing')
-        options = window.playback_options
+        options = window.player_view.options
         options.volume_popup.open_above()
         application.processEvents()
         check('volume owned surface above video', options.volume_popup.isVisible() and options.volume_popup.owner is window and hit_layer(options.volume_popup))
         check('volume compositor alpha has smooth corners', smooth_surface(options.volume_popup))
-        window.volume.setValue(35)
+        window.player_view.options.volume.setValue(35)
         check('VLC volume command applied', wait(lambda: window.player.audio_get_volume() == 35))
         options.toggle_mute()
         check('VLC mute enabled', wait(lambda: window.player.audio_get_mute() == 1))
@@ -232,11 +232,11 @@ def run(destination):
         snapshot('rating')
         options.rating_popup.commit(9)
         check('nine point rating persisted', window.store.video(window.current)['score'] == 9)
-        window.favorite_button.click()
-        check('favorite filled', window.favorite_button.property('iconName') == 'starFilled')
-        window.favorite_button.click()
+        window.player_view.favorite_button.click()
+        check('favorite filled', window.player_view.favorite_button.property('iconName') == 'starFilled')
+        window.player_view.favorite_button.click()
         check('favorite can be cancelled', window.store.video(window.current)['star'] == 0)
-        window.tags_dialog()
+        window.player_view.toggle_tags()
         panel, editor = options.tags_popup, options.tags_popup.editor
         check('tag owned surface above video', wait(lambda: panel.isVisible() and hit_layer(panel)))
         check('tag compositor alpha has smooth corners', smooth_surface(panel))
@@ -311,17 +311,17 @@ def run(destination):
             surface.open_above()
             check('after parent menus: ' + label + ' can reopen', wait(lambda: surface.isVisible() and hit_layer(surface)))
             surface.dismiss()
-        window.play_button.click()
+        window.player_view.play_button.click()
         check('transport button resumes real playback', wait(lambda: button_matches(vlc.State.Playing)))
         from theme import apply_theme
         apply_theme(window, 'dark')
         check('appearance redraw preserves running transport action', button_matches(vlc.State.Playing))
         apply_theme(window, 'light')
         for cycle in range(3):
-            window.enter_fullscreen()
+            window.player_view.fullscreen.toggle()
             check(f'fullscreen {cycle}: active', wait(lambda: window.isFullScreen() and window.isActiveWindow()))
             check(f'fullscreen {cycle}: entering preserves playing icon pixels', button_matches(vlc.State.Playing))
-            fullscreen = window.video_fullscreen
+            fullscreen = window.player_view.fullscreen
             fullscreen.timer.stop()
             center = window.canvas.mapToGlobal(window.canvas.rect().center())
             bottom = window.canvas.mapToGlobal(QPoint(window.canvas.width() // 2, window.canvas.height() - 2))
@@ -330,19 +330,19 @@ def run(destination):
             check(f'fullscreen {cycle}: idle hidden', not fullscreen.overlay.isVisible())
             check(f'fullscreen {cycle}: title and Qt cursor hide with controls',
                   not fullscreen.title.isVisible() and fullscreen.cursor.hidden and
-                  window.surface.cursor().shape() == Qt.BlankCursor)
+                  window.player_view.surface.cursor().shape() == Qt.BlankCursor)
             native_cursor = fullscreen.cursor
             saved_classes = dict(native_cursor.native_classes)
             check(f'fullscreen {cycle}: native video cursor classes hidden',
                   len(saved_classes) >= 2 and all(native_cursor.user.GetClassLongPtrW(hwnd, -12) == 0 for hwnd in saved_classes))
             if cycle == 0:
-                video_geometry = window.surface.geometry()
+                video_geometry = window.player_view.surface.geometry()
                 window.advance(1)
                 check('fullscreen switch: next clip actually plays', wait(lambda: window.current == context.folders[str(sample_dir)][1][1][0] and button_matches(vlc.State.Playing)))
                 fullscreen.poll(center)
                 check('fullscreen switch: title updates without showing or shrinking video',
                       fullscreen.title.filename == 'second.mp4' and not fullscreen.title.isVisible() and
-                      window.player_header.isHidden() and window.surface.geometry() == video_geometry)
+                      window.player_view.header.isHidden() and window.player_view.surface.geometry() == video_geometry)
                 def recreated_cursor_hidden():
                     fullscreen.poll(center)
                     return len(native_cursor.native_classes) >= 2 and all(native_cursor.user.GetClassLongPtrW(hwnd, -12) == 0 for hwnd in native_cursor.native_classes)
@@ -353,7 +353,7 @@ def run(destination):
             check(f'fullscreen {cycle}: bottom reveals native controls', fullscreen.overlay.isVisible() and hit_layer(fullscreen.overlay))
             check(f'fullscreen {cycle}: title and cursor restore with controls',
                   fullscreen.title.isVisible() and not fullscreen.cursor.hidden and
-                  window.surface.cursor().shape() != Qt.BlankCursor and
+                  window.player_view.surface.cursor().shape() != Qt.BlankCursor and
                   fullscreen.title.filename == window.store.video(window.current)['name'])
             check(f'fullscreen {cycle}: native video cursor classes restored',
                   not native_cursor.native_classes and all(native_cursor.user.GetClassLongPtrW(hwnd, -12) == cursor for hwnd, (name, cursor) in saved_classes.items()))
@@ -362,9 +362,9 @@ def run(destination):
             fullscreen.poll(bottom)
             check(f'fullscreen {cycle}: bottom stationary stays visible', fullscreen.overlay.isVisible())
             check(f'fullscreen {cycle}: timeline animation survives reparenting', timeline_moves_between_decoder_polls())
-            window.play_button.click()
+            window.player_view.play_button.click()
             check(f'fullscreen {cycle}: button pauses and updates icon', wait(lambda: button_matches(vlc.State.Paused)))
-            window.play_button.click()
+            window.player_view.play_button.click()
             check(f'fullscreen {cycle}: button resumes and updates icon', wait(lambda: button_matches(vlc.State.Playing)))
             window.rating_dialog()
             fullscreen.poll(bottom)
@@ -377,20 +377,20 @@ def run(destination):
             exit_classes = dict(fullscreen.cursor.native_classes)
             check(f'fullscreen {cycle}: idle cursor hidden before exit',
                   fullscreen.cursor.hidden and len(exit_classes) >= 2)
-            window.exit_fullscreen()
+            window.player_view.fullscreen.exit()
             application.processEvents()
-            check(f'fullscreen {cycle}: handle and left sidebar restored', int(window.surface.winId()) == handle and window.library_view.isVisible() and window.playback_panel.parentWidget().objectName() == 'playerCard')
+            check(f'fullscreen {cycle}: handle and left sidebar restored', int(window.player_view.surface.winId()) == handle and window.library_view.isVisible() and window.player_view.playback_panel.parentWidget().objectName() == 'playerCard')
             check(f'fullscreen {cycle}: exit restores title layout and cursor',
-                  window.player_header.isVisible() and not fullscreen.title.isVisible() and
+                  window.player_view.header.isVisible() and not fullscreen.title.isVisible() and
                   not fullscreen.cursor.hidden and not fullscreen.cursor.native_classes and
                   all(native_cursor.user.GetClassLongPtrW(hwnd, -12) == cursor for hwnd, (name, cursor) in exit_classes.items()))
             check(f'fullscreen {cycle}: exit preserves playing icon pixels', button_matches(vlc.State.Playing))
-        window.enter_fullscreen()
+        window.player_view.fullscreen.toggle()
         check('ownership: fullscreen active', wait(lambda: window.isFullScreen() and window.isActiveWindow()))
-        fullscreen = window.video_fullscreen
+        fullscreen = window.player_view.fullscreen
         bottom = window.canvas.mapToGlobal(QPoint(window.canvas.width() // 2, window.canvas.height() - 2))
         fullscreen.poll(bottom)
-        window.tags_dialog()
+        window.player_view.toggle_tags()
         panel, editor = options.tags_popup, options.tags_popup.editor
         check('fullscreen tag surface presented', wait(lambda: panel.isVisible() and hit_layer(panel)))
         point = editor.entry.mapTo(panel, editor.entry.rect().center())
@@ -443,7 +443,7 @@ def run(destination):
         window.showFullScreen()
         window.activateWindow()
         check('ownership: fullscreen restored', wait(window.isActiveWindow))
-        window.exit_fullscreen()
+        window.player_view.fullscreen.exit()
         check('private desktop never switched', require_private_desktop() == desktop)
     except Exception:
         report['error'] = traceback.format_exc()

@@ -42,10 +42,10 @@ def run(destination):  # 只验证跳转提示，不运行完整回归。
             QTest.qWait(20)  # 给 VLC 解码线程短暂运行时间。
         return False  # 超时不能视作通过。
     def text():
-        return window.seek_notice.text()
+        return window.player_view.seek_notice.text()
     def centered():
-        panel = window.seek_notice.overlay
-        center = window.surface.mapToGlobal(window.surface.rect().center())
+        panel = window.player_view.seek_notice.overlay
+        center = window.player_view.surface.mapToGlobal(window.player_view.surface.rect().center())
         return (abs(panel.geometry().center().x() - center.x()) <= 1 and
                 panel.geometry().center().y() < center.y())
     try:  # 任意失败也释放真实播放器。
@@ -57,9 +57,9 @@ def run(destination):  # 只验证跳转提示，不运行完整回归。
         assert wait(lambda: window.player.get_state() == vlc.State.Paused)  # VLC 暂停命令异步确认后再设置位置。
         window.set_playback_position(5000, window.player.get_length())  # 精确固定在用户示例的五秒位置。
         check('真实视频准备完成', wait(lambda: abs(window.player.get_time() - 5000) < 100))  # 不把异步暂停期间推进的时间当作提示错误。
-        QTest.keyClick(window.surface, Qt.Key_D)  # 从五秒按 D 跳到十秒。
-        check('D键跳转后显示居中偏上两行浮层', wait(lambda: abs(window.player.get_time() - 10000) < 100) and text() == '00:05→00:10(01:00)\n16.7%' and window.seek_notice.overlay.isVisible() and centered())
-        panel = window.seek_notice.overlay
+        QTest.keyClick(window.player_view.surface, Qt.Key_D)  # 从五秒按 D 跳到十秒。
+        check('D键跳转后显示居中偏上两行浮层', wait(lambda: abs(window.player.get_time() - 10000) < 100) and text() == '00:05→00:10(01:00)\n16.7%' and window.player_view.seek_notice.overlay.isVisible() and centered())
+        panel = window.player_view.seek_notice.overlay
         panel.grab().save(str(output / 'seek-notice-windowed.png'))
         original_size, original_font = panel.size(), panel.time_label.font()
         check('浮层不抢焦点且内核文字层保持关闭', window.isActiveWindow() and window.player.video_get_marquee_int(vlc.VideoMarqueeOption.Enable) == 0)
@@ -89,17 +89,17 @@ def run(destination):  # 只验证跳转提示，不运行完整回归。
         check('移动窗口后提示同步移动', panel.isVisible() and panel.pos() == original_position + QPoint(20, 15))
         QTest.qWait(150)  # 保持短暂停顿，验证隐藏计时独立于播放状态。
         check('暂停时提示也会按时隐藏', wait(lambda: not panel.isVisible(), 3) and window.player.get_state() == vlc.State.Paused)
-        QTest.keyClick(window.surface, Qt.Key_A)  # 后退同样显示前后进度。
+        QTest.keyClick(window.player_view.surface, Qt.Key_A)  # 后退同样显示前后进度。
         check('A键后退提示百分比正确', wait(lambda: abs(window.player.get_time() - 5000) < 100) and text() == '00:10→00:05(01:00)\n8.3%')
         window.set_playback_position(2000, window.player.get_length())  # 准备后退到开头的边界。
         check('边界准备完成', wait(lambda: abs(window.player.get_time() - 2000) < 100))  # 等待实际定位完成。
-        QTest.keyClick(window.surface, Qt.Key_Left)  # 后退五秒需要截断到零。
+        QTest.keyClick(window.player_view.surface, Qt.Key_Left)  # 后退五秒需要截断到零。
         check('边界显示实际零秒和零百分比', wait(lambda: window.player.get_time() == 0) and text() == '00:02→00:00(01:00)\n0.0%')
         window.set_playback_position(5000, window.player.get_length())  # 全屏也从明确的五秒开始。
         assert wait(lambda: abs(window.player.get_time() - 5000) < 100)  # 不接受尚未完成的异步定位。
-        window.enter_fullscreen()  # 使用正式视频全屏布局。
+        window.player_view.fullscreen.toggle()  # 使用正式视频全屏布局。
         app.processEvents()  # 稳定全屏窗口几何。
-        QTest.keyClick(window.surface, Qt.Key_Right)  # 方向键与 D 共用提示。
+        QTest.keyClick(window.player_view.surface, Qt.Key_Right)  # 方向键与 D 共用提示。
         check('全屏方向键也显示居中偏上浮层', wait(lambda: abs(window.player.get_time() - 10000) < 100) and text().startswith('00:05→00:10(01:00)') and panel.isVisible() and centered())
         panel.grab().save(str(output / 'seek-notice-fullscreen.png'))
         QTest.qWait(150)  # 等待原生合成画面更新。
@@ -112,7 +112,7 @@ def run(destination):  # 只验证跳转提示，不运行完整回归。
         QTest.keyClick(entry, Qt.Key_D)  # D 应只进入文本框。
         check('输入文字不误触跳转提示', entry.text() == 'd' and text() == previous and abs(window.player.get_time() - 10000) < 100)  # 保留既有输入保护。
         modal.reject()  # 关闭测试输入窗口。
-        window.exit_fullscreen()  # 恢复窗口布局后检查重载清理。
+        window.player_view.fullscreen.exit()  # 恢复窗口布局后检查重载清理。
         window.play_path(sample, 0, True)  # 模拟换片或安全重载。
         check('重载清除上一条提示', text() == '' and not panel.isVisible())
         window.current = window.store.register(low_resolution)
@@ -120,7 +120,7 @@ def run(destination):  # 只验证跳转提示，不运行完整回归。
         check('低分辨率视频解码并暂停', wait(lambda: window.playback.resume is None and window.player.get_state() == vlc.State.Paused and window.player.video_get_size(0) == (160, 90)))
         window.set_playback_position(5000, window.player.get_length())
         assert wait(lambda: abs(window.player.get_time() - 5000) < 100)
-        QTest.keyClick(window.surface, Qt.Key_D)
+        QTest.keyClick(window.player_view.surface, Qt.Key_D)
         check('低分辨率视频浮层与高清样例字号尺寸相同',
               wait(lambda: abs(window.player.get_time() - 10000) < 100) and
               panel.isVisible() and text() == '00:05→00:10(01:00)\n16.7%' and
@@ -134,7 +134,7 @@ def run(destination):  # 只验证跳转提示，不运行完整回归。
         other.close()
         window.activateWindow()
         assert wait(window.isActiveWindow)
-        window.seek_notice.show(5000, 10000, 60000)
+        window.player_view.seek_notice.show(5000, 10000, 60000)
         window.showMinimized()
         check('最小化后提示隐藏', wait(lambda: not panel.isVisible()))
     finally:  # 保证测试不遗留播放器和后台线程。

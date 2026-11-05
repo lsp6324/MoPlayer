@@ -126,66 +126,66 @@ def run(destination):  # 执行源码与便携版共用的实际验收。
         original = window.current  # 保存当前视频身份。
         window.load_folder(str(output / 'samples'))  # 播放时替换浏览目录。
         check('替换浏览保留播放上下文', wait_until(lambda: window.library_controller.browsing.root == str(output / 'samples')) and window.context is context and window.current == original)  # 确认浏览与播放分离。
-        QTest.keyClick(window.surface, Qt.Key_Space)  # 发送真实空格事件。
+        QTest.keyClick(window.player_view.surface, Qt.Key_Space)  # 发送真实空格事件。
         check('空格暂停', wait_until(lambda: window.player.get_state() == vlc.State.Paused))  # 验证暂停响应。
-        QTest.keyClick(window.surface, Qt.Key_Left)  # 从短视频当前位置后退五秒。
+        QTest.keyClick(window.player_view.surface, Qt.Key_Left)  # 从短视频当前位置后退五秒。
         check('后退夹紧零点', wait_until(lambda: window.player.get_time() == 0))  # 不允许负播放位置。
-        QTest.keyClick(window.surface, Qt.Key_Right)  # 从零点向前五秒超过样例时长。
+        QTest.keyClick(window.player_view.surface, Qt.Key_Right)  # 从零点向前五秒超过样例时长。
         check('快进不超过时长', wait_until(lambda: 3900 <= window.player.get_time() <= window.player.get_length()))  # 夹紧总时长边界。
-        QTest.keyClick(window.surface, Qt.Key_A)  # A 与左方向键一样后退五秒。
+        QTest.keyClick(window.player_view.surface, Qt.Key_A)  # A 与左方向键一样后退五秒。
         check('A 后退夹紧零点', wait_until(lambda: window.player.get_time() == 0))  # 真正验证 VLC 播放进度。
-        QTest.keyClick(window.surface, Qt.Key_D)  # D 与右方向键一样快进五秒。
+        QTest.keyClick(window.player_view.surface, Qt.Key_D)  # D 与右方向键一样快进五秒。
         check('D 快进不超过时长', wait_until(lambda: 3900 <= window.player.get_time() <= window.player.get_length()))  # 新键同样不能越界。
         window.player.set_time(500)  # 将暂停位置恢复到可继续验收的范围。
-        original_handle, original_geometry = int(window.surface.winId()), window.geometry()  # 保存视频原生句柄与普通窗口几何。
+        original_handle, original_geometry = int(window.player_view.surface.winId()), window.geometry()  # 保存视频原生句柄与普通窗口几何。
         original_sizes = window.canvas.findChild(QSplitter).sizes()  # 记录用户工作区比例。
-        QTest.keyClick(window.surface, Qt.Key_Return)  # 发送 Enter 全屏。
+        QTest.keyClick(window.player_view.surface, Qt.Key_Return)  # 发送 Enter 全屏。
         app.processEvents()  # 等待全屏窗口与原生视频重新布局。
-        check('仅视频全屏隐藏目录', window.isFullScreen() and not window.library_view.tree.isVisible() and window.surface.isVisible())  # 按用户修订要求隐藏目录。
-        check('全屏画面铺满窗口', window.surface.width() >= window.width() - 2 and window.surface.height() >= window.height() - 2)  # 不保留卡片留白和其他应用区域。
-        check('全屏保留视频句柄和暂停状态', int(window.surface.winId()) == original_handle and window.player.get_state() == vlc.State.Paused and window.context is context and window.current == original)  # 不重载或改变播放身份。
-        QTest.keyClick(window.surface, Qt.Key_A)  # 视频全屏仍接受 A 后退。
+        check('仅视频全屏隐藏目录', window.isFullScreen() and not window.library_view.tree.isVisible() and window.player_view.surface.isVisible())  # 按用户修订要求隐藏目录。
+        check('全屏画面铺满窗口', window.player_view.surface.width() >= window.width() - 2 and window.player_view.surface.height() >= window.height() - 2)  # 不保留卡片留白和其他应用区域。
+        check('全屏保留视频句柄和暂停状态', int(window.player_view.surface.winId()) == original_handle and window.player.get_state() == vlc.State.Paused and window.context is context and window.current == original)  # 不重载或改变播放身份。
+        QTest.keyClick(window.player_view.surface, Qt.Key_A)  # 视频全屏仍接受 A 后退。
         check('全屏 A 后退有效', wait_until(lambda: window.player.get_time() == 0))  # 不依赖目录视图焦点。
-        QTest.keyClick(window.surface, Qt.Key_D)  # 视频全屏仍接受 D 快进。
+        QTest.keyClick(window.player_view.surface, Qt.Key_D)  # 视频全屏仍接受 D 快进。
         check('全屏 D 快进有效', wait_until(lambda: 3900 <= window.player.get_time() <= window.player.get_length()))  # 全屏使用相同有效时长边界。
         window.player.set_time(500)  # 保持后续暂停状态和归档回归的有效起点。
         from PySide6.QtGui import QCursor  # 使用真实系统指针验证原生视频上的活动检测。
         window.activateWindow()  # 让播放器拥有浮动控制栏的显示条件。
         app.processEvents()  # 处理主窗口激活。
         saved_cursor = QCursor.pos()  # 保存指针位置，测试完成后恢复。
-        QCursor.setPos(window.surface.mapToGlobal(QPoint(window.surface.width() // 2, window.surface.height() // 2)))  # 空闲隐藏测试需先将指针放在视频中间，不能停留在本应保持显示的控制栏上。
+        QCursor.setPos(window.player_view.surface.mapToGlobal(QPoint(window.player_view.surface.width() // 2, window.player_view.surface.height() // 2)))  # 空闲隐藏测试需先将指针放在视频中间，不能停留在本应保持显示的控制栏上。
         app.processEvents()  # 交付本次可控指针位置变化。
-        window.video_fullscreen.last_cursor = QCursor.pos()  # 固定测试起点，不把上一次移动算成新活动。
-        window.video_fullscreen.last_activity = time.monotonic() - 3  # 模拟已超过两点五秒的鼠标空闲。
-        window.video_fullscreen.poll()  # 执行生产自动隐藏逻辑。
-        check('全屏控制栏空闲隐藏', not window.video_fullscreen.overlay.isVisible())  # 观看时仅显示画面。
-        window.video_fullscreen.last_cursor -= QPoint(1, 0)  # 模拟下一轮真实指针位置与记录位置不同。
-        window.video_fullscreen.poll()  # 执行生产鼠标移动检测。
-        check('鼠标活动显示全屏控制栏', window.video_fullscreen.overlay.isVisible())  # 原生视频不必转发 Qt MouseMove 事件。
+        window.player_view.fullscreen.last_cursor = QCursor.pos()  # 固定测试起点，不把上一次移动算成新活动。
+        window.player_view.fullscreen.last_activity = time.monotonic() - 3  # 模拟已超过两点五秒的鼠标空闲。
+        window.player_view.fullscreen.poll()  # 执行生产自动隐藏逻辑。
+        check('全屏控制栏空闲隐藏', not window.player_view.fullscreen.overlay.isVisible())  # 观看时仅显示画面。
+        window.player_view.fullscreen.last_cursor -= QPoint(1, 0)  # 模拟下一轮真实指针位置与记录位置不同。
+        window.player_view.fullscreen.poll()  # 执行生产鼠标移动检测。
+        check('鼠标活动显示全屏控制栏', window.player_view.fullscreen.overlay.isVisible())  # 原生视频不必转发 Qt MouseMove 事件。
         QCursor.setPos(saved_cursor)  # 不改变用户完成验收后的原指针位置。
         window.grab().save(str(output / 'video-fullscreen.png'))  # 保存只有视频区域的实际布局证据。
-        window.video_fullscreen.overlay.grab().save(str(output / 'fullscreen-controls.png'))  # 单独保存覆盖原生视频的浮层截图。
+        window.player_view.fullscreen.overlay.grab().save(str(output / 'fullscreen-controls.png'))  # 单独保存覆盖原生视频的浮层截图。
         fullscreen_modal = QDialog(window)  # 验证全屏期间弹窗优先级。
         fullscreen_modal.setModal(True)  # 模拟 Q/R 弹窗的模态输入规则。
         fullscreen_modal.show()  # 显示真实 Qt 弹窗。
         app.processEvents()  # 应用模态状态。
-        window.video_fullscreen.poll()  # 全屏浮层遇到弹窗应避让。
-        check('全屏弹窗隐藏浮层', not window.video_fullscreen.overlay.isVisible())  # 不遮挡标签或评分输入。
+        window.player_view.fullscreen.poll()  # 全屏浮层遇到弹窗应避让。
+        check('全屏弹窗隐藏浮层', not window.player_view.fullscreen.overlay.isVisible())  # 不遮挡标签或评分输入。
         QTest.keyClick(fullscreen_modal, Qt.Key_Escape)  # 第一次 Esc 应关闭弹窗。
         app.processEvents()  # 处理弹窗关闭。
         check('Esc 优先关闭弹窗保留全屏', not fullscreen_modal.isVisible() and window.isFullScreen())  # 不让同一个 Esc 同时退出两层状态。
-        QTest.keyClick(window.surface, Qt.Key_Escape)  # 发送 Esc 退出全屏。
+        QTest.keyClick(window.player_view.surface, Qt.Key_Escape)  # 发送 Esc 退出全屏。
         app.processEvents()  # 等待普通布局恢复。
-        check('Esc 退出并恢复目录和控制栏', not window.isFullScreen() and window.library_view.tree.isVisible() and window.playback_panel.parentWidget() is window.surface.parentWidget())  # 恢复同一套工作控件。
-        check('退出全屏恢复窗口大小与目录比例', window.geometry() == original_geometry and window.video_fullscreen.splitter.sizes() == original_sizes)  # 不丢失用户进入前布局。
-        QTest.mouseClick(window.fullscreen_button, Qt.LeftButton)  # 验证可见按钮与 Enter 使用同一实现。
+        check('Esc 退出并恢复目录和控制栏', not window.isFullScreen() and window.library_view.tree.isVisible() and window.player_view.playback_panel.parentWidget() is window.player_view.surface.parentWidget())  # 恢复同一套工作控件。
+        check('退出全屏恢复窗口大小与目录比例', window.geometry() == original_geometry and window.player_view.fullscreen.splitter.sizes() == original_sizes)  # 不丢失用户进入前布局。
+        QTest.mouseClick(window.player_view.fullscreen_button, Qt.LeftButton)  # 验证可见按钮与 Enter 使用同一实现。
         app.processEvents()  # 应用按钮进入全屏。
         check('全屏按钮进入视频模式', window.isFullScreen() and not window.library_view.tree.isVisible())  # 不仅验证快捷键。
-        QTest.keyClick(window.surface, Qt.Key_Return)  # 再按 Enter 应退出全屏。
+        QTest.keyClick(window.player_view.surface, Qt.Key_Return)  # 再按 Enter 应退出全屏。
         app.processEvents()  # 应用恢复布局。
         check('Enter 再次退出全屏', not window.isFullScreen() and window.library_view.tree.isVisible())  # 支持直接切换而非只进不出。
-        QTest.keyClick(window.surface, Qt.Key_W)  # 收藏当前视频。
-        QTest.keyClick(window.surface, Qt.Key_W)  # 重复收藏不新增身份。
+        QTest.keyClick(window.player_view.surface, Qt.Key_W)  # 收藏当前视频。
+        QTest.keyClick(window.player_view.surface, Qt.Key_W)  # 重复收藏不新增身份。
         check('W 幂等收藏', len(window.store.query('SELECT * FROM videos WHERE star=1')) == 1)  # 只有一条收藏。
         modal = QDialog(window)  # 构造真实输入弹窗。
         entry = QLineEdit(modal)  # 使用实际文本输入控件。
@@ -203,7 +203,7 @@ def run(destination):  # 执行源码与便携版共用的实际验收。
             dialog = QApplication.activeModalWidget()  # 定位当前评分弹窗。
             dialog.findChild(QPushButton, 'score_0').click()  # 点击独立零分按钮，验证不再依赖下拉框。
         QTimer.singleShot(100, rate_zero)  # 在评分弹窗进入事件循环后操作。
-        QTest.keyClick(window.surface, Qt.Key_R)  # 通过真实 R 快捷键打开评分界面。
+        QTest.keyClick(window.player_view.surface, Qt.Key_R)  # 通过真实 R 快捷键打开评分界面。
         check('评分零分且未归档不移动', window.store.video(original)['score'] == 0 and not window.store.video(original)['archived'])  # 与未评分状态区别。
         window.store.execute('UPDATE videos SET score=8 WHERE id=?', (original,))  # 为标签确认准备已有评分。
         def choose_tags():  # 通过真实标签弹窗新增并勾选两个标签。
@@ -217,7 +217,7 @@ def run(destination):  # 执行源码与便携版共用的实际验收。
             dialog.accept()  # 明确确认后才提交归档。
         QTimer.singleShot(100, choose_tags)  # 等待标签弹窗打开后操作。
         first_rating = auto_rating(8)  # 标签完成后通过五颗心界面直接选择八分。
-        QTest.keyClick(window.surface, Qt.Key_Q)  # 使用真实 Q 快捷键启动标签流程。
+        QTest.keyClick(window.player_view.surface, Qt.Key_Q)  # 使用真实 Q 快捷键启动标签流程。
         check('播放中归档并自动评分成功', wait_until(lambda: bool(first_rating) and not window.busy, 30) and window.store.video(original)['archived'] == 1)  # 等待全局标签应用与评分后移动都完成。
         check('归档保留上下文及暂停状态', wait_until(lambda: window.player.get_state() == vlc.State.Paused) and window.context is context and window.current == original)  # 验证安全重载保持原顺序和暂停。
         entries = list((output / 'archive/8分').glob('*/*.mp4'))  # 获取真实多标签文件入口。
@@ -230,7 +230,7 @@ def run(destination):  # 执行源码与便携版共用的实际验收。
             dialog = QApplication.activeModalWidget()  # 读取实际评分弹窗。
             QTest.mouseClick(dialog.hearts[4], Qt.LeftButton, pos=QPoint(12, 24))  # 第五颗左半直接确认九分。
         QTimer.singleShot(100, rate_nine)  # 弹窗创建后再操作评分控件。
-        QTest.keyClick(window.surface, Qt.Key_R)  # 测试 GUI 评分确认路径。
+        QTest.keyClick(window.player_view.surface, Qt.Key_R)  # 测试 GUI 评分确认路径。
         check('修改评分同步改名且保留原身份', wait_until(lambda: not window.busy, 30) and window.store.resolve(original).name == '9分 测试乙 测试甲 第2集.mp4' and all(not entry.exists() for entry in entries))  # 新入口先存在，再清理旧评分入口。
         check('改名重载保持暂停与上下文', wait_until(lambda: window.player.get_state() == vlc.State.Paused) and window.context is context)  # 命名变更不强制播放或改顺序。
         def remove_tag():  # 模拟 Q 界面取消其中一个标签。
@@ -241,16 +241,16 @@ def run(destination):  # 执行源码与便携版共用的实际验收。
             dialog.accept()  # 确认后才提交磁盘操作。
         QTimer.singleShot(100, remove_tag)  # 保持与实际用户确认路径一致。
         second_rating = auto_rating(9)  # 每次标签完全应用后再次明确评分。
-        QTest.keyClick(window.surface, Qt.Key_Q)  # 使用真实分类快捷键。
+        QTest.keyClick(window.player_view.surface, Qt.Key_Q)  # 使用真实分类快捷键。
         check('取消标签同步替换前缀并自动评分', wait_until(lambda: bool(second_rating) and not window.busy, 30) and window.store.resolve(original).name == '9分 测试乙 第2集.mp4')  # 标签和评分流程完整结束后验证实际文件名。
         window.archive(original, 8, ['测试甲', '测试乙'])  # 恢复后续原有回归使用的评分及两个标签。
         check('反复修改不叠加旧前缀', wait_until(lambda: not window.busy, 30) and window.store.resolve(original).name == expected_name)  # 始终由永久原名重建完整名称。
         check('恢复分类后暂停状态保留', wait_until(lambda: window.player.get_state() == vlc.State.Paused))  # 避免短样例在后续导航断言前自然结束。
         entries = list((output / 'archive/8分').glob('*/*.mp4'))  # 后续缩略图检查使用最新有效入口。
         report['shell_thumbnails']['archived_hardlink'] = shell_thumbnail(entries[0])  # 对实际归档硬链接再次验证缩略图。
-        QTest.keyClick(window.surface, Qt.Key_X)  # 从归档视频按 X 切换。
+        QTest.keyClick(window.player_view.surface, Qt.Key_X)  # 从归档视频按 X 切换。
         check('X 使用原目录下一个', window.location == (folder, 1))  # 不跳入标签目录。
-        QTest.keyClick(window.surface, Qt.Key_Z)  # 再按 Z 返回。
+        QTest.keyClick(window.player_view.surface, Qt.Key_Z)  # 再按 Z 返回。
         check('Z 使用原目录上一个', window.location == (folder, 0) and window.current == original)  # 通过稳定 ID 找到归档入口。
         check('归档视频可重新播放', wait_until(lambda: window.player.get_time() > 300))  # 证明归档后的文件可解码。
         window.player.set_time(3600)  # 跳到样例末尾触发自然结束。

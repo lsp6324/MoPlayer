@@ -1,6 +1,16 @@
 """Playback intent and persistence rules, independent of VLC and Qt."""
 from dataclasses import dataclass
+from enum import Enum
 import time
+
+
+class PlaybackStatus(Enum):
+    IDLE = 'idle'
+    LOADING = 'loading'
+    PLAYING = 'playing'
+    PAUSED = 'paused'
+    ENDED = 'ended'
+    ERROR = 'error'
 
 
 @dataclass(frozen=True)

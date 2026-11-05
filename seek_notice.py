@@ -68,10 +68,10 @@ class SeekSurface(FloatingSurface):
 
 
 class SeekNotice(QObject):
-    def __init__(self, window):
-        super().__init__(window)
-        self.window = window
-        self.overlay = SeekSurface(window.surface)
+    def __init__(self, surface):
+        super().__init__(surface)
+        self.window, self.surface = surface.window(), surface
+        self.overlay = SeekSurface(surface)
         self.timer = QTimer(self)
         self.timer.setSingleShot(True)
         self.timer.timeout.connect(self.clear)
@@ -81,7 +81,7 @@ class SeekNotice(QObject):
                 if self.overlay.time_label.text() else '')
 
     def show(self, before, after, total):
-        if total <= 0 or not self.window.surface.isVisible() or not player_is_active(self.window):
+        if total <= 0 or not self.surface.isVisible() or not player_is_active(self.window):
             self.clear()
             return
         times, percentage = notice_text(before, after, total).split('\n')

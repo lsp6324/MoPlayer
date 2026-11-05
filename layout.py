@@ -1,19 +1,16 @@
-"""Main window composition. Playback and file operations stay in app.py."""
+"""Compose the window chrome, library and player as independent views."""
 from PySide6.QtCore import Qt, QSize
 from PySide6.QtGui import QPixmap
-from PySide6.QtWidgets import (QWidget, QFrame, QLabel, QPushButton, QVBoxLayout,
-    QHBoxLayout, QSplitter, QSlider, QMenu)
+from PySide6.QtWidgets import QLabel, QVBoxLayout, QHBoxLayout, QSplitter, QMenu
 from appearance import Appearance, BackgroundCanvas, appearance_dialog
 from theme import apply_theme
 from window_chrome import TitleBar
-from playback_controls import PlaybackControls
-from playback_options import PlaybackOptions
-from seek_slider import PlaybackTimeline
+from player_view import PlayerView
 from library_view import LibraryView
 
 
 def build_interface(window, bundle):
-    from ui import PathLabel, icon, label, button
+    from ui import label, button
 
     def tool(name, action, symbol):
         control = button('', action, symbol, 'nav')
@@ -84,122 +81,9 @@ def build_interface(window, bundle):
                                       lambda: window.current, window)
     window.splitter.addWidget(window.library_view)
 
-    right = QFrame()
-    right.setObjectName('playerCard')
-    player = QVBoxLayout(right)
-    player.setContentsMargins(0, 0, 0, 0)
-    player.setSpacing(0)
-    window.player_header = QWidget()
-    info = QVBoxLayout(window.player_header)
-    info.setContentsMargins(16, 8, 16, 12)
-    info.setSpacing(5)
-    window.now = PathLabel('')
-    window.now.setObjectName('nowPlaying')
-    window.metadata = PathLabel('')
-    window.metadata.setObjectName('mediaMetadata')
-    info.addWidget(window.now)
-    info.addWidget(window.metadata)
-    window.player_header.hide()
-    player.addWidget(window.player_header)
-    window.media_badge = label('', 'badge')
-    window.media_badge.hide()
-    window.surface = QFrame()
-    window.surface.setAttribute(Qt.WA_NativeWindow)
-    window.player.set_hwnd(int(window.surface.winId()))
-    window.surface.setObjectName('videoSurface')
-    window.surface.setStyleSheet('QWidget#videoSurface { background:#08090b; border:none; }')
-    window.surface.setMinimumSize(300, 170)
-    surface_layout = QVBoxLayout(window.surface)
-    surface_layout.setContentsMargins(0, 0, 0, 0)
-    window.player_empty = QWidget()
-    window.player_empty.setObjectName('playerEmpty')
-    window.player_empty.setAttribute(Qt.WA_StyledBackground)
-    empty = QVBoxLayout(window.player_empty)
-    empty.setAlignment(Qt.AlignCenter)
-    empty.setSpacing(20)
-    emblem = QLabel()
-    emblem.setFixedSize(56, 56)
-    emblem.setPixmap(icon('play', '#424a59', 48).pixmap(48, 48))
-    emblem.setAlignment(Qt.AlignCenter)
-    empty.addWidget(emblem, 0, Qt.AlignHCenter)
-    window.empty_import = button('导入文件夹', window.library_view.choose_folder, 'plus', 'primary')
-    window.empty_import.setFixedHeight(38)
-    window.empty_import.setToolTip('也可将文件夹拖入左侧列表')
-    empty.addWidget(window.empty_import, 0, Qt.AlignHCenter)
-    surface_layout.addWidget(window.player_empty)
-    player.addWidget(window.surface, 1)
-
-    window.playback_panel = QWidget()
-    window.playback_panel.setObjectName('playbackPanel')
-    playback = QVBoxLayout(window.playback_panel)
-    playback.setContentsMargins(14, 4, 14, 6)
-    playback.setSpacing(2)
-    progress = QHBoxLayout()
-    progress.setSpacing(14)
-    window.seekbar = PlaybackTimeline()
-    window.seekbar.setRange(0, 10000)
-    window.seekbar.setEnabled(False)
-    window.seekbar.sliderReleased.connect(window.seek_slider)
-    window.seekbar.sliderMoved.connect(window.preview_seek)
-    window.seekbar.setAccessibleName('播放进度')
-    progress.addWidget(window.seekbar, 1)
-    window.time_label = label('00:00 / 00:00', 'timecode')
-    progress.addWidget(window.time_label)
-    playback.addLayout(progress)
-    window.control_row = PlaybackControls()
-    controls = window.control_row.left_layout
-    window.transport_buttons = []
-    for name, symbol, action in [('上一个 · Z', 'previous', lambda: window.advance(-1)),
-                                  ('播放 / 暂停 · 空格', 'play', window.toggle),
-                                  ('下一个 · X', 'next', lambda: window.advance(1))]:
-        control = tool(name, action, symbol)
-        control.setProperty('role', 'round')
-        if symbol == 'play':
-            window.play_button = control
-            control.setObjectName('playButton')
-            control.setFixedSize(44, 44)
-            control.setIconSize(QSize(22, 22))
-        control.setEnabled(False)
-        window.transport_buttons.append(control)
-        controls.addWidget(control)
-    controls = window.control_row.right_layout
-    window.playback_options = PlaybackOptions(window)
-    window.volume = window.playback_options.volume
-    window.volume_button = window.playback_options.volume_button
-    window.speed_button = window.playback_options.speed_button
-    controls.addWidget(window.volume_button)
-    controls.addWidget(window.speed_button)
-    controls.addSpacing(8)
-    window.sidebar_toggle = tool('显示 / 隐藏侧栏', window.toggle_sidebar, 'sidebar')
-    controls.addWidget(window.sidebar_toggle)
-    window.fullscreen_button = tool('全屏 · Enter', window.enter_fullscreen, 'full')
-    controls.addWidget(window.fullscreen_button)
-    window.classify_bar = window.control_row.center
-    window.classify_bar.setObjectName('classifyBar')
-    window.classify_buttons = []
-    for text, symbol, shortcut, action in [('标签', 'tag', 'Q', window.tags_dialog),
-                                          ('评分', 'heart', 'R', window.rating_dialog),
-                                          ('收藏', 'star', 'W', lambda: window.favorite(toggle=True))]:
-        control = button(text, action, symbol, 'action')
-        control.setToolTip(f'{text} · {shortcut}')
-        control.setEnabled(False)
-        window.classify_buttons.append(control)
-        if symbol == 'tag':
-            window.tags_button = control
-            window.playback_options.add_tags(control)
-            control.setToolTip('')
-        if symbol == 'heart':
-            window.rating_button = control
-            window.playback_options.add_rating(control)
-            control.setToolTip('')
-        if symbol == 'star':
-            window.favorite_button = control
-            control.setCheckable(True)
-        window.control_row.add_action(control)
-    window.classify_bar.hide()
-    playback.addWidget(window.control_row)
-    player.addWidget(window.playback_panel)
-    window.splitter.addWidget(right)
+    window.player_view = PlayerView(window, window.canvas, window.splitter,
+                                    window.tag_drafts, window.rating_value)
+    window.splitter.addWidget(window.player_view)
     window.splitter.setStretchFactor(1, 1)
     window.splitter.setSizes([380, 1020])
     window.statusBar().setSizeGripEnabled(False)

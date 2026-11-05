@@ -109,7 +109,7 @@ def run(destination):  # 源码和便携 EXE 使用相同验收入口。
                 QTimer.singleShot(30, rate_after_apply)  # 嵌套模态事件循环中也可以继续观察。
         QTimer.singleShot(100, edit_tags)  # 标签界面完成渲染后开始操作。
         QTimer.singleShot(30, rate_after_apply)  # 同时观察自动评分，不抢先创建它。
-        window.tags_dialog()  # 运行用户通过 Q 调用的完整正式流程。
+        window.player_view.toggle_tags()  # 运行用户通过 Q 调用的完整正式流程。
         check('标签全部应用后自动评分', wait(lambda: bool(automatic) and not window.busy) and all(automatic) and not errors)  # 不接受部分迁移就弹窗。
         check('主评分区五颗心且无下拉框', len(automatic) == 2 and automatic[1])  # 与用户明确交互一致。
         name = '8分 绝区零（爱丽丝） ASMR cosplay 足交 黑丝 1.mp4'  # 父子分组优先，其他标签沿用自然排序。

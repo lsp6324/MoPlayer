@@ -140,25 +140,15 @@ def apply_theme(window, theme=None):
     window.canvas.theme = window.theme
     window.canvas.update()
     for control in window.findChildren(QAbstractButton):
-        if control is window.play_button:
+        if window.player_view.owns_control(control):
             continue
         symbol = control.property('iconName')
         if symbol:
             primary = control.property('role') == 'primary'
             color = '#ffffff' if primary else colors['accent'] if symbol == 'starFilled' else colors['text_mid']
             control.setIcon(icon(symbol, color))
-    window.sync_play_button(force=True)
     window.library_view.apply_palette(palette)
-    window.control_row.adapt()
-    if hasattr(window, 'playback_options'):
-        for panel in window.playback_options.panels:
-            panel.setStyleSheet(Template(STYLE_TEMPLATE).substitute(**colors))
-            panel.set_colors(colors['surface_plain'], colors['line'])
-        rating = window.playback_options.rating_popup.hearts
-        rating.outline_color = QColor(colors['text_faint'])
-        rating.fill_color = QColor(colors['accent'])
-        rating.update()
-        window.playback_options.refresh_icon()
+    window.player_view.apply_theme(colors)
     window.apply_native_corners()
     if QApplication.platformName() != 'windows':
         return

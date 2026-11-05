@@ -49,12 +49,12 @@ def test_integrated_layout_and_quiet_feedback(window):
     assert window.splitter.widget(0) is window.library_view
     from PySide6.QtCore import QModelIndex
     assert window.library_view.tree.itemDelegate().sizeHint(None, QModelIndex()).height() == 32
-    height = window.surface.height()
+    height = window.player_view.surface.height()
     window.message('saved')
     QApplication.processEvents()
     assert not window.statusBar().isVisible()
-    assert window.surface.height() == height
-    assert window.control_row.center.isVisible()
+    assert window.player_view.surface.height() == height
+    assert window.player_view.control_row.center.isVisible()
 
 
 def test_library_refresh_preserves_selection_and_visible_scroll_anchor(window, tmp_path):
@@ -113,12 +113,12 @@ def test_cancel_button_cancels_all_library_work_and_ignores_late_result(window, 
 
 
 def test_favorite_button_toggles_and_shortcut_is_idempotent(window):
-    window.favorite_button.click()
+    window.player_view.favorite_button.click()
     assert window.store.video(window.current)['star'] == 1
-    assert window.favorite_button.property('iconName') == 'starFilled'
+    assert window.player_view.favorite_button.property('iconName') == 'starFilled'
     window.library_view.show_mode('stars')
     assert window.library_view.lists['stars'].model().rowCount() == 1
-    window.favorite_button.click()
+    window.player_view.favorite_button.click()
     assert window.store.video(window.current)['star'] == 0
     assert window.library_view.lists['stars'].model().rowCount() == 0
     window.favorite()
@@ -127,17 +127,17 @@ def test_favorite_button_toggles_and_shortcut_is_idempotent(window):
 
 
 def test_volume_and_speed_popovers(window):
-    options = window.playback_options
+    options = window.player_view.options
     window.player.audio_set_volume = Mock(wraps=window.player.audio_set_volume)
     window.player.audio_set_mute = Mock(wraps=window.player.audio_set_mute)
-    assert not window.volume.isVisible()
+    assert not window.player_view.options.volume.isVisible()
     options.volume_popup.open_above()
     assert options.volume_popup.isVisible()
-    window.volume.setValue(45)
+    window.player_view.options.volume.setValue(45)
     window.player.audio_set_volume.assert_called_with(45)
-    window.volume_button.click()
+    window.player_view.options.volume_button.click()
     window.player.audio_set_mute.assert_called_with(True)
-    window.volume_button.click()
+    window.player_view.options.volume_button.click()
     window.player.audio_set_mute.assert_called_with(False)
     options.speed_popup.open_above()
     assert options.speed_popup.isVisible() and not options.volume_popup.isVisible()
@@ -148,7 +148,7 @@ def test_volume_and_speed_popovers(window):
 @pytest.mark.parametrize('score', [None, 0, 1, 5, 9, 10])
 def test_heart_rating_saves_to_remote_metadata(window, score):
     window.rating_dialog()
-    panel = window.playback_options.rating_popup
+    panel = window.player_view.options.rating_popup
     assert panel.isVisible() and panel.hearts.width() > 0
     panel.commit(score)
     assert window.store.video(window.current)['score'] == score
@@ -158,8 +158,8 @@ def test_heart_rating_saves_to_remote_metadata(window, score):
 
 def test_tag_input_native_dispatch_and_add_does_not_select(window):
     window.apply_tags = Mock(return_value=Operation.success())
-    window.tags_dialog()
-    panel = window.playback_options.tags_popup
+    window.player_view.toggle_tags()
+    panel = window.player_view.options.tags_popup
     editor = panel.editor
     # QWindow events precede QWidget events. The hit must remain inside the
     # popover rather than dismissing it before the line edit gets focus.
@@ -182,8 +182,8 @@ def test_tag_input_native_dispatch_and_add_does_not_select(window):
 
 def test_tag_management_multiselect_and_close_flush(window):
     window.apply_tags = Mock(return_value=Operation.success())
-    window.tags_dialog()
-    panel = window.playback_options.tags_popup
+    window.player_view.toggle_tags()
+    panel = window.player_view.options.tags_popup
     editor = panel.editor
     editor.entry.setText('second')
     editor.add_button.click()
@@ -201,8 +201,8 @@ def test_tag_management_multiselect_and_close_flush(window):
 
 
 def test_tag_hover_leave_closes(window):
-    window.tags_dialog()
-    panel = window.playback_options.tags_popup
+    window.player_view.toggle_tags()
+    panel = window.player_view.options.tags_popup
     QApplication.sendEvent(panel, QEvent(QEvent.Leave))
     QTest.qWait(300)
     assert not panel.isVisible()
@@ -217,7 +217,7 @@ def test_seek_previews_without_stale_tick_snapback(window):
     window.player = fake
     window.playback.last_save = time.monotonic()
     try:
-        slider = window.seekbar
+        slider = window.player_view.seekbar
         QTest.mousePress(slider, Qt.LeftButton, pos=QPoint(slider.width() // 2, slider.height() // 2))
         window.tick()
         assert 4500 < slider.value() < 5500
@@ -243,19 +243,19 @@ def test_keyboard_seek_combines_notice_and_timeline_without_stale_snapback(windo
     fake.get_time.return_value = position
     fake.get_state.return_value = vlc.State.Paused
     window.player = fake
-    window.seek_notice.show = Mock()
+    window.player_view.seek_notice.show = Mock()
     window.playback.last_save = time.monotonic()
     try:
         window.seek(offset)
         fake.set_time.assert_called_once_with(target)
-        window.seek_notice.show.assert_called_once_with(position, target, 100000)
-        assert window.seekbar.visual_fraction == target / 100000
+        window.player_view.seek_notice.show.assert_called_once_with(position, target, 100000)
+        assert window.player_view.seekbar.visual_fraction == target / 100000
         window.tick()
-        assert window.seekbar.visual_fraction == target / 100000
+        assert window.player_view.seekbar.visual_fraction == target / 100000
         fake.get_time.return_value = target
         window.tick()
         assert window.playback.pending_seek is None
-        assert not window.seekbar.animation.isActive()
+        assert not window.player_view.seekbar.animation.isActive()
     finally:
         window.player = real
 
@@ -277,7 +277,7 @@ def test_seek_notice_is_screen_rendered_centered_and_does_not_touch_decoder(wind
     window.activateWindow()
     QApplication.processEvents()
     try:
-        notice = window.seek_notice
+        notice = window.player_view.seek_notice
         notice.show(5000, 10000, 60000)
         panel = notice.overlay
         assert panel.isVisible() and panel.owner is window and panel.isWindow()
@@ -285,7 +285,7 @@ def test_seek_notice_is_screen_rendered_centered_and_does_not_touch_decoder(wind
         assert panel.windowFlags() & Qt.WindowTransparentForInput
         assert panel.windowFlags() & Qt.WindowDoesNotAcceptFocus
         assert panel.time_label.font().pixelSize() == 20
-        center = window.surface.mapToGlobal(window.surface.rect().center())
+        center = window.player_view.surface.mapToGlobal(window.player_view.surface.rect().center())
         assert abs(panel.geometry().center().x() - center.x()) <= 1
         assert panel.geometry().center().y() < center.y()
         assert window.isActiveWindow()
@@ -294,7 +294,7 @@ def test_seek_notice_is_screen_rendered_centered_and_does_not_touch_decoder(wind
         window.resize(1200, 760)
         QApplication.processEvents()
         QApplication.processEvents()
-        center = window.surface.mapToGlobal(window.surface.rect().center())
+        center = window.player_view.surface.mapToGlobal(window.player_view.surface.rect().center())
         assert panel.isVisible() and abs(panel.geometry().center().x() - center.x()) <= 1
         assert panel.width() == width and panel.time_label.font().pixelSize() == 20
         notice.clear()
@@ -306,7 +306,7 @@ def test_seek_notice_is_screen_rendered_centered_and_does_not_touch_decoder(wind
 def test_seek_notice_restarts_hide_deadline_for_repeated_seeks(window):
     window.activateWindow()
     QApplication.processEvents()
-    notice = window.seek_notice
+    notice = window.player_view.seek_notice
     notice.show(0, 5000, 60000)
     notice.timer.start(200)
     QTest.qWait(100)
@@ -322,7 +322,7 @@ def test_seek_notice_restarts_hide_deadline_for_repeated_seeks(window):
 def test_clearing_media_removes_seek_surface_immediately(window):
     window.activateWindow()
     QApplication.processEvents()
-    notice = window.seek_notice
+    notice = window.player_view.seek_notice
     notice.show(5000, 10000, 60000)
     assert notice.overlay.isVisible()
     window.clear_player()
@@ -370,7 +370,7 @@ def test_timeline_renders_fractional_progress_without_seeking_or_polling(window,
     real = window.player
     window.player = Mock()
     try:
-        slider = window.seekbar
+        slider = window.player_view.seekbar
         slider.synchronize(50000, 36_000_000, True, 1)
         before_value, before_fraction = slider.value(), slider.visual_fraction
         before_image = slider.grab().toImage()
@@ -380,7 +380,7 @@ def test_timeline_renders_fractional_progress_without_seeking_or_polling(window,
         assert slider.visual_fraction > before_fraction
         assert slider.grab().toImage() != before_image
         assert window.player.mock_calls == []
-        assert not isinstance(window.volume, seek_slider.PlaybackTimeline)
+        assert not isinstance(window.player_view.options.volume, seek_slider.PlaybackTimeline)
         slider.hold(18000000, 36_000_000)
         assert slider.visual_fraction == .5 and not slider.animation.isActive()
         slider.synchronize(18000000, 36_000_000, False, 1)
@@ -392,19 +392,19 @@ def test_timeline_renders_fractional_progress_without_seeking_or_polling(window,
 
 
 def test_fullscreen_restores_layout_and_video_handle(window):
-    handle = int(window.surface.winId())
+    handle = int(window.player_view.surface.winId())
     sizes = window.splitter.sizes()
-    window.enter_fullscreen()
+    window.player_view.fullscreen.toggle()
     QApplication.processEvents()
-    full = window.video_fullscreen
+    full = window.player_view.fullscreen
     full.timer.stop()
     full.poll(window.canvas.mapToGlobal(QPoint(300, window.canvas.height() - 1)))
     assert full.overlay.isWindow() and full.overlay.owner is window
-    assert window.playback_panel.parentWidget() is full.overlay
-    assert int(window.surface.winId()) == handle
-    window.exit_fullscreen()
+    assert window.player_view.playback_panel.parentWidget() is full.overlay
+    assert int(window.player_view.surface.winId()) == handle
+    window.player_view.fullscreen.exit()
     QApplication.processEvents()
-    assert window.playback_panel.parentWidget().objectName() == 'playerCard'
+    assert window.player_view.playback_panel.parentWidget().objectName() == 'playerCard'
     assert window.library_view.isVisible() and window.splitter.sizes() == sizes
     assert not window.statusBar().isVisible()
     apply_theme(window, 'dark')
@@ -413,35 +413,35 @@ def test_fullscreen_restores_layout_and_video_handle(window):
 
 
 def test_fullscreen_title_and_cursor_share_visibility_without_resizing_video(window, tmp_path):
-    window.enter_fullscreen()
-    full = window.video_fullscreen
+    window.player_view.fullscreen.toggle()
+    full = window.player_view.fullscreen
     full.cursor_position = lambda: window.canvas.mapToGlobal(window.canvas.rect().center())
     QApplication.processEvents()
     full.timer.stop()
     center = window.canvas.mapToGlobal(window.canvas.rect().center())
-    original_geometry = window.surface.geometry()
+    original_geometry = window.player_view.surface.geometry()
     full.last_cursor, full.last_activity = center, 0
     full.poll(center)
     assert not full.overlay.isVisible() and not full.title.isVisible()
-    assert full.cursor.hidden and window.surface.cursor().shape() == Qt.BlankCursor
+    assert full.cursor.hidden and window.player_view.surface.cursor().shape() == Qt.BlankCursor
     second = tmp_path / 'second.mp4'
     second.write_bytes(b'Isolated metadata fixture; not decoded')
     window.current = window.store.register(second)
     window.store.execute('UPDATE videos SET score=9 WHERE id=?', (window.current,))
     window.refresh_title()
     QApplication.processEvents()
-    assert window.player_header.isHidden() and window.surface.geometry() == original_geometry
+    assert window.player_view.header.isHidden() and window.player_view.surface.geometry() == original_geometry
     assert full.title.filename == 'second.mp4' and not full.title.isVisible()
     full.poll(center + QPoint(1, 0))
     assert full.overlay.isVisible() and full.title.isVisible() and not full.cursor.hidden
-    assert window.surface.cursor().shape() != Qt.BlankCursor
+    assert window.player_view.surface.cursor().shape() != Qt.BlankCursor
     assert abs(full.title.geometry().center().x() - center.x()) <= 1
     full.set_title('Very long video filename ' * 40 + '.mp4')
     assert '…' in full.title.label.text() and full.title.width() <= 900
-    assert window.surface.geometry() == original_geometry
-    window.exit_fullscreen()
+    assert window.player_view.surface.geometry() == original_geometry
+    window.player_view.fullscreen.exit()
     QApplication.processEvents()
-    assert window.player_header.isVisible() and not full.title.isVisible()
+    assert window.player_view.header.isVisible() and not full.title.isVisible()
 
 
 def test_fullscreen_interactions_restart_shared_idle_deadline(window, monkeypatch):
@@ -449,8 +449,8 @@ def test_fullscreen_interactions_restart_shared_idle_deadline(window, monkeypatc
     import video_fullscreen
     now = [100.0]
     monkeypatch.setattr(video_fullscreen, 'time', SimpleNamespace(monotonic=lambda: now[0]))
-    window.enter_fullscreen()
-    full = window.video_fullscreen
+    window.player_view.fullscreen.toggle()
+    full = window.player_view.fullscreen
     full.cursor_position = lambda: window.canvas.mapToGlobal(window.canvas.rect().center())
     QApplication.processEvents()
     full.timer.stop()
@@ -460,10 +460,10 @@ def test_fullscreen_interactions_restart_shared_idle_deadline(window, monkeypatc
     full.poll(center)
     assert full.cursor.hidden
     full.poll(center + QPoint(1, 0))
-    window.playback_options.speed_popup.open_above()
+    window.player_view.options.speed_popup.open_above()
     full.poll(center)
     assert full.title.isVisible() and full.overlay.isVisible() and not full.cursor.hidden
-    window.playback_options.dismiss()
+    window.player_view.options.dismiss()
     now[0] = 104
     full.poll(center)
     now[0] = 106
@@ -475,35 +475,35 @@ def test_fullscreen_interactions_restart_shared_idle_deadline(window, monkeypatc
     window.activateWindow()
     QApplication.processEvents()
     full.poll(center + QPoint(1, 0))
-    window.seekbar.setSliderDown(True)
+    window.player_view.seekbar.setSliderDown(True)
     now[0] = 120
     full.poll(center)
     assert full.title.isVisible() and not full.cursor.hidden
-    window.seekbar.setSliderDown(False)
+    window.player_view.seekbar.setSliderDown(False)
 
 
 def test_fullscreen_exit_restores_preexisting_video_cursor(window):
-    window.surface.setCursor(Qt.CrossCursor)
-    window.enter_fullscreen()
+    window.player_view.surface.setCursor(Qt.CrossCursor)
+    window.player_view.fullscreen.toggle()
     QApplication.processEvents()
-    full = window.video_fullscreen
+    full = window.player_view.fullscreen
     full.timer.stop()
     center = window.canvas.mapToGlobal(window.canvas.rect().center())
     full.last_cursor, full.last_activity = center, 0
     full.poll(center)
-    assert window.surface.cursor().shape() == Qt.BlankCursor
-    window.exit_fullscreen()
-    assert not full.cursor.hidden and window.surface.cursor().shape() == Qt.CrossCursor
+    assert window.player_view.surface.cursor().shape() == Qt.BlankCursor
+    window.player_view.fullscreen.exit()
+    assert not full.cursor.hidden and window.player_view.surface.cursor().shape() == Qt.CrossCursor
 
 
 def test_cancelled_storage_keeps_tag_draft(window):
     window.apply_tags = Mock(return_value=Operation.cancelled())
-    window.tags_dialog()
-    panel = window.playback_options.tags_popup
+    window.player_view.toggle_tags()
+    panel = window.player_view.options.tags_popup
     editor = panel.editor
     editor.chips['existing'].click()
     panel.dismiss()
-    window.tags_dialog()
+    window.player_view.toggle_tags()
     assert panel.editor is editor and editor.chosen() == ['existing']
     assert window.store.video(window.current)['tags'] == '[]'
 
@@ -531,13 +531,13 @@ def test_background_tag_preflight_failure_preserves_reopened_draft_and_has_no_re
     window.archiver.root = tmp_path / 'archive'
     window.store.execute('UPDATE videos SET original_name=? WHERE id=?', ('a' * 240 + '.mp4', window.current))
     tasks = _capture_file_task(window)
-    window.tags_dialog()
-    panel = window.playback_options.tags_popup
+    window.player_view.toggle_tags()
+    panel = window.player_view.options.tags_popup
     editor = panel.editor
     editor.chips['existing'].click()
     panel.dismiss()
     _finish_file_task(tasks)
-    window.tags_dialog()
+    window.player_view.toggle_tags()
     assert panel.editor is editor and editor.chosen() == ['existing']
     assert window.store.video(window.current)['tags'] == '[]'
     assert not window.catalog.pending_tasks()
@@ -557,8 +557,8 @@ def test_tag_save_continues_latest_selected_video(window, tmp_path):
     context = Snapshot(str(tmp_path), {str(tmp_path): ([], entries)})
     window.context, window.location = context, (str(tmp_path), 0)
     tasks = _capture_file_task(window)
-    window.tags_dialog()
-    window.playback_options.tags_popup.editor.chips['existing'].click()
+    window.player_view.toggle_tags()
+    window.player_view.options.tags_popup.editor.chips['existing'].click()
     window.start(context, (str(tmp_path), 1))
     window.start(context, (str(tmp_path), 2))
     assert window.current == original and len(tasks) == 1
@@ -580,8 +580,8 @@ def test_failed_tag_save_does_not_navigate_and_retry_can_continue(window, tmp_pa
     window.context, window.location = context, (str(tmp_path), 0)
     window.store.execute('UPDATE videos SET original_name=? WHERE id=?', ('a' * 240 + '.mp4', original))
     tasks = _capture_file_task(window)
-    window.tags_dialog()
-    window.playback_options.tags_popup.editor.chips['existing'].click()
+    window.player_view.toggle_tags()
+    window.player_view.options.tags_popup.editor.chips['existing'].click()
     window.advance(1)
     _finish_file_task(tasks)
     assert window.current == original and not window.busy
@@ -599,8 +599,8 @@ def test_recovering_tag_task_confirms_existing_draft_without_submitting_it_again
     def fail_checkpoint(stage):
         raise OSError('interrupted batch')
     window.tag_migration.fault = fail_checkpoint
-    window.tags_dialog()
-    panel = window.playback_options.tags_popup
+    window.player_view.toggle_tags()
+    panel = window.player_view.options.tags_popup
     panel.editor.chips['existing'].click()
     panel.dismiss()
     _finish_file_task(tasks)
@@ -610,7 +610,7 @@ def test_recovering_tag_task_confirms_existing_draft_without_submitting_it_again
     window.retry_jobs()
     _finish_file_task(tasks)
     assert not window.catalog.pending_tasks()
-    window.tags_dialog()
+    window.player_view.toggle_tags()
     assert panel.editor.chosen() == ['existing']
     panel.dismiss()
     assert not tasks and not window.busy
@@ -620,8 +620,8 @@ def test_close_waits_for_tag_commit_then_closes_its_own_window(window, tmp_path)
     window.storage.save(tmp_path / 'archive')
     window.archiver.root = tmp_path / 'archive'
     tasks = _capture_file_task(window)
-    window.tags_dialog()
-    window.playback_options.tags_popup.editor.chips['existing'].click()
+    window.player_view.toggle_tags()
+    window.player_view.options.tags_popup.editor.chips['existing'].click()
     assert window.close() is False
     assert window.isVisible() and len(tasks) == 1
     _finish_file_task(tasks)
@@ -640,7 +640,7 @@ def test_repeated_keyboard_seek_keeps_all_user_steps_before_backend_ack(window):
         for _ in range(3):
             window.seek(5000)
         assert [call.args[0] for call in fake.set_time.call_args_list] == [15000, 20000, 25000]
-        assert window.seekbar.visual_fraction == .25
+        assert window.player_view.seekbar.visual_fraction == .25
     finally:
         window.player = real
 
@@ -665,27 +665,27 @@ def test_end_progress_remains_zero_on_later_saves_and_close(window):
 
 
 def test_escape_closes_editable_surface_before_leaving_fullscreen(window):
-    window.enter_fullscreen()
+    window.player_view.fullscreen.toggle()
     QApplication.processEvents()
     window.activateWindow()
-    window.video_fullscreen.poll(window.canvas.mapToGlobal(QPoint(300, window.canvas.height() - 1)))
+    window.player_view.fullscreen.poll(window.canvas.mapToGlobal(QPoint(300, window.canvas.height() - 1)))
     QApplication.processEvents()
-    window.tags_dialog()
-    panel = window.playback_options.tags_popup
+    window.player_view.toggle_tags()
+    panel = window.player_view.options.tags_popup
     assert panel.isVisible()
     QTest.mouseClick(panel.editor.entry, Qt.LeftButton)
     QTest.keyClick(panel.editor.entry, Qt.Key_Escape)
-    assert not panel.isVisible() and window.video_fullscreen.active
+    assert not panel.isVisible() and window.player_view.fullscreen.active
     QTest.keyClick(window, Qt.Key_Escape)
-    assert not window.video_fullscreen.active
+    assert not window.player_view.fullscreen.active
 
 
 def test_tag_context_menu_belongs_to_editable_surface(window):
     from PySide6.QtWidgets import QMenu
     from PySide6.QtCore import QTimer
     window.apply_tags = Mock(return_value=Operation.success())
-    window.tags_dialog()
-    panel = window.playback_options.tags_popup
+    window.player_view.toggle_tags()
+    panel = window.player_view.options.tags_popup
     checks = []
     def inspect():
         menu = QApplication.activePopupWidget()
@@ -701,8 +701,8 @@ def test_tag_context_menu_belongs_to_editable_surface(window):
 def test_native_tag_menu_input_does_not_dismiss_or_commit(window, cancel):
     from PySide6.QtCore import QTimer
     window.apply_tags = Mock(return_value=Operation.success())
-    window.tags_dialog()
-    panel = window.playback_options.tags_popup
+    window.player_view.toggle_tags()
+    panel = window.player_view.options.tags_popup
     editor = panel.editor
     observations = []
     def choose():
@@ -739,8 +739,8 @@ def test_global_tag_delete_preserves_video_entities(window, tmp_path):
         entities[vid] = identity(window.store.resolve(vid))
     window.play_path = Mock()
     window.fail = Mock()
-    window.tags_dialog()
-    panel = window.playback_options.tags_popup
+    window.player_view.toggle_tags()
+    panel = window.player_view.options.tags_popup
     panel.editor.title.click()
     panel.editor.chips['existing'].click()
     panel.editor.delete_button.click()
@@ -813,19 +813,19 @@ def test_play_icon_survives_redraw_without_backend_transition(window):
     expected = icon('pause', '#ffffff').pixmap(24, 24).toImage()
     try:
         window.tick()
-        assert window.play_button.icon().pixmap(24, 24).toImage() == expected
+        assert window.player_view.play_button.icon().pixmap(24, 24).toImage() == expected
         apply_theme(window, 'dark')
         # The backend remains Playing, so an ordinary tick used to skip repair.
         window.tick()
-        assert window.play_button.icon().pixmap(24, 24).toImage() == expected
-        window.enter_fullscreen()
+        assert window.player_view.play_button.icon().pixmap(24, 24).toImage() == expected
+        window.player_view.fullscreen.toggle()
         QApplication.processEvents()
         window.tick()
-        assert window.play_button.icon().pixmap(24, 24).toImage() == expected
-        window.exit_fullscreen()
+        assert window.player_view.play_button.icon().pixmap(24, 24).toImage() == expected
+        window.player_view.fullscreen.exit()
         QApplication.processEvents()
         window.tick()
-        assert window.play_button.icon().pixmap(24, 24).toImage() == expected
+        assert window.player_view.play_button.icon().pixmap(24, 24).toImage() == expected
     finally:
         window.player = real
 
@@ -848,10 +848,10 @@ def test_transport_action_and_actual_icon_agree(window, state, symbol, action):
         # Appearance and fullscreen used to have independent rendering paths.
         for theme in ('light', 'dark', 'light'):
             apply_theme(window, theme)
-            assert window.play_button.property('iconName') == symbol
-            assert window.play_button.accessibleName() == action
-            assert window.play_button.toolTip() == action + ' · 空格'
-            assert window.play_button.icon().pixmap(24, 24).toImage() == icon(symbol, '#ffffff').pixmap(24, 24).toImage()
+            assert window.player_view.play_button.property('iconName') == symbol
+            assert window.player_view.play_button.accessibleName() == action
+            assert window.player_view.play_button.toolTip() == action + ' · 空格'
+            assert window.player_view.play_button.icon().pixmap(24, 24).toImage() == icon(symbol, '#ffffff').pixmap(24, 24).toImage()
     finally:
         window.player = real
 
@@ -866,16 +866,16 @@ def test_pause_command_waits_for_state_confirmation(window):
     window.playback.last_save = time.monotonic()
     try:
         window.tick()
-        window.play_button.click()
+        window.player_view.play_button.click()
         fake.pause.assert_called_once()
-        assert window.play_button.property('iconName') == 'pause'
+        assert window.player_view.play_button.property('iconName') == 'pause'
         fake.get_state.return_value = vlc.State.Paused
         window.tick()
-        assert window.play_button.property('iconName') == 'play'
-        window.play_button.click()
+        assert window.player_view.play_button.property('iconName') == 'play'
+        window.player_view.play_button.click()
         assert fake.pause.call_count == 2
         fake.get_state.return_value = vlc.State.Playing
         window.tick()
-        assert window.play_button.property('iconName') == 'pause'
+        assert window.player_view.play_button.property('iconName') == 'pause'
     finally:
         window.player = real

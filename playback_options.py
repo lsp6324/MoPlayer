@@ -1,16 +1,17 @@
 """Hover controls that float above the player without changing its layout."""
-from PySide6.QtCore import QEvent, QObject, QPoint, QRect, Qt, QTimer
-from PySide6.QtGui import QWindow
-from PySide6.QtWidgets import QApplication, QFrame, QHBoxLayout, QLabel, QPushButton, QSlider, QVBoxLayout, QWidget
+from PySide6.QtCore import QObject, Qt, Signal
+from PySide6.QtWidgets import QApplication, QHBoxLayout, QLabel, QPushButton, QVBoxLayout
 from floating_surface import owned_by
 from hover_panel import HoverPanel
 
 
 class RatingPanel(HoverPanel):
-    def __init__(self, window, anchor):
-        super().__init__(anchor, window.canvas)
+    chosen = Signal(str, object)
+
+    def __init__(self, host, anchor, rating_source):
+        super().__init__(anchor, host)
         from heart_rating import HeartRating
-        self.player_window = window
+        self.rating_source = rating_source
         self.video_id = None
         self.prepare = self.load_score
         layout = QVBoxLayout(self.body)
@@ -47,11 +48,10 @@ class RatingPanel(HoverPanel):
         self.value.setText('— / 10' if score is None else f'{score} / 10')
 
     def load_score(self):
-        window = self.player_window
-        if not window.current or window.busy:
+        value = self.rating_source()
+        if value is None:
             return False
-        self.video_id = window.current
-        score = window.catalog.video(self.video_id)['score']
+        self.video_id, score = value
         self.hearts.set_score(score)
         self.clear.setEnabled(score is not None)
         return True
@@ -60,7 +60,7 @@ class RatingPanel(HoverPanel):
         vid = self.video_id
         self.dismiss()
         if vid is not None:
-            self.player_window.set_rating(vid, score)
+            self.chosen.emit(vid, score)
 
     def hideEvent(self, event):
         if hasattr(self, 'hearts'):
@@ -85,13 +85,21 @@ class RatingPanel(HoverPanel):
 
 
 class PlaybackOptions(QObject):
+    volumeRequested = Signal(int)
+    muteRequested = Signal(bool)
+    rateRequested = Signal(float)
+    ratingRequested = Signal(str, object)
+
     def owns_active_popup(self):
         popup = QApplication.activePopupWidget()
         return popup is not None and any(owned_by(popup, panel) for panel in self.panels)
 
-    def __init__(self, window):
-        super().__init__(window)
-        self.window = window
+    def __init__(self, host, parent, drafts, rating_source):
+        super().__init__(parent)
+        self.host, self.drafts, self.rating_source = host, drafts, rating_source
+        self._icon_color = '#cbd2dd'
+        self._volume_icon_key = None
+        self._audible_volume = 80
         self.muted = False
         self.rate = 1.0
         self.panels = []
@@ -100,7 +108,7 @@ class PlaybackOptions(QObject):
         self.volume_button.setFixedSize(36, 36)
         self.volume_button.setCursor(Qt.PointingHandCursor)
         self.volume_button.clicked.connect(self.toggle_mute)
-        self.volume_popup = HoverPanel(self.volume_button, window.canvas)
+        self.volume_popup = HoverPanel(self.volume_button, host)
         volume_layout = QHBoxLayout(self.volume_popup.body)
         volume_layout.setContentsMargins(14, 14, 14, 14)
         volume_layout.setSpacing(10)
@@ -123,7 +131,7 @@ class PlaybackOptions(QObject):
         self.speed_button.setFixedSize(46, 36)
         self.speed_button.setCursor(Qt.PointingHandCursor)
         self.speed_button.setAccessibleName('播放速度：1 倍')
-        self.speed_popup = HoverPanel(self.speed_button, window.canvas)
+        self.speed_popup = HoverPanel(self.speed_button, host)
         self.panels.extend((self.volume_popup, self.speed_popup))
         self.speed_button.clicked.connect(self.speed_popup.open_above)
         speed_layout = QVBoxLayout(self.speed_popup.body)
@@ -141,16 +149,16 @@ class PlaybackOptions(QObject):
             control.clicked.connect(lambda checked=False, rate=rate: self.set_rate(rate))
             speed_layout.addWidget(control)
             self.rate_buttons[rate] = control
-        window.player.audio_set_volume(80)
         self.refresh_icon()
 
     def add_rating(self, anchor):
-        self.rating_popup = RatingPanel(self.window, anchor)
+        self.rating_popup = RatingPanel(self.host, anchor, self.rating_source)
+        self.rating_popup.chosen.connect(self.ratingRequested)
         self.panels.append(self.rating_popup)
 
     def add_tags(self, anchor):
         from tag_popover import TagPanel
-        self.tags_popup = TagPanel(anchor, self.window.canvas, self.window.tag_drafts)
+        self.tags_popup = TagPanel(anchor, self.host, self.drafts)
         self.panels.append(self.tags_popup)
 
     def flush_pending(self):
@@ -158,10 +166,9 @@ class PlaybackOptions(QObject):
 
     def refresh_icon(self):
         from ui import icon
-        from theme import theme_tokens
         silent = self.muted or self.volume.value() == 0
-        key = (silent, theme_tokens(self.window)['text_mid'])
-        if key != getattr(self, '_volume_icon_key', None):
+        key = (silent, self._icon_color)
+        if key != self._volume_icon_key:
             self._volume_icon_key = key
             self.volume_button.setProperty('iconName', 'muted' if silent else 'volume')
             self.volume_button.setIcon(icon('muted' if silent else 'volume', key[1]))
@@ -171,40 +178,41 @@ class PlaybackOptions(QObject):
     def toggle_mute(self):
         # Zero volume also looks muted; clicking restores the previous audible level.
         if self.volume.value() == 0:
-            self.volume.setValue(getattr(self, '_audible_volume', 80))
+            self.volume.setValue(self._audible_volume)
             self.muted = False
         else:
             self.muted = not self.muted
-        self.window.player.audio_set_mute(self.muted)
+        self.muteRequested.emit(self.muted)
         self.refresh_icon()
 
     def set_volume(self, value):
         if value > 0:
             self._audible_volume = value
         if self.muted:
-            self.window.player.audio_set_mute(False)
+            self.muteRequested.emit(False)
         self.muted = False
-        self.window.player.audio_set_volume(value)
+        self.volumeRequested.emit(value)
+        self.refresh_icon()
+
+    def set_icon_color(self, color):
+        self._icon_color = color
         self.refresh_icon()
 
     def set_rate(self, rate):
-        try:
-            result = self.window.player.set_rate(rate)
-            if result == -1:
-                raise ValueError('当前视频无法应用此播放速度。')
-        except (RuntimeError, ValueError) as error:
-            for value, control in self.rate_buttons.items():
-                control.setChecked(value == self.rate)
-            self.dismiss()
-            self.window.fail(error)
-            return
+        self.rateRequested.emit(rate)
+
+    def accept_rate(self, rate):
         self.rate = rate
-        self.window.seekbar.set_playback_rate(rate)
         self.speed_button.setText(f'{rate:g}×')
         self.speed_button.setAccessibleName(f'播放速度：{rate:g} 倍')
         for value, control in self.rate_buttons.items():
             control.setChecked(value == rate)
         self.speed_popup.dismiss()
+
+    def reject_rate(self):
+        for value, control in self.rate_buttons.items():
+            control.setChecked(value == self.rate)
+        self.dismiss()
 
     def dismiss(self):
         visible = self.popup_visible()
