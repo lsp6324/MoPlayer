@@ -8,6 +8,7 @@ from theme import apply_theme
 from window_chrome import TitleBar
 from player_view import PlayerView
 from library_view import LibraryView
+from infrastructure.library_preferences import LibraryPreferences
 
 
 def build_interface(window, bundle):
@@ -83,7 +84,7 @@ def build_interface(window, bundle):
     window.splitter.setChildrenCollapsible(False)
     root.addWidget(window.splitter, 1)
     window.library_view = LibraryView(window.library_controller, window.thumbnails,
-                                      lambda: window.current, window)
+                                      lambda: window.current, window, preferences=LibraryPreferences(window.store.directory))
     window.splitter.addWidget(window.library_view)
 
     window.player_view = PlayerView(window, window.canvas, window.splitter,

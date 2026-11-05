@@ -2,7 +2,7 @@ import json  # 读取视频标签和诊断数据。
 import logging  # 记录可追踪的运行错误。
 import sys  # 区分源码和便携运行方式。
 from pathlib import Path  # 处理便携数据路径。
-if len(sys.argv) == 3 and sys.argv[1] in ('--ui-refresh-test', '--seek-notice-test', '--file-workflows-test', '--archive-settings-test', '--media-header-test', '--rename-test', '--continuous-classification-test', '--portable-layout-test', '--storage-test', '--accent-test', '--background-test', '--image-test'):
+if len(sys.argv) == 3 and sys.argv[1] in ('--ui-refresh-test', '--seek-notice-test', '--file-workflows-test', '--archive-settings-test', '--media-header-test', '--rename-test', '--continuous-classification-test', '--portable-layout-test', '--storage-test', '--accent-test', '--background-test', '--image-test', '--action-notice-test', '--catalog-test'):
     # A windowed EXE has no stderr; keep explicit test failures reviewable.
     _test_output = Path(sys.argv[2]).absolute()
     _test_output.mkdir(parents=True, exist_ok=True)
@@ -95,6 +95,7 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
             lambda vid, score, tags: self.archiver.submit(vid, score, tags, defer_cleanup=True),
             available=lambda: not self.busy, ensure_storage=self.ensure_storage,
             refresh=self._refresh_file_records, notify=self._file_notice,
+            archive_locations=lambda vid: self.catalog.archive_locations(vid, self.storage.root),
             favorite_folders=lambda: self.storage.folders.favorite,
             submit_favorite=lambda vid, score, tags, value: self.archiver.submit(vid, score, tags, favorite=value, defer_cleanup=True))
         self.deletion = Deletion(self.file_tasks, self.library_controller, lambda vid: self.deleter.submit(vid),
@@ -124,6 +125,7 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
         self.library_view.videoRequested.connect(self.open_library_video)
         self.library_view.unfavoriteRequested.connect(self.remove_library_favorite)
         self.library_view.historyClearRequested.connect(self.clear_history)
+        self.library_view.archiveSettingsRequested.connect(self.storage_dialog)
         self.setWindowIcon(QIcon(str(BUNDLE / 'assets/yunli.ico')))  # 窗口与任务栏使用同一云璃 Q 版图标。
         self.player.set_hwnd(self.player_view.video_handle())
         self.player.audio_set_volume(80)
@@ -181,6 +183,23 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
             QTimer.singleShot(300, self.initialize_storage)  # 让后台任务继续，不阻塞主界面。
             return  # 稍后再显示首次设置。
         self.storage_dialog(first_run=True)  # 可以稍后设置，浏览与播放仍可用。
+
+    def restore_last_folder(self, attempt=0):
+        """Reopen the folder that was imported last, without playing anything."""
+        if self.busy:  # Never compete with pending file tasks or their recovery.
+            if attempt < 20:
+                QTimer.singleShot(300, lambda: self.restore_last_folder(attempt + 1))
+            return
+        try:
+            folder = self.library_controller.last_folder()
+        except Exception as error:  # A damaged store must not break startup.
+            logging.warning('读取上次导入目录失败：%s', error)
+            return
+        if folder is None or not folder.is_dir():  # Removed or moved folders keep the empty file page.
+            logging.info('上次导入的目录不可用，保留空文件页：%s', folder)
+            return
+        self.library_view.show_mode('files', persist=False)
+        self.load_folder(str(folder))
 
     def ensure_storage(self):  # 归档操作前保证用户已明确选择目录。
         if self.archiver.root is not None and not self.legacy_storage_recovery:  # 包括测试注入的独立归档器。
@@ -248,8 +267,10 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
         try:
             path = self.catalog.resolve(vid)
         except OSError as error:
+            self.library_controller.media_availability(vid, error)
             self.fail(error)
             return
+        self.library_controller.media_availability(vid)
         self.save()
         self.library_controller.cancel_playback_requests()
         previous, previous_kind = self.current, self.current_kind
@@ -541,17 +562,7 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
             self.set_rating(vid, dialog.value)
 
     def set_rating(self, vid, score):
-        if self.busy or self.catalog.video(vid) is None:
-            return
-        video = self.catalog.video(vid)
-        if video['score'] == score:
-            return
-        if video['archived']:
-            self.classification.archive(vid, score, json.loads(video['tags']))
-        else:
-            self.catalog.set_score(vid, score)
-            self.library_controller.refresh((vid,), self.context)
-            self.refresh_title()
+        self.classification.rating(vid, score)
 
 
     def _playback_target(self):
@@ -562,7 +573,7 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
         self.refresh_transport()
 
     def _refresh_file_records(self, video_ids):
-        self.library_controller.refresh(video_ids, self.context)
+        self.library_controller.refresh(video_ids, self.context, catalog_changed=True)
         self.refresh_title()
 
     def _restore_storage_target(self):
@@ -586,6 +597,8 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
                 recovery = '\n可在“更多 → 文件任务”恢复。' if outcome.recoverable else '\n修改未完成，请修正后重试。'
                 self.fail(str(outcome.error) + recovery)
         elif outcome.succeeded:
+            if notice.receipt_title:
+                self.player_view.action_notice.present(notice.receipt_title, notice.receipt_detail)
             if notice.action is FileAction.TAGS:
                 self.message(f'标签已应用，已同步 {notice.count} 个视频。')
             elif notice.action is FileAction.NEXT:
@@ -734,6 +747,7 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
             event.ignore()
             return
         self.library_watch.stop()
+        self.library_view.shutdown()
         self.library_controller.cancel()
         self.thumbnails.closing = True
         self.save()
@@ -767,13 +781,14 @@ def main():  # 程序统一启动入口。
             return 1  # 安全结束重复进程。
         from logging.handlers import RotatingFileHandler  # 限制日志长期占用。
         logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s', handlers=[RotatingFileHandler(directory / 'moplayer.log', maxBytes=4 * 1024 * 1024, backupCount=3, encoding='utf-8')])  # 日志全部写入便携数据目录。
-        window = Window(directory)  # 创建主界面但不导入历史目录。
+        window = Window(directory)  # 创建主界面；上次的文件夹在存储就绪后异步重开。
         window.show()  # 展示可直接操作的播放器。
         QTimer.singleShot(0, window.initialize_storage)  # 首次正常运行选择存储路径，不影响隔离专项构造窗口。
+        QTimer.singleShot(0, window.restore_last_folder)  # 重开上次导入的文件夹：不播放，也不阻塞界面。
         from file_open import FileOpenServer  # 加载默认应用文件接收服务。
         window.file_server = FileOpenServer(window, directory)  # 在数据库锁保护下创建唯一接收端点。
         if len(sys.argv) > 1:  # 只有用户通过文件关联明确打开时才自动播放。
-            window.file_server.pending.append(sys.argv[1])  # 普通无参数启动仍不恢复目录或视频。
+            window.file_server.pending.append(sys.argv[1])  # 普通启动重开目录但从不自动播放视频。
         result = app.exec()  # 进入原生事件循环。
         QThreadPool.globalInstance().waitForDone()  # 等待已取消的工作线程安全退出。
         window.thumbnails.pool.waitForDone()  # 等待独立缩略图池安全关闭，避免销毁运行中的 FFmpeg 任务。
@@ -784,6 +799,9 @@ def main():  # 程序统一启动入口。
         return 1  # 报告失败退出码。
 
 if __name__ == '__main__':  # 仅直接运行时启动应用。
+    if len(sys.argv) == 3 and sys.argv[1] == '--catalog-test':
+        from verify_catalog import run
+        sys.exit(run(sys.argv[2]))
     if len(sys.argv) == 3 and sys.argv[1] == '--live-library-test':
         from verify_live_library import run
         sys.exit(run(sys.argv[2]))
@@ -798,6 +816,9 @@ if __name__ == '__main__':  # 仅直接运行时启动应用。
         sys.exit(run(sys.argv[2]))
     if len(sys.argv) == 3 and sys.argv[1] == '--image-test':
         from verify_image_media import run
+        sys.exit(run(sys.argv[2]))
+    if len(sys.argv) == 3 and sys.argv[1] == '--action-notice-test':
+        from verify_action_notice import run
         sys.exit(run(sys.argv[2]))
     if len(sys.argv) == 3 and sys.argv[1] == '--accent-test':
         from verify_accent import run

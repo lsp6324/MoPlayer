@@ -10,12 +10,13 @@ from application.operations import Status
 
 def setup():
     queue, events = [], []
-    rows = {'a':dict(id='a',score=8,tags='["tag"]',star=0,archived=1),
-            'b':dict(id='b',score=None,tags='[]',star=0,archived=0)}
+    rows = {'a':dict(id='a',name='a.mp4',score=8,tags='["tag"]',star=0,archived=1),
+            'b':dict(id='b',name='b.mp4',score=None,tags='[]',star=0,archived=0)}
     pending=[]
     repo=SimpleNamespace(video=rows.get, videos=lambda mode:[row for row in rows.values() if row['archived']],
                          pending_tasks=lambda:pending,
                          set_favorite=lambda vid,value: rows[vid].update(star=value))
+    repo.media_directories = lambda vid: ('unchanged-directory',)
     tasks=FileTasks(lambda work,done:queue.append((work,done)),lambda policy:events.append('begin'),
                     lambda bookmark:events.append('end'),lambda:bool(pending))
     def finish():

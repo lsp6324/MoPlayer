@@ -38,6 +38,18 @@ def test_recent_model_preserves_selected_identity_across_move_remove_insert(appl
         qInstallMessageHandler(previous)
 
 
+def test_large_library_sort_preserves_persistent_selection_without_reset(application):
+    model = VideoListModel()
+    rows = [dict(id=str(n), name=f'项目{n}.mp4') for n in range(10000)]
+    model.sync(rows)
+    tester = QAbstractItemModelTester(model, QAbstractItemModelTester.FailureReportingMode.Warning)
+    selected = QPersistentModelIndex(model.index(731, 0))
+    resets = QSignalSpy(model.modelReset)
+    model.sync(list(reversed(rows)))
+    assert selected.isValid() and selected.data(Qt.UserRole) == '731' and selected.row() == 9268
+    assert resets.count() == 0 and model.rowCount() == 10000
+
+
 def test_folder_exclusion_preserves_original_indices_and_duplicate_id_entries(application, tmp_path):
     root, child = str(tmp_path), str(tmp_path / 'child')
     snapshot = Snapshot(root, {root: ([child], [('a', 'a.mp4'), ('b', 'b.mp4'), ('a', 'copy.mp4'), ('c', 'c.mp4')]),

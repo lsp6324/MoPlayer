@@ -96,13 +96,14 @@ def run(destination):
         animation_end=time.monotonic()+.25
         wait(lambda:time.monotonic()>=animation_end)
         view.grab().save(str(output/'archive-settings.png'))
-        check('目录预览包含评分收藏标签层级',view.preview.text()=='目录示例：归档文件夹 / 8分 / 已收藏 / 标签 / 视频文件')
+        check('目录预览按收藏评分标签排序',view.preview.text()=='目录示例：归档文件夹 / 已收藏 / 8分 / 标签 / 视频文件')
+        check('设置选项按收藏评分标签排列',view.favorite.x() < view.score.x() < view.tags.x())
         save(view)
         root=window.storage.root
-        check('收藏视频按评分收藏和多标签建立入口',
+        check('收藏视频按收藏评分和多标签建立入口',
               {Path(row['path']).parent.relative_to(root).parts for row in window.store.query('SELECT * FROM paths WHERE id=?',(a,))}
-              =={('8分','已收藏','标签甲'),('8分','已收藏','标签乙')})
-        check('未评分未收藏视频使用独立层级',window.store.resolve(b).parent==root/'未评分'/'未收藏'/'标签甲')
+              =={('已收藏','8分','标签甲'),('已收藏','8分','标签乙')})
+        check('未评分未收藏视频使用独立层级',window.store.resolve(b).parent==root/'未收藏'/'未评分'/'标签甲')
         check('未归档视频留在原位置',window.store.resolve(c)==source/'未归档视频.mp4')
         check('全库整理保留身份和未播放视频进度',all(identity(window.store.resolve(vid))==entities[vid] for vid in ids) and window.store.video(b)['position']==4321)
         check('全库整理恢复当前播放视频与进度',window.current==a and wait(lambda:window.playback.resume is None and window.player.get_time()>=bookmark-250))
@@ -112,11 +113,11 @@ def run(destination):
         window.remove_library_favorite(a)
         check('取消收藏启动文件任务',window.busy)
         check('取消收藏完成并同步目录',wait(lambda:not window.busy) and window.store.video(a)['star']==0
-              and window.store.resolve(a).parent.parent.name=='未收藏')
+              and window.store.resolve(a).relative_to(root).parts[0]=='未收藏')
         check('收藏列表移除同一稳定ID',a not in {row['id'] for row in window.library_controller.list_rows('stars')})
         window.favorite()
         check('再次收藏完成并同步目录',wait(lambda:not window.busy) and window.store.video(a)['star']==1
-              and window.store.resolve(a).parent.parent.name=='已收藏')
+              and window.store.resolve(a).relative_to(root).parts[0]=='已收藏')
         check('收藏列表恢复同一稳定ID',a in {row['id'] for row in window.library_controller.list_rows('stars')})
 
         cancelled=dialog()
@@ -172,8 +173,8 @@ def run(destination):
         recovery=window.recovery.retry()
         check('文件任务恢复继续原设置整理',wait(lambda:not recovery.pending) and recovery.outcome.succeeded
               and not window.has_pending_file_tasks() and window.storage.folders==ArchiveFolders(False,True,True))
-        check('恢复后所有已归档视频匹配新目录',window.store.resolve(a).parent==root/'6分'/'未收藏'
-              and window.store.resolve(b).parent==root/'未评分'/'未收藏')
+        check('恢复后所有已归档视频匹配新目录',window.store.resolve(a).parent==root/'未收藏'/'6分'
+              and window.store.resolve(b).parent==root/'未收藏'/'未评分')
         report['success']=True
     except Exception:
         report['success']=False

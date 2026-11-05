@@ -8,6 +8,7 @@ class FileAction(Enum):
     RENAME = 'rename'
     NAMES = 'names'
     FAVORITE = 'favorite'
+    SCORE = 'score'
     SETTINGS = 'settings'
     TAGS = 'tags'
     ARCHIVE = 'archive'
@@ -30,6 +31,8 @@ class FileNotice:
     count: int = 0
     score_video: str | None = None
     continuing: bool = False
+    receipt_title: str = ''
+    receipt_detail: str = ''
 
 
 def complete_file_task(source, action, reconcile, notify):

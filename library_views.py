@@ -1,6 +1,7 @@
 """Library widgets and item rendering consume prepared presentation data."""
 from pathlib import Path
 from collections import Counter, defaultdict, deque
+from datetime import datetime
 import time
 from PySide6.QtCore import Qt, Signal, QAbstractListModel, QModelIndex, QSize, QRect, QRectF, QPointF
 from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QTextLayout, QTextOption
@@ -116,6 +117,19 @@ class VideoDelegate(QStyledItemDelegate):
 def _sync_rows(model, rows, key):
     """Reconcile keyed presentation rows without resetting Qt selection."""
     wanted = {key(row) for row in rows}
+    if len(rows) > 200 and len(rows) == len(model.rows) and wanted == {key(row) for row in model.rows}:
+        # Large sort permutations must not perform quadratic row moves. A Qt
+        # layout change preserves persistent selections/scroll anchors by ID.
+        if [key(row) for row in rows] != [key(row) for row in model.rows]:
+            persistent = model.persistentIndexList()
+            identities = [key(model.rows[index.row()]) for index in persistent]
+            model.layoutAboutToBeChanged.emit()
+            positions = {key(row): number for number, row in enumerate(rows)}
+            model.rows = [dict(row) for row in rows]
+            model.changePersistentIndexList(persistent, [model.index(positions[identity], 0) for identity in identities])
+            model.layoutChanged.emit()
+            model.dataChanged.emit(model.index(0, 0), model.index(len(rows) - 1, 0))
+            return wanted
     for number in range(len(model.rows) - 1, -1, -1):
         if key(model.rows[number]) not in wanted:
             model.beginRemoveRows(QModelIndex(), number, number)
@@ -162,6 +176,14 @@ class VideoListModel(QAbstractListModel):
         if role == DETAILS_ROLE:
             return row
         if role in (Qt.DisplayRole, Qt.ToolTipRole):
+            if role == Qt.ToolTipRole and 'tag_names' in row:
+                date = row.get('archived_at')
+                stamp = datetime.fromtimestamp(date).strftime('%Y-%m-%d %H:%M') if date is not None else '未知'
+                kind = '图片' if row['kind'] == 'image' else '视频'
+                favorite = '已收藏' if row['star'] else '未收藏'
+                score = '未评分' if row['score'] is None else f"{row['score']} 分"
+                return '\n'.join((row['name'], ' · '.join(row['tag_names']), f'{kind} · {favorite} · {score}',
+                                  '入库日期：'+stamp, row.get('unavailable', ''))).strip()
             return row['name']
         return None
 

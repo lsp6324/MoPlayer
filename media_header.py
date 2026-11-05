@@ -4,6 +4,7 @@ from PySide6.QtCore import QEvent, QRect, QRectF, QSize, Qt
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter
 from PySide6.QtWidgets import QApplication, QLabel, QLineEdit, QSizePolicy, QToolButton, QWidget
 from heart_rating import paint_hearts
+from media_badges import paint_capsule, paint_favorite
 from ui import icon
 
 
@@ -196,12 +197,7 @@ class MediaHeader(QWidget):
         x=16
         for text,width in visible:
             rect=QRectF(x,8,width,25)
-            painter.setBrush(QColor(self.colors['selected']))
-            painter.setPen(Qt.NoPen)
-            painter.drawRoundedRect(rect,12,12)
-            painter.setPen(QColor(self.colors['accent']))
-            painter.drawText(rect.adjusted(10,0,-10,0),Qt.AlignVCenter|Qt.AlignLeft,
-                             metrics.elidedText(text,Qt.ElideRight,int(width-20)))
+            paint_capsule(painter,rect,text,self.colors)
             x+=width+6
         font.setPixelSize(16)
         font.setWeight(QFont.DemiBold)
@@ -214,10 +210,7 @@ class MediaHeader(QWidget):
         font.setPixelSize(12)
         font.setWeight(QFont.Normal)
         painter.setFont(font)
-        star_color='#d39a2d' if self.starred else self.colors['text_mid']
-        painter.drawPixmap(16,43,icon('starFilled' if self.starred else 'star',star_color,16).pixmap(16,16))
-        painter.setPen(QColor(self.colors['text_mid']))
-        painter.drawText(QRectF(38,39,60,24),Qt.AlignVCenter|Qt.AlignLeft,'已收藏' if self.starred else '未收藏')
+        paint_favorite(painter,16,39,self.starred,self.colors)
         paint_hearts(painter,self.score,(QRectF(112+index*22,42,18,18) for index in range(5)),
                      self.colors['accent'],self.colors['line'],1.2)
         painter.setPen(QColor(self.colors['text_mid']))

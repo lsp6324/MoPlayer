@@ -6,6 +6,8 @@ import re
 
 ROOT = Path(__file__).resolve().parents[1]
 UI = {
+    'catalog_panel', 'catalog_filter_popup', 'catalog_delegate', 'media_badges',
+    'action_notice',
     'accent_colors', 'color_picker', 'appearance_dialog', 'archive_settings_dialog', 'appearance', 'background_region', 'background_work', 'file_open', 'floating_surface', 'heart_rating',
     'hover_panel', 'folder_navigation', 'image_view', 'layout', 'library_view', 'library_views', 'media_header', 'player_view', 'playback_controls', 'playback_options',
     'score_editor', 'seek_notice', 'seek_slider', 'tag_editor', 'tag_popover',
@@ -18,6 +20,7 @@ TOOLS = {
     'register_player', 'repair_thumbnails', 'run_isolated_desktop', 'setup_explorer_thumbnails',
 }
 FOUNDATION_IMPORTS = {
+    'action_notice': {'floating_surface'},
     'folder_navigation': {'ui'},
     'background_region': set(),
     'accent_colors': set(),
@@ -26,7 +29,8 @@ FOUNDATION_IMPORTS = {
     'floating_surface': set(),
     'hover_panel': {'floating_surface'},
     'heart_rating': set(),
-    'media_header': {'heart_rating', 'ui'},
+    'media_header': {'heart_rating', 'ui', 'media_badges'},
+    'media_badges': {'ui'},
     'background_work': set(),
     'thumbnail_cache': {'background_work'},
     'image_view': set(),
@@ -180,7 +184,7 @@ def test_player_widgets_and_rendering_are_not_owned_by_window_or_layout():
 
 def test_player_presentation_has_no_backend_or_repository_access():
     modules = production_modules()
-    for name in ('media_header', 'player_view', 'playback_options', 'video_fullscreen', 'seek_notice', 'image_view', 'wordmark'):
+    for name in ('media_header', 'player_view', 'playback_options', 'video_fullscreen', 'seek_notice', 'image_view', 'wordmark', 'action_notice'):
         dependencies = imports(modules[name], name)
         assert not any(dep.split('.')[0] in {'app', 'core', 'infrastructure', 'runtime', 'vlc', 'sqlite3'} for dep in dependencies), name
         for node in ast.walk(modules[name]):

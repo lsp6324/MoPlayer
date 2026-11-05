@@ -15,11 +15,11 @@
 | application/file_tasks.py | 文件操作的准入、开始/结束生命周期、完成结果和可恢复失败分类。 |
 | application/cleanup.py | 独立旧入口清理的准入、节流、合并运行与保护路径快照，不拥有媒体生命周期。 |
 | infrastructure/archive_cleanup.py | 重试 cleanup_jobs；保护播放源及已重新成为有效路径的入口，校验身份/内容状态，失败持久记账，不回写分类元数据。 |
-| infrastructure/schema.py | SQLite PRAGMA user_version 的显式加法迁移；版本 1 创建独立 cleanup_jobs，DDL 与版本号同事务提交。 |
-| application/classification.py | 冻结分类/归档输入，协调提交和实际记录刷新；成功后才给出评分提示意图。 |
+| infrastructure/schema.py | SQLite PRAGMA user_version 的显式加法迁移；版本 1 创建 cleanup_jobs；版本 2 增加可空 archived_at 与归档日期索引，DDL 与版本号同事务提交，旧库日期保留未知。 |
+| application/classification.py | 冻结分类/归档输入，协调标签、评分和收藏写入及结果刷新；用操作前后的有效目录、元数据和标签结构判断实际变化，成功后交付回执及评分提示意图，无变化不发成功回执。 |
 | application/renaming.py | 固定视频 ID 和新名称，执行只读预检、文件任务准入及实际结果刷新；失败直接交付原位编辑器。 |
 | infrastructure/file_renaming.py | 校验并改名全部有效登记入口；冻结 jobs/action=rename 计划，按文件身份恢复，事务提交 name、original_name 和路径，不改变目录及分类状态。 |
-| application/archive_folders.py | 不可变的标签、评分、收藏目录依据，固定评分 → 收藏 → 标签的层级顺序；关闭某项只省略目录，不删除元数据。 |
+| application/archive_folders.py | 不可变的目录依据，新归档顺序为收藏 → 评分 → 标签；关闭某项只省略目录，不删除元数据。favorite_first 随任务冻结，缺少该字段的旧批次恢复时保留评分优先，旧偏好默认采用新顺序。 |
 | application/archive_configuration.py | 归档设置提交、文件任务准入及全库结果刷新，不访问具体文件、设置文件或 Qt。 |
 | infrastructure/archive_configuration.py | 用 archive_setting_jobs 冻结新根目录、目录依据、标签结构和全部已归档视频，重放既有 Archiver 子任务；所有视频完成后原子保存配置并切换有效规则。 |
 | archive_settings_dialog.py / storage_settings.py | 前者只展示归档设置草稿并调用应用端口；后者读取旧配置默认值、原子保存 root 与 archive_folders 并校验根目录能力，不再持有 UI 或窗口业务引用。 |
@@ -28,7 +28,10 @@
 | application/file_results.py | FileNotice、播放上下文快照与完成交付协议；状态刷新结束后才完成依赖操作，刷新异常不会误放行换片。 |
 | application/playback.py | 播放会话中的续播、未确认跳转、终态和进度持久化规则。 |
 | application/library.py | 浏览快照、视频元数据、最近/收藏记录，以及扫描、取消、延迟导航和按稳定 ID 准备删除上下文；不拥有当前播放。 |
-| infrastructure/library_repository.py | 面向应用和 UI 的视频、收藏、进度、目录及任务查询/写入；集中使用 SQL。 |
+| application/catalog.py | 不依赖 Qt/SQL/磁盘的库筛选值、标签祖先匹配、自然及日期排序，以及固定 ID 顺序的集合播放上下文；进度与路径仍按现有资料库解析。 |
+| infrastructure/library_preferences.py | 原子保存 data/library.json 中的筛选排序、列表/网格视图与当前页面，校验损坏输入。启动只采用筛选与视图，页面字段不决定打开哪一页；恢复不播放、不扫描。 |
+| catalog_panel.py / catalog_filter_popup.py / catalog_delegate.py / media_badges.py | 第一者持有工具栏、结果数、排序、列表/网格切换、已选条件摘要和库行视图，搜索合并计时也在此；第二者是筛选浮窗，只发出筛选值、重置与关闭意图，不查询存储或读取媒体；第三者按当前排布绘制已准备的库行；第四者向库行及 MediaHeader 提供相同胶囊和收藏绘制，评分复用 heart_rating。 |
+| infrastructure/library_repository.py | 面向应用和 UI 的视频、收藏、进度、目录及任务查询/写入；集中使用 SQL。所有视频行经 presented() 统一带出派生展示字段 kind 与 tag_names，使任何一次列表加载都不能让另一个列表丢掉标签或类型。 |
 | infrastructure/library_scanner.py | 将既有扫描及 Snapshot 导航规则适配为资料库应用接口；统一拖放候选校验，执行前重新检查文件并固定视频身份，单视频扫描父目录。格式沿用 core.EXTENSIONS，不改变扫描、身份或播放顺序。 |
 | infrastructure/library_watch.py | Qt 目录监听、400ms 通知合并、失败/忙碌重试；监听扫描内目录及根的最近现存父级，2 秒探测根和未成功监听的目录以补偿遗漏。只请求控制器刷新，不读控件或拥有浏览/播放快照。关闭时停止监听和调度。 |
 | infrastructure/thumbnails.py | 缩略图磁盘缓存、FFmpeg 子进程和文件任务期间的暂停/删除屏障，不访问控件。 |
@@ -41,6 +44,7 @@
 | folder_navigation.py | 独立路径导航组件；导入根边界内的上一级、可点击路径、长路径折叠菜单与提示，只发目录意图，不持有资料库或播放对象。按钮在绘制时省略文本，不用截断文本反复改变布局尺寸。 |
 | library_views.py / thumbnail_cache.py / background_work.py | 单目录 FolderModel、最近/收藏 VideoListModel 与行绘制、保留拖放的 DropList、Qt 图像缓存、工作线程结果交付。FolderModel 的可见行保留快照原索引，绘制只读取模型准备好的元数据。 |
 | player_view.py | 播放区控件、元数据展示、时间轴展示、浮层与全屏 UI 装配；接收 PlayerInfo / PlaybackStatus 与进度，发出操作意图，不读数据库或具体播放器。 |
+| action_notice.py | 播放区右上角的非交互操作回执，复用 FloatingSurface；只接收标题、详情和强调色，持有 2000ms 展示计时及定位，避开可见全屏标题，不读业务数据。 |
 | image_view.py | 静态图片展示：适应/100% 两态、指针锚点滚轮缩放、拖拽平移与边界限制；只接收已解码像素，不读存储、播放器或窗口业务属性。 |
 | wordmark.py | 空闲播放区的字标：Bahnschrift 粗体 Mo、细体 Player 与强调色播放箭头，矢量绘制；只接收主题颜色，不读播放器、资料库或窗口业务属性。 |
 | media_header.py / heart_rating.py | 前者绘制共用两行标题，并通过显式回调提供普通标题原位编辑，拥有输入焦点、错误展示及过期结果隔离；后者提供交互式评分及共用半心绘制。只读取展示数据与操作结果。 |
@@ -77,6 +81,14 @@
 - 结束后的进度统一为零；连续相对跳转基于尚未确认的目标累加。窗口关闭、换片与周期保存使用同一进度策略。
 
 ## 后续修改检查
+
+库仅查询 archived=1 的稳定身份，多个硬链接不产生重复行。LibraryController 通过独立 catalog 任务异步查询并取消过期结果，控制筛选、成员、元数据和不可用标记；进度刷新只更新已有行，最近播放排序在缓存内调整。查询期间较新的进度不会被晚到结果覆盖。库页和文件页的选择/滚动分别由 LibraryView 保留，大集合纯排序通过 Qt layoutChanged 与稳定 ID 重映射持久索引，避免逐行移动的平方开销；插入/删除继续使用现有行协调。
+
+筛选控件在 catalog_filter_popup.py 的浮窗内，catalog_panel.py 只保留搜索、带条件数的筛选按钮、结果数、排序和摘要；已选条件按组显示为可点击移除的胶囊，摘要与浮窗读同一 CatalogFilter。评分区分精确与及以上（gte 包含边界分并排除未评分），标签区分 AND 与 OR，标签祖先包含后代在两种模式下都成立；缺失这两个字段的旧偏好分别按 exact 与 and 恢复。列表与网格共用同一视图、模型和播放队列，切换只换排布并保留选中身份、滚动锚点和筛选，不重新查询或换片；页面、筛选排序和视图一起存入 data/library.json，非法视图值回退列表且不写盘。网格的格宽按「视口宽度 − 滚动条宽度」计算并预留滚动条位置，使滚动条出现时不会把第二列挤到下一行；滚动条按需显示，空库不出现。
+
+启动恢复：main() 在存储就绪后调用 Window.restore_last_folder，由 LibraryController.last_folder() 从 folders 表取最近载入的根目录，再走既有 load_folder 异步扫描。只恢复到顶层、不传播放目标，因此不会自动播放；目录不可用或未完成文件任务超过重试窗口时保持空文件页。启动页固定为文件页，偏好的 page 字段仅供记录，库页不在启动时查询。
+
+双击库行创建 CatalogContext 固定当时的 ID 顺序，不导入媒体所在目录；此后筛选或重新分类只改变结果，播放继续使用原集合上下文。删除非播放项不清空或导航播放器；删除当前项沿当前队列继续。路径不可用只标记该行并保留当前媒体，不自动删除或绑定同名文件。首次成功归档在元数据/有效路径事务中写 archived_at，后续编辑、整理和恢复不重置，旧 archived=1 且 NULL 的记录始终保留未知日期。
 
 自定义背景覆盖顶栏、资料库、标题/播放栏和未播放的主区域。theme 根据 BackgroundCanvas 的实际图片状态推导 library_panel 半透明底层与 row_bg；不另存背景启用镜像标记。LibraryView 的视口不自动填充不透明底色，VideoDelegate 的普通行透明，选中/悬停仍保留可读底色。无图片时恢复原面板颜色。空闲区与画布使用同一坐标/裁切，不各自拉伸一份图片；播放时隐藏空闲层，原生宿主及全屏不受图片覆盖。外观预览取消、损坏图片回退、尺寸变化和强度变化均沿用同一刷新路径。
 

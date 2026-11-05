@@ -28,7 +28,7 @@ class ArchiveSettingsDialog(QDialog):
         self.tags = QCheckBox('标签')
         self.score = QCheckBox('评分')
         self.favorite = QCheckBox('收藏')
-        for name in ('tags', 'score', 'favorite'):
+        for name in ('favorite', 'score', 'tags'):
             checkbox = {'tags': self.tags, 'score': self.score, 'favorite': self.favorite}[name]
             checkbox.setObjectName('archiveFolder_' + name)
             checkbox.setChecked(getattr(folders, name))
@@ -42,7 +42,7 @@ class ArchiveSettingsDialog(QDialog):
         self.path.textChanged.connect(self.update_preview)
         layout.addWidget(self.preview)
         note = QLabel('仅控制文件夹分类，不影响标签、评分和收藏本身。\n'
-                      '目录顺序为评分 → 收藏 → 标签，未勾选的层级会省略。\n'
+                      '目录顺序为收藏 → 评分 → 标签，未勾选的层级会省略。\n'
                       '收藏分为“已收藏”和“未收藏”；全部不勾选时直接放入归档文件夹。\n'
                       '保存后会整理所有已归档视频，未归档的视频保持原位置。\n'
                       '归档文件夹需要位于可写的 NTFS 磁盘。')

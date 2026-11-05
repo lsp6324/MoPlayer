@@ -4,9 +4,11 @@ The scanner, repository and dispatcher are injected ports. Completions and
 notifications are delivered on the application thread by the dispatcher.
 """
 from dataclasses import dataclass
+from pathlib import Path
 from threading import Event
 
 from application.operations import Operation, Outcome, Status
+from application.catalog import CatalogFilter, CatalogContext, select_rows
 
 
 @dataclass(frozen=True)
@@ -52,6 +54,13 @@ class LibraryController:
         self._lists = {}
         self._tasks = {}
         self._observers = []
+        self.catalog_filter = CatalogFilter()
+        self.catalog_schema = {}
+        self.catalog_ids = []
+        self.catalog_total = 0
+        self.catalog_loaded = False
+        self.catalog_error = None
+        self._catalog_revision = 0
 
     def subscribe(self, observer):
         self._observers.append(observer)
@@ -63,7 +72,63 @@ class LibraryController:
 
     @property
     def scanning(self):
-        return any(slot != 'refresh' for slot in self._tasks)
+        return any(slot not in ('refresh', 'catalog') for slot in self._tasks)
+
+    @property
+    def catalog_pending(self):
+        return 'catalog' in self._tasks
+
+    def query_catalog(self, filters=None):
+        if filters is not None:
+            self.catalog_filter = filters
+        filters, revision = self.catalog_filter, self._catalog_revision
+        baseline = dict(self.details)
+        self.catalog_error = None
+
+        def work(cancel):
+            rows, schema = self.repository.catalog_data()
+            return select_rows(rows, schema, filters, cancel), schema, len(rows)
+
+        def publish(value):
+            if revision != self._catalog_revision:
+                raise InterruptedError('资料库已更新')
+            rows, schema, total = value
+            for row in rows:
+                current = self.details.get(row['id'], {})
+                previous = baseline.get(row['id'], {})
+                if 'unavailable' in current:
+                    row['unavailable'] = current['unavailable']
+                for key in ('position', 'played'):
+                    if current.get(key) != previous.get(key):
+                        row[key] = current[key]
+            if filters.sort == 'played':
+                rows = select_rows(rows, schema, filters, Event())
+            self.details.update((row['id'], row) for row in rows)
+            self.catalog_ids = [row['id'] for row in rows]
+            self.catalog_schema, self.catalog_total = schema, total
+            self.catalog_loaded = True
+            self._changed('catalog')
+            return tuple(self.catalog_ids)
+
+        operation = self._run('catalog', work, publish)
+        def finished(outcome):
+            if outcome.status is Status.FAILED:
+                self.catalog_error = str(outcome.error)
+                self._changed('catalog')
+        operation.on_finished(finished)
+        return operation
+
+    def catalog_selection(self, video_id, *, allow_pending=False):
+        if (self.catalog_pending and not allow_pending) or video_id not in self.catalog_ids:
+            return None
+        rows = self.list_rows('catalog')
+        context = CatalogContext(rows)
+        return LibrarySelection(video_id, context, (context.root, self.catalog_ids.index(video_id)))
+
+    def media_availability(self, video_id, error=None):
+        if video_id in self.details:
+            self.details[video_id] = dict(self.details[video_id], unavailable=str(error) if error else '')
+            self._changed('videos', (video_id,))
 
     @property
     def refresh_pending(self):
@@ -134,6 +199,11 @@ class LibraryController:
         return next(((folder, number) for folder, (_, files) in snapshot.folders.items()
                      for number, (vid, _) in enumerate(files)
                      if vid == video_id and vid not in snapshot.excluded), None)
+
+    def last_folder(self):
+        """The folder loaded most recently, so a restart can reopen it."""
+        rows = self.repository.folders()
+        return Path(rows[0]['path']) if rows else None
 
     def load_folder(self, folder, play_id=None):
         def scan(cancel):
@@ -236,11 +306,17 @@ class LibraryController:
         self.load_list('videos')
 
     def list_rows(self, mode):
-        return [self.details[vid] for vid in self._lists.get(mode, ())]
+        ids = self.catalog_ids if mode == 'catalog' else self._lists.get(mode, ())
+        return [self.details[vid] for vid in ids if vid in self.details]
 
-    def refresh(self, video_ids, playback_context=None):
+    def refresh(self, video_ids, playback_context=None, *, catalog_changed=False):
         ids = tuple(dict.fromkeys(video_ids))
         rows = self.repository.video_details(ids)
+        fields = ('name', 'score', 'star', 'tags', 'archived', 'archived_at')
+        changed = catalog_changed or any(
+            any(self.details.get(vid, {}).get(key) != rows.get(vid, {}).get(key) for key in fields) for vid in ids)
+        # Preserve prepared presentation fields when progress-only refreshes arrive.
+        rows = {vid: dict(self.details.get(vid, {}), **row) for vid, row in rows.items()}
         renamed = {vid for vid, row in rows.items() if self.details.get(vid, {}).get('name') != row['name']}
         self.details.update(rows)
         for vid in set(ids) - rows.keys():
@@ -263,6 +339,12 @@ class LibraryController:
                     listing.remove(vid)
             listing.sort(key=lambda vid: self.details[vid]['played'], reverse=True)
         self._changed('videos', ids)
+        if not changed and self.catalog_filter.sort == 'played':
+            self.catalog_ids.sort(key=lambda vid: -self.details.get(vid, {}).get('played', 0))
+            self._changed('catalog', ids)
+        if changed and (self.catalog_loaded or self.catalog_pending):
+            self._catalog_revision += 1
+            self.query_catalog()
 
     def exclude(self, video_ids, playback_context=None):
         ids = tuple(video_ids)

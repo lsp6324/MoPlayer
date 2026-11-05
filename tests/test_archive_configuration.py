@@ -41,7 +41,7 @@ def test_all_eight_folder_combinations_preserve_metadata_and_file_identity(tmp_p
     policy = ArchiveFolders(tags, score, favorite)
     service.submit(archive.root, policy)
     paths = [Path(row['path']) for row in store.query('SELECT * FROM paths WHERE id=?',(vid,))]
-    prefixes = (['8分'] if score else []) + (['已收藏'] if favorite else [])
+    prefixes = (['已收藏'] if favorite else []) + (['8分'] if score else [])
     expected = {tuple(prefixes + [tag]) for tag in ['标签甲','标签乙']} if tags else {tuple(prefixes)}
     assert {p.relative_to(archive.root).parts[:-1] for p in paths} == expected
     assert all(p.exists() and identity(p)==entity for p in paths)
@@ -66,6 +66,69 @@ def test_move_all_archived_videos_leave_unarchived_and_preserve_both_favorite_st
     assert all(not p.exists() for p in old.values())
     assert store.resolve(c)==unarchived and unarchived.exists()
     assert not store.video(c)['archived']
+
+
+def test_reorder_score_first_library_preserves_identity_and_metadata(tmp_path):
+    store, settings, archive, service = setup(tmp_path)
+    archive.folders = ArchiveFolders(favorite=True, favorite_first=False)
+    ids = [video(store, tmp_path/f'{star}.mp4', favorite=star, archiver=archive) for star in (0, 1)]
+    old = {vid: [Path(row['path']) for row in store.query('SELECT path FROM paths WHERE id=?', (vid,))] for vid in ids}
+    metadata = {vid: dict(store.video(vid)) for vid in ids}
+    entities = {vid: identity(store.resolve(vid)) for vid in ids}
+    assert all(paths[0].relative_to(archive.root).parts[0] == '8分' for paths in old.values())
+    service.submit(archive.root, ArchiveFolders(favorite=True))
+    for vid in ids:
+        paths = [Path(row['path']) for row in store.query('SELECT path FROM paths WHERE id=?', (vid,))]
+        prefix = '已收藏' if metadata[vid]['star'] else '未收藏'
+        assert {path.relative_to(archive.root).parts[:-1] for path in paths} == {
+            (prefix, '8分', '标签甲'), (prefix, '8分', '标签乙')}
+        assert all(identity(path) == entities[vid] for path in paths)
+        assert dict(store.video(vid)) == metadata[vid]
+        assert all(not path.exists() for path in old[vid])
+
+
+def test_unversioned_settings_batch_retains_old_order_on_resume(tmp_path):
+    store, settings, archive, service = setup(tmp_path)
+    ids = [video(store, tmp_path/f'{star}.mp4', favorite=star, archiver=archive) for star in (0, 1)]
+    def interrupted(state):
+        if state == 'migrating':
+            raise OSError('interrupted between videos')
+    service.fault = interrupted
+    target = tmp_path/'old-frozen-target'
+    with pytest.raises(OSError):
+        service.submit(target, ArchiveFolders(favorite=True, favorite_first=False))
+    row = store.query('SELECT * FROM archive_setting_jobs WHERE state<>"done"')[0]
+    plan = json.loads(row['plan'])
+    del plan['archive_folders']['favorite_first']  # Actual pre-upgrade journal format.
+    store.execute('UPDATE archive_setting_jobs SET plan=? WHERE id=?', (json.dumps(plan), row['id']))
+    restarted = Archiver(store, settings.root, folders=ArchiveFolders(favorite=True))
+    assert ArchiveConfiguration(store, settings, restarted).recover() == []
+    for vid in ids:
+        paths = [Path(row['path']) for row in store.query('SELECT path FROM paths WHERE id=?', (vid,))]
+        prefix = '已收藏' if store.video(vid)['star'] else '未收藏'
+        assert all(path.parent.parent == target/'8分'/prefix for path in paths)
+    assert not settings.folders.favorite_first
+
+
+def test_unversioned_tag_batch_retains_old_order_for_remaining_videos(tmp_path):
+    store, settings, archive, service = setup(tmp_path)
+    archive.folders = ArchiveFolders(favorite=True, favorite_first=False)
+    ids = [video(store, tmp_path/f'{star}.mp4', favorite=star, archiver=archive) for star in (0, 1)]
+    def interrupted(state):
+        if state == 'migrating':
+            raise OSError('interrupted between videos')
+    migration = TagMigration(store, archive, fault=interrupted)
+    with pytest.raises(OSError):
+        migration.submit(ids[0], 8, ['标签甲'], [dict(name='标签甲', kind='major', parent=None)])
+    row = store.query('SELECT * FROM hierarchy_jobs WHERE state<>"done"')[0]
+    plan = json.loads(row['plan'])
+    del plan['archive_folders']['favorite_first']
+    store.execute('UPDATE hierarchy_jobs SET plan=? WHERE id=?', (json.dumps(plan), row['id']))
+    archive.folders = ArchiveFolders(favorite=True)
+    assert TagMigration(store, archive).recover() == []
+    for vid in ids:
+        prefix = '已收藏' if store.video(vid)['star'] else '未收藏'
+        assert store.resolve(vid).parent == archive.root/'8分'/prefix/'标签甲'
 
 
 def test_legacy_storage_config_defaults_and_atomic_save_failure(tmp_path):
@@ -131,7 +194,7 @@ def test_incomplete_child_job_recovers_before_batch_continues(tmp_path,stage):
     archive.fault=None
     assert service.recover()==[]
     assert identity(store.resolve(vid))==entity
-    assert store.resolve(vid).parent==tmp_path/'new'/'8分'/'未收藏'
+    assert store.resolve(vid).parent==tmp_path/'new'/'未收藏'/'8分'
 
 
 def test_pending_configuration_blocks_conflicting_mutations(tmp_path):
@@ -164,7 +227,7 @@ def test_favorite_metadata_commits_with_path_and_recovers_on_failure(tmp_path):
     archive.fault=None
     assert archive.recover()==[]
     assert store.video(vid)['star']==1
-    assert store.resolve(vid).parent==archive.root/'8分'/'已收藏'
+    assert store.resolve(vid).parent==archive.root/'已收藏'/'8分'
 
 
 def test_tag_batch_freezes_folder_policy_for_restart(tmp_path):

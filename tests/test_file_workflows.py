@@ -13,7 +13,8 @@ from application.operations import Operation, Outcome, Status, UserActions
 
 class Repository:
     def __init__(self):
-        self.rows = {vid: dict(id=vid, name=vid, score=7, archived=1) for vid in ('a', 'b', 'c')}
+        self.rows = {vid: dict(id=vid, name=vid, score=7, archived=1, star=0, tags='[]') for vid in ('a', 'b', 'c')}
+        self.directories = {vid: frozenset({'old-directory'}) for vid in self.rows}
         self.pending = {kind: [] for kind in ('jobs', 'hierarchy_jobs', 'deletion_jobs', 'archive_setting_jobs')}
 
     def video(self, vid):
@@ -21,6 +22,12 @@ class Repository:
 
     def videos(self, mode):
         return list(self.rows.values())
+
+    def media_directories(self, vid):
+        return self.directories[vid]
+
+    def tag_values(self, vid):
+        return SimpleNamespace(schema={})
 
     def pending_tasks(self, kind=None):
         return list(self.pending[kind]) if kind else [row for rows in self.pending.values() for row in rows]
@@ -90,6 +97,7 @@ class Harness:
     def submit_tags(self, vid, score, tags, schema):
         self.order.append(('submit-tags', vid, score, tags, schema))
         self.repo.rows[vid]['name'] = 'tagged'
+        self.repo.rows[vid]['tags'] = json.dumps(tags)
         return [vid]
 
     def submit_archive(self, vid, score, tags):
@@ -122,6 +130,26 @@ def test_classification_freezes_submission_and_reconciles_before_dependent_actio
     assert ('submit-tags', 'a', 7, ['tag'], [{'name': 'tag'}]) in h.order
     assert h.order.index('prepare') < h.order.index('refresh')
     assert h.notices[-1].score_video == 'a'
+
+
+def test_classification_receipt_uses_committed_destinations_and_never_reports_failed_success():
+    h = Harness()
+    def locations(vid):
+        assert h.visible[vid] == 'tagged', '回执必须在结果刷新之后生成'
+        return ('8分 / 风景', '8分 / 旅行')
+    h.classification.archive_locations = locations
+    h.classification.apply_tags('a', ['风景'], [], prompt_score=False)
+    assert not h.notices[-1].receipt_title
+    h.repo.directories['a'] = frozenset({'new-directory'})
+    h.finish()
+    assert h.notices[-1].receipt_title == '目录已更新'
+    assert h.notices[-1].receipt_detail == '8分 / 风景（共 2 个目录）'
+    def fail(*args):
+        raise OSError('disk full')
+    h.classification.submit_archive = fail
+    h.classification.archive('a', 9, [])
+    h.finish()
+    assert not h.notices[-1].receipt_title
 
 
 @pytest.mark.parametrize('busy,configured', [(True, True), (False, False)])
@@ -185,7 +213,7 @@ def test_deletion_preparation_freezes_id_and_preserves_current_media_until_succe
     h.finish()
     assert operation.outcome.succeeded and 'a' in h.repo.rows and 'b' not in h.repo.rows
     assert h.deleted == {'b'} and not h.marked
-    assert h.played == [(context, ('original', 1))] and 'save' in h.order
+    assert h.played == [] and h.target.video_id == 'a' and 'save' in h.order
 
 
 def test_cancelled_deletion_preparation_releases_busy_and_does_not_delete():

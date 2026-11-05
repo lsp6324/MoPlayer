@@ -2,13 +2,15 @@
 from dataclasses import dataclass
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal, QPoint, QModelIndex, QPersistentModelIndex
+from PySide6.QtCore import Qt, Signal, QPoint, QModelIndex, QPersistentModelIndex, QTimer
 from PySide6.QtWidgets import (QFrame, QVBoxLayout, QHBoxLayout, QStackedWidget,
                                QListView, QAbstractItemView, QFileDialog)
 from application.library import LibrarySelection
 from library_views import DropList, FolderModel, VideoListModel, VideoDelegate, FOLDER_ROLE, LOCATION_ROLE
 from folder_navigation import FolderNavigation
 from ui import label, button
+from catalog_panel import CatalogPanel
+from catalog_delegate import CatalogDelegate
 
 
 @dataclass(frozen=True)
@@ -25,10 +27,12 @@ class LibraryView(QFrame):
     videoRequested = Signal(object)
     unfavoriteRequested = Signal(str)
     historyClearRequested = Signal()
+    archiveSettingsRequested = Signal()
 
-    def __init__(self, controller, thumbnails, current_video, theme_owner):
+    def __init__(self, controller, thumbnails, current_video, theme_owner, *, preferences=None):
         super().__init__(theme_owner)
         self.controller = controller
+        self.preferences = preferences
         self.mode = 'files'
         self.current_folder = None
         self._folder_positions = {}
@@ -40,7 +44,7 @@ class LibraryView(QFrame):
         navigation = QHBoxLayout()
         navigation.setSpacing(4)
         self.tabs = {}
-        for text, mode in [('文件', 'files'), ('最近', 'videos'), ('收藏', 'stars')]:
+        for text, mode in [('文件', 'files'), ('库', 'catalog'), ('最近', 'videos'), ('收藏', 'stars')]:
             tab = button(text, lambda checked=False, mode=mode: self.show_mode(mode), role='tab')
             tab.setCheckable(True)
             tab.setChecked(mode == 'files')
@@ -80,6 +84,20 @@ class LibraryView(QFrame):
         for view in (self.files, *self.lists.values()):
             view.setItemDelegate(VideoDelegate(thumbnails, view, current_video=current_video, theme_owner=theme_owner))
             thumbnails.changed.connect(view.viewport().update)
+        self.catalog_panel = CatalogPanel(self, theme_owner=theme_owner)
+        self.catalog_panel.list.setModel(VideoListModel(self.catalog_panel.list))
+        self.catalog_panel.list.setItemDelegate(CatalogDelegate(thumbnails, self.catalog_panel.list,
+                                               current_video=current_video, theme_owner=theme_owner,
+                                               presentation=lambda: self.catalog_panel.list.presentation,
+                                               tile_size=self.catalog_panel.list.gridSize))
+        thumbnails.changed.connect(self.catalog_panel.list.viewport().update)
+        self.lists['catalog'] = self.catalog_panel.list
+        self.stack.addWidget(self.catalog_panel)
+        self.catalog_panel.filtersChanged.connect(self._catalog_filters)
+        self.catalog_panel.viewChanged.connect(lambda mode: self._remember_preferences())
+        self.catalog_panel.openRequested.connect(self._open_catalog)
+        self.catalog_panel.settingsRequested.connect(self.archiveSettingsRequested)
+        self.catalog_panel.retryRequested.connect(lambda: self.controller.query_catalog(self.catalog_panel.filters))
         layout.addWidget(self.stack, 1)
         self.cancel_button = button('取消扫描', lambda: controller.cancel(), role='quiet')
         self.cancel_button.hide()
@@ -92,25 +110,54 @@ class LibraryView(QFrame):
         layout.addWidget(self.remove_favorite)
         layout.addWidget(self.clear_history_button)
         controller.subscribe(self.render)
+        if preferences is not None:
+            _page, filters, view_mode = preferences.load()
+            self.catalog_panel.present_filter(filters)
+            self.catalog_panel.set_view(view_mode, notify=False)
+            self.controller.catalog_filter = filters
+            # The filter, sort and view survive a restart, but the app always
+            # opens on the file page: the window reopens the last folder there.
+            QTimer.singleShot(0, lambda: self.show_mode('files', persist=False))
+
+    def _remember_preferences(self):
+        if self.preferences is not None:
+            try:
+                self.preferences.save(self.mode, self.catalog_panel.filters, self.catalog_panel.list.presentation)
+            except OSError as error:
+                self.tabs['catalog'].setToolTip('浏览偏好保存失败：' + str(error))
+
+    def _catalog_filters(self, filters):
+        self._remember_preferences()
+        self.controller.query_catalog(filters)
+
+    def _open_catalog(self, video_id):
+        selected = self.controller.catalog_selection(video_id)
+        if selected is not None:
+            self.videoRequested.emit(selected)
 
     def choose_folder(self):
         folder = QFileDialog.getExistingDirectory(self, '选择视频文件夹')
         if folder:
             self.folderRequested.emit(folder)
 
-    def show_mode(self, mode):
+    def show_mode(self, mode, *, persist=True):
         if mode not in self.tabs:
             raise ValueError(mode)
-        if mode != 'files':
+        if mode == 'catalog':
+            if not self.controller.catalog_loaded and not self.controller.catalog_pending:
+                self.controller.query_catalog(self.catalog_panel.filters)
+        elif mode != 'files':
             self.controller.load_list(mode)
         self.mode = mode
         for key, tab in self.tabs.items():
             tab.setChecked(key == mode)
-        self.stack.setCurrentWidget(self.files if mode == 'files' else self.lists[mode])
+        self.stack.setCurrentWidget(self.files if mode == 'files' else self.catalog_panel if mode == 'catalog' else self.lists[mode])
         self.folder_navigation.setVisible(mode == 'files')
         self.file_count.setVisible(mode == 'files')
         self.remove_favorite.setVisible(mode == 'stars')
         self.clear_history_button.setVisible(mode == 'videos')
+        if persist:
+            self._remember_preferences()
 
     @staticmethod
     def _sync_view(view, sync):
@@ -136,6 +183,7 @@ class LibraryView(QFrame):
     def render(self, change):
         if change.kind == 'scanning':
             self.cancel_button.setVisible(self.controller.scanning)
+            self._catalog_status()
             return
         snapshot = self.controller.browsing
         if change.kind == 'folder':
@@ -161,6 +209,12 @@ class LibraryView(QFrame):
             self._update_count()
         for mode, view in self.lists.items():
             self._sync_view(view, lambda mode=mode, view=view: view.model().sync(self.controller.list_rows(mode)))
+        self.catalog_panel.present_schema(self.controller.catalog_schema)
+        self._catalog_status()
+
+    def _catalog_status(self):
+        self.catalog_panel.present_status(len(self.controller.catalog_ids), self.controller.catalog_total,
+                                          self.controller.catalog_pending, self.controller.catalog_error)
 
     def _remember_folder(self):
         if self.current_folder is None:
@@ -221,6 +275,8 @@ class LibraryView(QFrame):
         vid = index.data(Qt.UserRole)
         if self.mode == 'files':
             return LibrarySelection(vid, self.controller.browsing, index.data(LOCATION_ROLE))
+        if self.mode == 'catalog':
+            return self.controller.catalog_selection(vid, allow_pending=True)
         return LibrarySelection(vid)
 
     def _remove_favorite(self):
@@ -234,11 +290,13 @@ class LibraryView(QFrame):
             self.files.model().notify(ids)
         for view in self.lists.values():
             view.model().notify(ids)
-        if self.files.currentIndex().data(Qt.UserRole) != current:
-            self.files.clearSelection()
 
     def apply_palette(self, palette):
+        self.catalog_panel.apply_colors()
         for view in (self.files, *self.lists.values()):
             view.setPalette(palette)
             view.viewport().setAutoFillBackground(False)
             view.viewport().update()
+
+    def shutdown(self):
+        self.catalog_panel.shutdown()

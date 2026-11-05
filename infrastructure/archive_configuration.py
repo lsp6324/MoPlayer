@@ -71,7 +71,7 @@ class ArchiveConfiguration:
             try:
                 restoring = plan.get('restore_original_names',False)
                 root = None if restoring else validate_storage_path(plan['archive_root'])
-                folders = ArchiveFolders.from_dict(plan['archive_folders'])
+                folders = ArchiveFolders.from_dict(plan['archive_folders'], legacy_job=True)
                 layout = validate_layout(plan['layout'])
                 errors = self.archiver.recover()
                 if errors:

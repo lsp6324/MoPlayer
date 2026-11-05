@@ -56,7 +56,7 @@ class TagMigration:  # 在现有逐视频归档日志之上协调全局分类迁
         with self.archiver.lock, self.lock, self.store.file_lock:  # 外层归档锁先于文件身份锁。
             row = self.store.query('SELECT * FROM hierarchy_jobs WHERE id=?', (job,))[0]  # 不依赖先前进程的内存状态。
             plan = json.loads(row['plan'])  # 读取冻结的目标结构与任务进度。
-            batch_archiver = Archiver(self.store, plan['archive_root'], self.archiver.fault, folders=ArchiveFolders.from_dict(plan['archive_folders']) if 'archive_folders' in plan else ArchiveFolders()) if plan.get('archive_root') else self.archiver  # 旧批次兼容原行为，新批次严格恢复到原目标。
+            batch_archiver = Archiver(self.store, plan['archive_root'], self.archiver.fault, folders=ArchiveFolders.from_dict(plan['archive_folders'], legacy_job=True) if 'archive_folders' in plan else ArchiveFolders()) if plan.get('archive_root') else self.archiver  # 旧批次兼容原行为，新批次严格恢复到原目标。
             if row['state'] == 'done':  # 已完成批次不再次移动文件。
                 return [entry['video'] for entry in plan['videos']]  # 返回需要刷新显示的身份。
             try:  # 所有失败都保持可恢复任务。

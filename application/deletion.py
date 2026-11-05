@@ -44,7 +44,8 @@ class Deletion:
                 self.refresh_deleted({video_id})
                 if not playing:
                     self.save()
-                self.continue_after_delete(*context)
+                else:
+                    self.continue_after_delete(*context)
             return FileNotice(FileAction.DELETE, outcome)
         return self.tasks.track(complete_file_task(source, FileAction.DELETE, reconcile, self.notify))
 

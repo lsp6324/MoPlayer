@@ -14,6 +14,7 @@ from playback_controls import PlaybackControls
 from playback_options import PlaybackOptions
 from seek_slider import PlaybackTimeline
 from seek_notice import SeekNotice
+from action_notice import ActionNotice
 from video_fullscreen import VideoFullscreen
 from floating_surface import owned_by
 from background_region import BackgroundRegion
@@ -163,6 +164,7 @@ class PlayerView(QFrame):
         self.options.ratingRequested.connect(self.ratingRequested)
         self.fullscreen = VideoFullscreen(host, self, popup_host, splitter)
         self.seek_notice = SeekNotice(self.surface)
+        self.action_notice = ActionNotice(self.surface, self.fullscreen.title)
         self.fullscreenRequested.connect(self.fullscreen.toggle)
 
     @property
@@ -308,6 +310,7 @@ class PlayerView(QFrame):
         # 空闲区始终是深色画面，字标要用深底可读的对比，强调色仍跟随用户选择。
         dark = colors_for('dark', colors['accent_source'])
         self.wordmark.set_colors(dark['text_strong'], dark['text_faint'], dark['accent'])
+        self.action_notice.set_accent(dark['accent'])
         self.update_background()
         self.header.apply_colors(colors)
         self.transportRefreshRequested.emit()
@@ -340,5 +343,6 @@ class PlayerView(QFrame):
     def shutdown(self):
         self.options.dismiss()
         self.seek_notice.clear()
+        self.action_notice.clear()
         self.fullscreen.exit()
         self.seekbar.animation.stop()
