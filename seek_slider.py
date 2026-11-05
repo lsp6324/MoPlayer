@@ -162,9 +162,9 @@ class PlaybackTimeline(SeekSlider):
         from theme import theme_tokens
         top = self.window()
         fullscreen = top.objectName() == 'fullscreenControls'
-        colors = theme_tokens(getattr(top, 'owner', top))
+        colors = theme_tokens(getattr(top, 'owner', top),mode='dark' if fullscreen else None)
         track = QColor(255, 255, 255, 52) if fullscreen else QColor(colors['track'])
-        fill = QColor('#7ba7f0' if fullscreen else colors['progress'])
+        fill = QColor(colors['progress'])
         handle_fill = QColor('#ffffff') if fullscreen else QColor(colors['progress'])
         if self.underMouse():
             handle_fill = QColor('#f2f6ff' if fullscreen else colors['text_strong'])

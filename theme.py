@@ -1,9 +1,12 @@
 """Shared desktop theme, including custom-painted list rows."""
 from string import Template
+from functools import lru_cache
+from accent_colors import DEFAULT_ACCENT, accent_roles, normalize_color
 from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import QAbstractButton, QApplication
 
 TOKENS = {
+    'accent_source': DEFAULT_ACCENT, 'button_text': '#ffffff',
     'bg': '#1a1d23', 'surface': '#1a1d23', 'surface_plain': '#22262e',
     'library_bg': '#22262e',
     'surface_dim': '#191c21', 'hover': '#2a303a', 'pressed': '#303949',
@@ -63,7 +66,7 @@ QPushButton:hover { background:$hover; border-color:$line_strong; }
 QPushButton:pressed { background:$pressed; }
 QPushButton:focus { border-color:$accent_ring; }
 QPushButton:disabled { color:$disabled; border-color:transparent; background:transparent; }
-QPushButton[role="primary"],QPushButton#playButton { background:$button_fill; color:white; border:1px solid $button_fill; }
+QPushButton[role="primary"],QPushButton#playButton { background:$button_fill; color:$button_text; border:1px solid $button_fill; }
 QPushButton[role="primary"]:hover,QPushButton#playButton:hover { background:$button_hover; border-color:$button_hover; }
 QPushButton[role="nav"],QPushButton[role="round"],QPushButton[role="action"],QPushButton[role="quiet"] { background:transparent; border:1px solid transparent; }
 QPushButton[role="nav"]:hover,QPushButton[role="round"]:hover,QPushButton[role="action"]:hover,QPushButton[role="quiet"]:hover { background:$hover; }
@@ -88,7 +91,8 @@ QTreeView#libraryTree::item { min-height:30px; }
 QTreeView#libraryTree::item:selected { color:$accent; }
 QListWidget { border:1px solid $line; background:$surface_plain; border-radius:$radius_sm; padding:4px; outline:none; }
 QListWidget::item:selected { background:$selected; color:$text_strong; }
-QLineEdit,QComboBox,QPlainTextEdit,QTextEdit { background:$surface_plain; border:1px solid $line; border-radius:$radius_sm; padding:8px; selection-background-color:$button_fill; selection-color:white; }
+QLineEdit,QComboBox,QPlainTextEdit,QTextEdit,QSpinBox { background:$surface_plain; border:1px solid $line; border-radius:$radius_sm; padding:8px; selection-background-color:$button_fill; selection-color:$button_text; }
+QSpinBox { padding:4px; }
 QLineEdit:focus,QComboBox:focus { border-color:$accent_ring; }
 QComboBox::drop-down { border:none; width:26px; }
 QComboBox QAbstractItemView { background:$surface_plain; color:$text; selection-background-color:$selected; selection-color:$text_strong; }
@@ -118,13 +122,23 @@ QToolTip { background:$surface_plain; color:$text; border:1px solid $line; paddi
 STYLE = Template(STYLE_TEMPLATE).substitute(**TOKENS)
 
 
-def theme_tokens(window=None):
-    return LIGHT_TOKENS if getattr(window, 'theme', 'dark') == 'light' else TOKENS
+@lru_cache(maxsize=128)
+def colors_for(mode, accent=DEFAULT_ACCENT):
+    base = LIGHT_TOKENS if mode == 'light' else TOKENS
+    accent = normalize_color(accent)
+    if accent == DEFAULT_ACCENT:
+        return base
+    return dict(base, **accent_roles(accent,mode != 'light',base['surface_plain']),accent_source=accent)
 
 
-def apply_theme(window, theme=None):
+def theme_tokens(window=None, *, mode=None):
+    return colors_for(mode or getattr(window,'theme','dark'),getattr(window,'accent',DEFAULT_ACCENT))
+
+
+def apply_theme(window, theme=None, accent=None):
     from ui import icon
     window.theme = theme or window.appearance.theme
+    window.accent = normalize_color(window.appearance.accent if accent is None else accent)
     colors = theme_tokens(window)
     window.setStyleSheet(Template(STYLE_TEMPLATE).substitute(**colors))
     palette = QPalette()
@@ -143,7 +157,7 @@ def apply_theme(window, theme=None):
         symbol = control.property('iconName')
         if symbol:
             primary = control.property('role') == 'primary'
-            color = '#ffffff' if primary else colors['accent'] if symbol == 'starFilled' else colors['text_mid']
+            color = colors['button_text'] if primary else colors['accent'] if symbol == 'starFilled' else colors['text_mid']
             control.setIcon(icon(symbol, color))
     window.library_view.apply_palette(palette)
     window.player_view.apply_theme(colors)

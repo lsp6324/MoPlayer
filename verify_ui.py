@@ -6,7 +6,9 @@ from unittest.mock import patch  # 模拟文件选择而不触碰用户图片。
 from PySide6.QtCore import Qt, QTimer, QThreadPool  # 驱动模态窗口与异步任务。
 from PySide6.QtGui import QImage, QColor  # 创建可辨识的背景测试图。
 from PySide6.QtWidgets import QApplication, QPushButton, QDialogButtonBox, QSlider  # 操作实际设置控件。
-from appearance import Appearance, BackgroundCanvas, appearance_dialog  # 验证生产外观实现。
+from appearance import Appearance, BackgroundCanvas
+from appearance_dialog import AppearanceDialog
+from theme import apply_theme
 
 def run(destination):  # 源码与打包 EXE 共用真实界面验收。
     from app import Window, BUNDLE  # 延迟加载正式播放器。
@@ -14,6 +16,10 @@ def run(destination):  # 源码与打包 EXE 共用真实界面验收。
     output.mkdir(parents=True, exist_ok=True)  # 创建报告目录。
     application = QApplication.instance() or QApplication([])  # 初始化真实 Qt 控件。
     window = Window(output / 'data')  # 不修改用户数据库。
+    def appearance_dialog(window):
+        return AppearanceDialog(window,window.appearance,
+            preview_theme=lambda theme,accent:apply_theme(window,theme,accent),
+            preview_background=window.canvas.set_background).exec()
     report = {'frozen': bool(getattr(sys, 'frozen', False)), 'checks': []}  # 记录执行环境与结果。
     def check(name, result):  # 每个断言同时记录到报告。
         report['checks'].append({'name': name, 'ok': bool(result)})  # 保存实际判断值。
@@ -38,7 +44,7 @@ def run(destination):  # 源码与打包 EXE 共用真实界面验收。
             dialog.grab().save(str(output / 'appearance-dialog.png'))  # 保存设置界面实际画面。
             controls = dialog.findChild(QDialogButtonBox)  # 定位明确提交按钮。
             controls.button(QDialogButtonBox.Ok if save else QDialogButtonBox.Cancel).click()  # 分别验证提交和撤销。
-        with patch('appearance.QFileDialog.getOpenFileName', return_value=(str(original), 'PNG')):  # 只替换系统选择路径步骤。
+        with patch('appearance_dialog.QFileDialog.getOpenFileName', return_value=(str(original), 'PNG')):
             QTimer.singleShot(150, lambda: interact(False))  # 先验证用户取消预览。
             appearance_dialog(window)  # 执行实际模态设置流程。
             check('取消预览恢复默认且不写配置', window.canvas.image.isNull() and not window.appearance.file.exists())  # 不把临时预览误当成功提交。

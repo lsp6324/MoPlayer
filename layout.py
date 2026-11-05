@@ -2,7 +2,8 @@
 from PySide6.QtCore import Qt, QSize
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import QLabel, QVBoxLayout, QHBoxLayout, QSplitter, QMenu
-from appearance import Appearance, BackgroundCanvas, appearance_dialog
+from appearance import Appearance, BackgroundCanvas
+from appearance_dialog import AppearanceDialog
 from theme import apply_theme
 from window_chrome import TitleBar
 from player_view import PlayerView
@@ -42,7 +43,11 @@ def build_interface(window, bundle):
     brand.setAttribute(Qt.WA_TransparentForMouseEvents)
     header.addWidget(brand)
     header.addStretch()
-    appearance = tool('外观', lambda: appearance_dialog(window), 'photo')
+    def show_appearance():
+        AppearanceDialog(window,window.appearance,
+            preview_theme=lambda theme,accent:apply_theme(window,theme,accent),
+            preview_background=window.canvas.set_background).exec()
+    appearance = tool('外观', show_appearance, 'photo')
     appearance.setObjectName('appearanceButton')
     header.addWidget(appearance)
     more = tool('更多', lambda: None, 'more')

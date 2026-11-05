@@ -196,7 +196,8 @@ class PlayerView(QFrame):
         self.play_button.setEnabled(loaded and not busy)
         if force or self.play_button.property('iconName') != symbol or self.play_button.toolTip() != tooltip:
             self.play_button.setProperty('iconName', symbol)
-            self.play_button.setIcon(icon(symbol, '#ffffff'))
+            colors = self.fullscreen.colors if self.fullscreen.active else self.normal_colors
+            self.play_button.setIcon(icon(symbol, colors['button_text']))
             self.play_button.setToolTip(tooltip)
             self.play_button.setAccessibleName(action)
 
@@ -217,7 +218,7 @@ class PlayerView(QFrame):
         self.header.set_rename_handler(lambda name: handler(self._info.video_id, name))
 
     def _favorite_icon(self):
-        colors = TOKENS if self.fullscreen.active else self.normal_colors
+        colors = self.fullscreen.colors if self.fullscreen.active else self.normal_colors
         symbol = self.favorite_button.property('iconName') or 'star'
         self.favorite_button.setIcon(icon(symbol, colors['accent' if symbol == 'starFilled' else 'text_mid']))
 
@@ -289,7 +290,9 @@ class PlayerView(QFrame):
         self.normal_colors = colors
         self.header.apply_colors(colors)
         self.transportRefreshRequested.emit()
-        effective = TOKENS if self.fullscreen.active else colors
+        from theme import colors_for
+        self.fullscreen.apply_theme(colors_for('dark',colors['accent_source']))
+        effective = self.fullscreen.colors if self.fullscreen.active else colors
         roots = (self, self.playback_panel, *self.options.panels)
         for root in roots:
             for control in root.findChildren(QAbstractButton):
@@ -297,7 +300,7 @@ class PlayerView(QFrame):
                     continue
                 symbol = control.property('iconName')
                 if symbol:
-                    color = '#ffffff' if control.property('role') == 'primary' else effective['text_mid']
+                    color = effective['button_text'] if control.property('role') == 'primary' else effective['text_mid']
                     control.setIcon(icon(symbol, color))
         self._favorite_icon()
         self._render_transport(force=True)

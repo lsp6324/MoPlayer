@@ -6,7 +6,7 @@ import re
 
 ROOT = Path(__file__).resolve().parents[1]
 UI = {
-    'archive_settings_dialog', 'appearance', 'background_work', 'file_open', 'floating_surface', 'heart_rating',
+    'accent_colors', 'color_picker', 'appearance_dialog', 'archive_settings_dialog', 'appearance', 'background_work', 'file_open', 'floating_surface', 'heart_rating',
     'hover_panel', 'layout', 'library_view', 'library_views', 'media_header', 'player_view', 'playback_controls', 'playback_options',
     'score_editor', 'seek_notice', 'seek_slider', 'tag_editor', 'tag_popover',
     'theme', 'thumbnail_cache', 'ui', 'video_cursor', 'video_fullscreen', 'window_chrome',
@@ -18,6 +18,8 @@ TOOLS = {
     'register_player', 'repair_thumbnails', 'run_isolated_desktop', 'setup_explorer_thumbnails',
 }
 FOUNDATION_IMPORTS = {
+    'accent_colors': set(),
+    'color_picker': {'accent_colors'},
     'ui': {'heart_rating'},
     'floating_surface': set(),
     'hover_panel': {'floating_surface'},

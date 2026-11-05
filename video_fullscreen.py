@@ -1,4 +1,6 @@
 import time  # 根据真实鼠标活动控制浮层自动隐藏。
+from string import Template
+from theme import TOKENS
 from PySide6.QtCore import QObject, QTimer, QPoint, QRect, Qt, QEvent
 from PySide6.QtGui import QCursor, QColor
 from PySide6.QtWidgets import QApplication, QVBoxLayout, QSlider, QWidget
@@ -14,14 +16,14 @@ QFrame#fullscreenControls QLabel[role="timecode"] { color:#c4cee0; }
 QFrame#fullscreenControls QPushButton { background:transparent; border:1px solid transparent; border-radius:7px; color:#dde3ee; padding:5px 9px; }
 QFrame#fullscreenControls QPushButton:hover { background:rgba(255,255,255,34); border-color:rgba(255,255,255,46); }
 QFrame#fullscreenControls QPushButton:pressed { background:rgba(255,255,255,56); }
-QFrame#fullscreenControls QPushButton#playButton { background:#3b6fd4; border-color:#3b6fd4; padding:8px; }
-QFrame#fullscreenControls QPushButton#playButton:hover { background:#4a7ee0; border-color:#4a7ee0; }
+QFrame#fullscreenControls QPushButton#playButton { background:$button_fill; color:$button_text; border-color:$button_fill; padding:8px; }
+QFrame#fullscreenControls QPushButton#playButton:hover { background:$button_hover; border-color:$button_hover; }
 QFrame#fullscreenControls QPushButton#speedButton { padding:0; }
-QFrame#fullscreenControls QPushButton[role="action"]:checked { color:#9fc0ff; background:rgba(91,139,223,42); }
+QFrame#fullscreenControls QPushButton[role="action"]:checked { color:$accent; background:$accent_soft; }
 QFrame#fullscreenControls QSlider::groove:horizontal { height:4px; border-radius:2px; background:rgba(255,255,255,52); }
-QFrame#fullscreenControls QSlider::sub-page:horizontal { background:#7ba7f0; border-radius:2px; }
-QFrame#fullscreenControls QSlider::handle:horizontal { width:12px; height:12px; margin:-4px 0; border-radius:6px; background:#ffffff; border:2px solid #7ba7f0; }
-QFrame#fullscreenControls QSlider::handle:horizontal:hover { background:#f2f6ff; border-color:#9dbcf5; }'''  # 深色浮层只影响全屏观看态，不改变普通界面。
+QFrame#fullscreenControls QSlider::sub-page:horizontal { background:$progress; border-radius:2px; }
+QFrame#fullscreenControls QSlider::handle:horizontal { width:12px; height:12px; margin:-4px 0; border-radius:6px; background:#ffffff; border:2px solid $progress; }
+QFrame#fullscreenControls QSlider::handle:horizontal:hover { background:#f2f6ff; border-color:$accent_line; }'''  # 深色浮层只影响全屏观看态，不改变普通界面。
 
 def widgets(item):  # 递归找到纯布局中的可隐藏控件。
     if item.widget():  # 独立容器隐藏后其子控件会一起隐藏。
@@ -42,8 +44,7 @@ class FullscreenTitle(FloatingSurface):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 12, 20, 12)
         self.header = MediaHeader()
-        self.header.apply_colors(dict(text_strong='#f2f4f8',text_mid='#c4cee0',accent='#9fc0ff',
-                                      selected='#34445b',line='#8392a8'))
+        self.header.apply_colors(TOKENS)
         layout.addWidget(self.header)
 
     @property
@@ -73,7 +74,7 @@ class VideoFullscreen(QObject):  # 保持视频句柄不变的全屏布局协调
         self.overlay.hide()
         self.overlay.setObjectName('fullscreenControls')  # 为浮层提供单独样式。
         self.overlay.setFocusPolicy(Qt.NoFocus)
-        self.overlay.setStyleSheet(STYLE)  # 深色浮层与视频画面形成对照。
+        self.apply_theme(TOKENS)
 
         self.overlay_layout = QVBoxLayout(self.overlay)  # 浮层中复用同一套进度、音量和播放按钮。
         self.overlay_layout.setContentsMargins(18, 12, 18, 12)  # 留出圆角所需的内边距。
@@ -93,6 +94,11 @@ class VideoFullscreen(QObject):  # 保持视频句柄不变的全屏布局协调
             elif event.type() in (QEvent.WindowDeactivate, QEvent.WindowStateChange):
                 QTimer.singleShot(0, self, self.poll)
         return False
+
+    def apply_theme(self, colors):
+        self.colors = colors
+        self.overlay.setStyleSheet(Template(STYLE).substitute(**colors))
+        self.title.header.apply_colors(colors)
 
     def present_video(self, filename, tags, score, starred):
         self.title.present_video(filename,tags,score,starred)

@@ -32,6 +32,8 @@
 | infrastructure/library_scanner.py | 将既有扫描及 Snapshot 导航规则适配为资料库应用接口，不改变扫描、身份或播放顺序。 |
 | infrastructure/thumbnails.py | 缩略图磁盘缓存、FFmpeg 子进程和文件任务期间的暂停/删除屏障，不访问控件。 |
 | ui.py / floating_surface.py / hover_panel.py | UI 基础图形、透明工具窗、共享悬停与焦点规则。 |
+| accent_colors.py / color_picker.py | 前者纯 RGB 校验、预设及可读颜色角色推导；后者独立预设色块、色相/饱和明度色板和 RGB 控件，只发出颜色意图，不访问窗口、偏好或播放器。 |
+| appearance.py / appearance_dialog.py / theme.py | Appearance 原子保存背景、主题和强调色；AppearanceDialog 拥有编辑草稿、预览、保存失败保留及取消还原，通过显式 UI 回调连接；theme 统一推导普通/全屏强调色，不在各视图另写固定强调色。 |
 | library_view.py | 左侧资料库的分页、控件、选择和滚动位置；向窗口表达导入、打开视频、取消收藏等意图，不访问具体数据库或文件服务。 |
 | library_views.py / thumbnail_cache.py / background_work.py | 按稳定 ID 更新的树/列表模型与绘制、Qt 图像缓存、工作线程结果交付。绘制只读取模型准备好的元数据。 |
 | player_view.py | 播放区控件、元数据展示、时间轴展示、浮层与全屏 UI 装配；接收 PlayerInfo / PlaybackStatus 与进度，发出操作意图，不读数据库或具体播放器。 |

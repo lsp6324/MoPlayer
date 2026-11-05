@@ -1,5 +1,7 @@
 # UI 迁入说明
 
+强调色设置（2026-11-05）：Appearance 原子持久化 accent，旧配置默认沿用蓝色；AppearanceDialog 从原 appearance.py 迁出，独立管理主题/颜色/背景草稿、预览、保存和取消还原。AccentPicker 提供十个纯色预设、可拖动饱和明度色板、色相条及 RGB 数值/滑块。accent_colors 统一推导可读主题角色，按钮底色保留精确 RGB，文字/图标按对比选择黑白；普通与全屏样式、进度条、标签和评分使用统一角色。设置内容可滚动，保存/取消固定底部。--accent-test 在独立桌面验证真实 VLC 持续播放、颜色绘制、预设/RGB、取消/保存、全屏及不同 DPI。
+
 便携目录调整（2026-11-05）：新安装默认归档到程序旁 video，正常启动不再强制首次设置；损坏配置仍提示修复。已有自选根继续保留，归档设置仍通过应用流程整理已归档视频。runtime 在创建 Qt/VLC 前配置包内临时文件和应用默认 Qt 设置，VLC 3 使用 portable，禁用无法重定向的 Qt OpenGL 磁盘缓存。资源管理器缩略图功能改用 data/integrations/explorer-thumbnails，仍由用户主动启用，界面说明移动后需要重新注册。运行目录、自选位置兼容和真实默认归档通过独立桌面 --portable-layout-test 与更新后的 --storage-test 验证。
 
 后续开发先阅读 `AGENTS.md` 和 `ARCHITECTURE.md`，其中的职责、状态所有权和依赖检查同样适用于新增功能与修复。
