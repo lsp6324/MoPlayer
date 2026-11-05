@@ -3,6 +3,7 @@ import json
 from types import SimpleNamespace
 import pytest
 from application.classification import Classification
+from application.renaming import Renaming
 from application.deletion import Deletion
 from application.recovery import Recovery
 from application.file_results import PlaybackTarget, FileAction
@@ -298,3 +299,57 @@ def test_recovery_restores_names_inside_the_same_media_release_cycle():
     h.finish()
     assert operation.outcome.succeeded and h.visible['b']=='b'
     assert h.order.index('delete-recovered')<h.order.index('names-restored') and not h.busy
+
+
+def renaming(h, validate=lambda vid,name:None):
+    def submit(vid,name):
+        h.repo.rows[vid]['name']=name
+        return vid
+    return Renaming(h.tasks,h.repo,submit,available=lambda:not h.busy,
+                    current_video=lambda:h.target.video_id,refresh=h.refresh,validate=validate)
+
+
+def test_rename_freezes_identity_and_refreshes_only_after_disk_completion():
+    h=Harness()
+    operation=renaming(h).rename('a','renamed.mp4')
+    assert operation.pending and h.visible['a']=='a' and h.policy.release_media
+    h.target=PlaybackTarget('c')
+    h.finish()
+    assert operation.outcome.succeeded and h.visible['a']=='renamed.mp4' and h.visible['c']=='c'
+    assert not h.busy
+
+
+def test_rename_invalid_preflight_never_releases_media_or_starts_work():
+    h=Harness()
+    def invalid(vid,name):
+        raise ValueError('invalid name')
+    operation=renaming(h,invalid).rename('a','bad?.mp4')
+    assert operation.outcome.status is Status.FAILED and not h.queue and not h.busy
+    assert h.visible['a']=='a'
+
+
+def test_noncurrent_rename_keeps_current_media_and_pending_tasks_require_recovery():
+    h=Harness()
+    operation=renaming(h).rename('b','renamed.mp4')
+    assert not h.policy.release_media
+    h.finish()
+    assert operation.outcome.succeeded and h.visible['b']=='renamed.mp4'
+    h.repo.pending['jobs']=[{'video':'b'}]
+    blocked=renaming(h).rename('a','another.mp4')
+    assert blocked.outcome.recoverable and not h.queue and h.visible['a']=='a'
+
+
+def test_recovery_replays_rename_before_tag_batches_and_refreshes_renamed_identity():
+    h=Harness()
+    h.repo.pending['jobs']=[{'video':'b'}]
+    def recover():
+        h.order.append('rename-recovered')
+        h.repo.rows['b']['name']='renamed.mp4'
+        h.repo.pending['jobs'].clear()
+        return []
+    h.recovery.recover_renames=recover
+    h.recovery.recover_tags=lambda:h.order.append('tags-recovered') or []
+    operation=h.recovery.retry()
+    h.finish()
+    assert operation.outcome.succeeded and h.visible['b']=='renamed.mp4'
+    assert h.order.index('rename-recovered')<h.order.index('tags-recovered')

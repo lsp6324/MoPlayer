@@ -26,6 +26,7 @@ class PlayerInfo:
     score: int | None
     tags: tuple
     starred: bool
+    video_id: str | None = None
 
 
 class PlayerView(QFrame):
@@ -175,6 +176,7 @@ class PlayerView(QFrame):
 
     def present_transport(self, status, loaded, busy):
         self._transport = status, loaded, busy
+        self.header.set_rename_available(loaded and not busy)
         for control in self.transport_buttons + self.classify_buttons:
             control.setEnabled(loaded and not busy)
         self.seekbar.setEnabled(loaded and not busy)
@@ -196,6 +198,8 @@ class PlayerView(QFrame):
             self.play_button.setAccessibleName(action)
 
     def present_video(self, info):
+        if info is None or self._info is None or info.video_id != self._info.video_id:
+            self.header.cancel_edit()
         self._info = info
         self.header.setVisible(info is not None and not self.fullscreen.active)
         values = (info.name, info.tags, info.score, info.starred) if info else ('', (), None, False)
@@ -205,6 +209,9 @@ class PlayerView(QFrame):
         self.favorite_button.setChecked(bool(info and info.starred))
         self.favorite_button.setProperty('iconName', 'starFilled' if info and info.starred else 'star')
         self._favorite_icon()
+
+    def set_rename_handler(self, handler):
+        self.header.set_rename_handler(lambda name: handler(self._info.video_id, name))
 
     def _favorite_icon(self):
         colors = TOKENS if self.fullscreen.active else self.normal_colors

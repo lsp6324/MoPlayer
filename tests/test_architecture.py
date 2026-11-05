@@ -207,3 +207,10 @@ def test_archive_settings_view_uses_only_explicit_application_ports():
     for node in ast.walk(tree):
         if isinstance(node, ast.Attribute):
             assert node.attr not in {'storage', 'archiver', 'store', 'catalog', 'work', 'file_tasks'}, 'Settings view submits values; the workflow owns migration and persistence'
+
+
+def test_filename_editor_cannot_rename_files_or_reach_storage_directly():
+    tree=production_modules()['media_header']
+    for node in ast.walk(tree):
+        if isinstance(node,ast.Call) and isinstance(node.func,ast.Attribute):
+            assert node.func.attr not in {'rename','replace','unlink','link','stat','exists','open','submit','recover'}, 'The inline editor submits presentation intent through its injected port'

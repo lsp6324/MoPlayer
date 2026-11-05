@@ -53,6 +53,25 @@ def test_player_emits_intents_and_renders_without_application_window(view):
     assert view.play_button.accessibleName() == '暂停'
 
 
+def test_switching_same_named_videos_cancels_editor_and_ignores_late_rename(view):
+    operation=Operation()
+    requested=[]
+    def rename(vid,name):
+        requested.append((vid,name))
+        return operation
+    view.set_rename_handler(rename)
+    view.present_video(PlayerInfo('same.mp4',7,(),False,'first'))
+    view.present_transport(PlaybackStatus.PLAYING,True,False)
+    view.header.begin_edit()
+    view.header.editor.setText('new.mp4')
+    view.header._submit()
+    view.present_video(PlayerInfo('same.mp4',7,(),False,'second'))
+    assert requested==[('first','new.mp4')] and not view.header.editor.isVisible()
+    from application.operations import Outcome, Status
+    operation.finish(Outcome(Status.FAILED,error=OSError('late')))
+    assert view.header.filename=='same.mp4' and not view.header.error_label.isVisible()
+
+
 def test_theme_and_fullscreen_keep_transport_and_video_host(view):
     from ui import icon
     view.present_video(PlayerInfo('视频.mp4', None, (), False))

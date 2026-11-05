@@ -5,6 +5,7 @@ from application.operations import Operation, Outcome, Status
 
 
 class FileAction(Enum):
+    RENAME = 'rename'
     NAMES = 'names'
     FAVORITE = 'favorite'
     SETTINGS = 'settings'

@@ -2,7 +2,7 @@ import json  # 读取视频标签和诊断数据。
 import logging  # 记录可追踪的运行错误。
 import sys  # 区分源码和便携运行方式。
 from pathlib import Path  # 处理便携数据路径。
-if len(sys.argv) == 3 and sys.argv[1] in ('--ui-refresh-test', '--seek-notice-test', '--file-workflows-test', '--archive-settings-test', '--media-header-test'):
+if len(sys.argv) == 3 and sys.argv[1] in ('--ui-refresh-test', '--seek-notice-test', '--file-workflows-test', '--archive-settings-test', '--media-header-test', '--rename-test'):
     # A windowed EXE has no stderr; keep explicit test failures reviewable.
     _test_output = Path(sys.argv[2]).absolute()
     _test_output.mkdir(parents=True, exist_ok=True)
@@ -24,6 +24,8 @@ from application.playback import PlaybackSession, PlaybackStatus
 from player_view import PlayerInfo
 from application.file_tasks import FileTasks
 from application.classification import Classification
+from application.renaming import Renaming
+from infrastructure.file_renaming import FileRenaming
 from application.deletion import Deletion
 from application.recovery import Recovery
 from application.file_results import FileAction, PlaybackTarget
@@ -67,6 +69,10 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
         self.file_tasks = FileTasks(lambda function, callback: self.work(function, callback),
                                     self._begin_file_task, self._end_file_task, self.has_pending_file_tasks,
                                     prepare=self.thumbnail_service.stop)
+        self.rename_service = FileRenaming(self.store)
+        self.renaming = Renaming(self.file_tasks, self.catalog, self.rename_service.submit,
+            available=lambda: not self.busy, current_video=lambda: self.current, refresh=self._refresh_file_records,
+            validate=self.rename_service.validate)
         self.archive_configuration = ArchiveConfiguration(self.file_tasks, self.catalog,
             lambda root, folders: self.archive_configuration_service.submit(root, folders),
             available=lambda: not self.busy, refresh=self._refresh_file_records,
@@ -91,13 +97,15 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
             continue_after_delete=self.deletion.continue_after_delete,
             storage_ready=self._restore_storage_target, notify=self._file_notice,
             recover_settings=lambda: self.archive_configuration_service.recover(),
-            restore_names=lambda: self.archive_configuration_service.restore_original_names())
+            restore_names=lambda: self.archive_configuration_service.restore_original_names(),
+            recover_renames=self.rename_service.recover)
         self.vlc, self.instance, self.player = create_player()
         self.setWindowTitle('MoPlayer · 本地视频与分类')  # 设置可识别的窗口标题。
         self.resize(1440, 920)  # 为品牌导航、双层控制和大缩略图保留舒适留白。
         self.setMinimumSize(900, 580)  # 避免窗口过小造成导航和分类按钮重叠。
         from layout import build_interface  # 按独立视觉模块构建蓝色卡片布局。
         build_interface(self, BUNDLE)
+        self.player_view.set_rename_handler(self.renaming.rename)
         self.library_view.folderRequested.connect(self.load_folder)
         self.library_view.videoRequested.connect(self.open_library_video)
         self.library_view.unfavoriteRequested.connect(self.remove_library_favorite)
@@ -251,7 +259,7 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
 
     def refresh_title(self):
         video = self.catalog.video(self.current) if self.current else None
-        info = PlayerInfo(video['name'], video['score'], tuple(json.loads(video['tags'])), bool(video['star'])) if video else None
+        info = PlayerInfo(video['name'], video['score'], tuple(json.loads(video['tags'])), bool(video['star']), video['id']) if video else None
         self.player_view.present_video(info)
         self.refresh_transport()
         if video:
@@ -574,7 +582,7 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
         dialog.setLayout(layout)  # 安装任务布局。
         text = QPlainTextEdit()  # 以只读文本展示持久任务。
         text.setReadOnly(True)  # 防止用户直接改写日志。
-        kinds = {'hierarchy_jobs': '标签结构', 'jobs': '归档', 'deletion_jobs': '删除', 'archive_setting_jobs': '归档整理'}
+        kinds = {'hierarchy_jobs': '标签结构', 'jobs': '文件操作', 'deletion_jobs': '删除', 'archive_setting_jobs': '归档整理'}
         text.setPlainText('\n\n'.join(f'{kinds[row["kind"]]} {row["id"]}  [{row["state"]}]\n{row["error"] or "无错误"}' for row in self.catalog.task_history()) or '暂无文件任务。')
         layout.addWidget(text)  # 放置任务日志。
         retry = QPushButton('重试所有未完成任务')  # 明确执行恢复动作。
@@ -671,6 +679,9 @@ def main():  # 程序统一启动入口。
         return 1  # 报告失败退出码。
 
 if __name__ == '__main__':  # 仅直接运行时启动应用。
+    if len(sys.argv) == 3 and sys.argv[1] == '--rename-test':
+        from verify_renaming import run
+        sys.exit(run(sys.argv[2]))
     if len(sys.argv) == 3 and sys.argv[1] == '--media-header-test':
         from verify_media_header import run
         sys.exit(run(sys.argv[2]))

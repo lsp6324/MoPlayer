@@ -457,8 +457,10 @@ class Archiver:  # 使用可重放任务协调数据库和文件系统。
 
     def recover(self):  # 启动时恢复所有未完成任务。
         errors = []  # 汇总无法自动恢复的任务。
-        for row in self.store.query('SELECT id FROM jobs WHERE state<>"done" ORDER BY updated'):  # 按提交顺序恢复。
+        for row in self.store.query('SELECT id,plan FROM jobs WHERE state<>"done" ORDER BY updated'):  # 按提交顺序恢复。
             try:  # 单个失败不丢失其他任务信息。
+                if json.loads(row['plan']).get('action') == 'rename':
+                    continue  # 重命名由专属服务恢复，不按归档计划解释。
                 self.run(row['id'])  # 使用持久计划幂等重放。
             except Exception as error:  # 保留待人工处理的任务。
                 errors.append(f'{row["id"]}: {error}')  # 返回实际失败状态。

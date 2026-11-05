@@ -7,7 +7,8 @@ from application.operations import Operation, Status
 class Recovery:
     def __init__(self, tasks, repository, drafts, *, recover_archive, recover_tags,
                  recover_deletions, available, playback_target, mark_deleting,
-                 refresh, refresh_deleted, continue_after_delete, storage_ready, notify, recover_settings=lambda: [], restore_names=lambda: ()):
+                 refresh, refresh_deleted, continue_after_delete, storage_ready, notify, recover_settings=lambda: [], restore_names=lambda: (), recover_renames=lambda: []):
+        self.recover_renames = recover_renames
         self.restore_names = restore_names
         self.recover_settings = recover_settings
         self.tasks, self.repository, self.drafts = tasks, repository, drafts
@@ -33,7 +34,9 @@ class Recovery:
         self.mark_deleting(pending, True)
         self.notify(FileNotice(FileAction.RECOVERY))
         def work():
-            errors = self.recover_archive() + self.recover_tags()
+            errors = self.recover_archive() + self.recover_renames()
+            if not errors:
+                errors += self.recover_tags()
             if not errors:
                 errors += self.recover_settings()
             if not errors:

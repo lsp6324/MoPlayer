@@ -14,6 +14,8 @@
 | application/tag_drafts.py | 按视频 ID 管理标签基线、工作草稿和正在提交的值；成功才确认基线。 |
 | application/file_tasks.py | 文件操作的准入、开始/结束生命周期、完成结果和可恢复失败分类。 |
 | application/classification.py | 冻结分类/归档输入，协调提交和实际记录刷新；成功后才给出评分提示意图。 |
+| application/renaming.py | 固定视频 ID 和新名称，执行只读预检、文件任务准入及实际结果刷新；失败直接交付原位编辑器。 |
+| infrastructure/file_renaming.py | 校验并改名全部有效登记入口；冻结 jobs/action=rename 计划，按文件身份恢复，事务提交 name、original_name 和路径，不改变目录及分类状态。 |
 | application/archive_folders.py | 不可变的标签、评分、收藏目录依据，固定评分 → 收藏 → 标签的层级顺序；关闭某项只省略目录，不删除元数据。 |
 | application/archive_configuration.py | 归档设置提交、文件任务准入及全库结果刷新，不访问具体文件、设置文件或 Qt。 |
 | infrastructure/archive_configuration.py | 用 archive_setting_jobs 冻结新根目录、目录依据、标签结构和全部已归档视频，重放既有 Archiver 子任务；所有视频完成后原子保存配置并切换有效规则。 |
@@ -30,7 +32,7 @@
 | library_view.py | 左侧资料库的分页、控件、选择和滚动位置；向窗口表达导入、打开视频、取消收藏等意图，不访问具体数据库或文件服务。 |
 | library_views.py / thumbnail_cache.py / background_work.py | 按稳定 ID 更新的树/列表模型与绘制、Qt 图像缓存、工作线程结果交付。绘制只读取模型准备好的元数据。 |
 | player_view.py | 播放区控件、元数据展示、时间轴展示、浮层与全屏 UI 装配；接收 PlayerInfo / PlaybackStatus 与进度，发出操作意图，不读数据库或具体播放器。 |
-| media_header.py / heart_rating.py | 前者绘制普通和全屏共用的两行标题，标签胶囊与原名分离，第二行显示收藏和五心评分；后者提供交互式评分及共用半心绘制。只读取展示数据。 |
+| media_header.py / heart_rating.py | 前者绘制共用两行标题，并通过显式回调提供普通标题原位编辑，拥有输入焦点、错误展示及过期结果隔离；后者提供交互式评分及共用半心绘制。只读取展示数据与操作结果。 |
 | layout.py / playback_controls.py / playback_options.py / tag_popover.py | 窗口组合、响应式控制行和功能浮层；音量、静音、倍速和评分通过信号请求，倍率成功后才更新展示。 |
 | video_fullscreen.py / video_cursor.py / window_chrome.py | 全屏展示与 Windows 原生窗口、光标适配。 |
 | app.py | 程序装配、Qt 事件入口、资料库/播放意图与文件任务的连接，以及 VLC 状态和命令的适配；不持有播放区子控件。 |
@@ -87,3 +89,7 @@ GitHub workflow `.github/workflows/architecture.yml` 在 push 和 pull request �
 收藏变更属于 Classification：未归档或未启用收藏目录时更新标记与列表；已归档且启用收藏目录时走文件任务，路径和收藏标记在同一视频事务中提交，失败不提前确认。播放器和侧栏入口共用这一流程，LibraryController 不再提供绕过归档的收藏写入入口。设置窗口不持有 Window 业务属性；自动边界检查约束它只使用显式应用端口。
 
 本机完整 pytest 继续覆盖 UI、文件恢复、数据库提交失败、扫描互斥等行为。真实 UI 和 VLC 集成继续通过独立桌面检查，构建后检查打包程序。构建使用显式 `--hidden-import vlc`，对应 runtime.py 的动态原生加载入口。
+
+手动重命名在普通标题原位输入：Enter 提交、Esc 或失焦取消，失败保留草稿并就地提示。PlayerView 按 PlayerInfo.video_id 固定展示目标，换片或隐藏时撤销编辑并隔离晚到结果。MediaHeader 不读取磁盘或业务对象；应用 Renaming 注入只读预检及提交端口，预检失败不启动媒体释放；真正操作仍由 FileTasks 暂停缩略图并按需要释放/恢复媒体。
+
+FileRenaming 复用 jobs 表，以 action=rename 区分冻结计划，无新增数据库模式；使用 Store.file_lock 与扫描、归档、删除互斥，先完整预检所有有效登记入口，再逐入口执行 Windows 不覆盖式改名。恢复按源/目标身份、大小和修改时间确认中断位置，不依赖上次内存状态；全部有效新入口确认后，同一事务更新 name、original_name、paths 及 committed 状态。普通归档恢复跳过重命名计划，Recovery 注入专属恢复端口，在标签批次前重放，并统一刷新涉及 ID。改名不创建归档、不要求归档设置、不修改目录、评分、收藏、标签和进度；保留扩展名，已有文件或其他视频路径记录均不得覆盖。
