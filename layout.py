@@ -87,11 +87,14 @@ def build_interface(window, bundle):
     window.splitter.addWidget(window.library_view)
 
     window.player_view = PlayerView(window, window.canvas, window.splitter,
-                                    window.tag_drafts, window.rating_value)
+                                    window.tag_drafts, window.rating_value,
+                                    paint_background=window.canvas.paint_region)
     window.splitter.addWidget(window.player_view)
     window.splitter.setStretchFactor(1, 1)
     window.splitter.setSizes([380, 1020])
     window.statusBar().setSizeGripEnabled(False)
     window.statusBar().hide()
     apply_theme(window)
+    window.canvas.backgroundChanged.connect(lambda:apply_theme(window,window.theme,window.accent))
+    window.canvas.geometryChanged.connect(window.player_view.update_background)
     window.sync_caption_button()

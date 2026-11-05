@@ -6,6 +6,7 @@ from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import QAbstractButton, QApplication
 
 TOKENS = {
+    'backdrop': False, 'row_bg': '#22262e', 'library_panel': '#22262e',
     'accent_source': DEFAULT_ACCENT, 'button_text': '#ffffff',
     'bg': '#1a1d23', 'surface': '#1a1d23', 'surface_plain': '#22262e',
     'library_bg': '#22262e',
@@ -22,6 +23,7 @@ TOKENS = {
     'font_small': '12px', 'font_mini': '12px', 'font_brand': '14px',
 }
 LIGHT_TOKENS = dict(TOKENS, **{
+    'row_bg': '#edf0f4', 'library_panel': '#edf0f4',
     'bg': '#f8f9fb', 'surface': '#f8f9fb', 'surface_plain': '#ffffff',
     'library_bg': '#edf0f4',
     'surface_dim': '#eef0f4', 'hover': '#e9edf3', 'pressed': '#dce5f3',
@@ -39,8 +41,8 @@ QMainWindow { background:$bg; }
 QWidget { font-family:"Microsoft YaHei UI"; font-size:$font_body; color:$text; background:transparent; }
 QDialog,QMessageBox { background:$surface; }
 QFrame#topBar,QFrame#libraryCard,QFrame#playerCard { background:transparent; border:none; border-radius:0; }
-QFrame#libraryCard { background:$library_bg; }
-QWidget#playerEmpty { background:#101216; }
+QFrame#libraryCard { background:$library_panel; }
+QWidget#playerEmpty { background:transparent; }
 QWidget#playbackPanel { border-top:1px solid $line_soft; }
 QWidget#classifyBar { border:none; }
 QFrame#floatingSurface,QFrame#playbackPopover { background:transparent; border:none; }
@@ -108,7 +110,7 @@ QScrollBar::add-page:vertical,QScrollBar::sub-page:vertical { background:transpa
 QScrollBar:horizontal { background:transparent; height:6px; }
 QScrollBar::handle:horizontal { background:$scroll; min-width:28px; border-radius:3px; }
 QScrollBar::add-line:horizontal,QScrollBar::sub-line:horizontal { width:0; }
-QSplitter::handle { background:$library_bg; border-right:1px solid $line; }
+QSplitter::handle { background:$library_panel; border-right:1px solid $line; }
 QSplitter::handle:hover { border-right:1px solid $accent_line; }
 QStatusBar { background:$bg; color:$status; font-size:$font_mini; padding:0 12px; }
 QStatusBar::item { border:none; }
@@ -123,16 +125,25 @@ STYLE = Template(STYLE_TEMPLATE).substitute(**TOKENS)
 
 
 @lru_cache(maxsize=128)
-def colors_for(mode, accent=DEFAULT_ACCENT):
+def colors_for(mode, accent=DEFAULT_ACCENT, backdrop=False):
     base = LIGHT_TOKENS if mode == 'light' else TOKENS
     accent = normalize_color(accent)
-    if accent == DEFAULT_ACCENT:
+    if accent == DEFAULT_ACCENT and not backdrop:
         return base
-    return dict(base, **accent_roles(accent,mode != 'light',base['surface_plain']),accent_source=accent)
+    colors = dict(base)
+    if accent != DEFAULT_ACCENT:
+        colors.update(accent_roles(accent,mode != 'light',base['surface_plain']),accent_source=accent)
+    if backdrop:
+        veil = QColor(base['surface_plain'])
+        colors.update(backdrop=True,row_bg='transparent',
+                      library_panel=f'rgba({veil.red()},{veil.green()},{veil.blue()},122)')
+    return colors
 
 
 def theme_tokens(window=None, *, mode=None):
-    return colors_for(mode or getattr(window,'theme','dark'),getattr(window,'accent',DEFAULT_ACCENT))
+    canvas = getattr(window,'canvas',None)
+    return colors_for(mode or getattr(window,'theme','dark'),getattr(window,'accent',DEFAULT_ACCENT),
+                      canvas.has_background if canvas is not None and mode is None else False)
 
 
 def apply_theme(window, theme=None, accent=None):

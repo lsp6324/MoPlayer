@@ -166,4 +166,5 @@ class LibraryView(QFrame):
     def apply_palette(self, palette):
         for view in (self.tree, *self.lists.values()):
             view.setPalette(palette)
+            view.viewport().setAutoFillBackground(False)
             view.viewport().update()

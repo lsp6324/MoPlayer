@@ -33,6 +33,7 @@
 | infrastructure/thumbnails.py | 缩略图磁盘缓存、FFmpeg 子进程和文件任务期间的暂停/删除屏障，不访问控件。 |
 | ui.py / floating_surface.py / hover_panel.py | UI 基础图形、透明工具窗、共享悬停与焦点规则。 |
 | accent_colors.py / color_picker.py | 前者纯 RGB 校验、预设及可读颜色角色推导；后者独立预设色块、色相/饱和明度色板和 RGB 控件，只发出颜色意图，不访问窗口、偏好或播放器。 |
+| appearance.BackgroundCanvas / background_region.py | 画布拥有背景像素、强度与全窗裁切；BackgroundRegion 只通过注入的绘制端口呈现同一画布局部，供原生视频宿主上方的空闲区域使用，不查询存储或媒体。背景变更刷新主题透明角色，尺寸变更仅使空闲区重绘，不移动/重建视频宿主。 |
 | appearance.py / appearance_dialog.py / theme.py | Appearance 原子保存背景、主题和强调色；AppearanceDialog 拥有编辑草稿、预览、保存失败保留及取消还原，通过显式 UI 回调连接；theme 统一推导普通/全屏强调色，不在各视图另写固定强调色。 |
 | library_view.py | 左侧资料库的分页、控件、选择和滚动位置；向窗口表达导入、打开视频、取消收藏等意图，不访问具体数据库或文件服务。 |
 | library_views.py / thumbnail_cache.py / background_work.py | 按稳定 ID 更新的树/列表模型与绘制、Qt 图像缓存、工作线程结果交付。绘制只读取模型准备好的元数据。 |
@@ -65,6 +66,8 @@
 - 结束后的进度统一为零；连续相对跳转基于尚未确认的目标累加。窗口关闭、换片与周期保存使用同一进度策略。
 
 ## 后续修改检查
+
+自定义背景覆盖顶栏、资料库、标题/播放栏和未播放的主区域。theme 根据 BackgroundCanvas 的实际图片状态推导 library_panel 半透明底层与 row_bg；不另存背景启用镜像标记。LibraryView 的视口不自动填充不透明底色，VideoDelegate 的普通行透明，选中/悬停仍保留可读底色。无图片时恢复原面板颜色。空闲区与画布使用同一坐标/裁切，不各自拉伸一份图片；播放时隐藏空闲层，原生宿主及全屏不受图片覆盖。外观预览取消、损坏图片回退、尺寸变化和强度变化均沿用同一刷新路径。
 
 便携运行时，业务数据库、设置、日志、背景和列表缩略图在 data；Python/Qt/子进程临时文件使用 data/temp，应用默认 QSettings 使用 data/qt-settings，VLC 3 配置、数据和缓存使用 EXE 旁 portable。不会改用户 APPDATA、LOCALAPPDATA 或 USERPROFILE；应用目录不可写时明确失败，不回退到用户目录。Windows 自身的对话框历史、回收站、系统缩略图和驱动缓存由系统管理，不属于应用资料库。Qt 的显式 NativeFormat 设置不受默认 IniFormat 重定向影响，不能宣称改默认格式就重定向了所有 Qt 内部设置。
 

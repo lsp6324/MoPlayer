@@ -16,6 +16,7 @@ from seek_slider import PlaybackTimeline
 from seek_notice import SeekNotice
 from video_fullscreen import VideoFullscreen
 from floating_surface import owned_by
+from background_region import BackgroundRegion
 from theme import STYLE_TEMPLATE, TOKENS
 from ui import icon, label, button, format_time
 
@@ -43,7 +44,7 @@ class PlayerView(QFrame):
     rateRequested = Signal(float)
     transportRefreshRequested = Signal()
 
-    def __init__(self, host, popup_host, splitter, drafts, rating_source):
+    def __init__(self, host, popup_host, splitter, drafts, rating_source, *, paint_background=None):
         super().__init__(host)
         self._info = None
         self._transport = (PlaybackStatus.IDLE, False, False)
@@ -73,7 +74,7 @@ class PlayerView(QFrame):
         self.surface.setMinimumSize(300, 170)
         surface_layout = QVBoxLayout(self.surface)
         surface_layout.setContentsMargins(0, 0, 0, 0)
-        self.player_empty = QWidget()
+        self.player_empty = BackgroundRegion(paint_background)
         self.player_empty.setObjectName('playerEmpty')
         self.player_empty.setAttribute(Qt.WA_StyledBackground)
         empty = QVBoxLayout(self.player_empty)
@@ -288,6 +289,7 @@ class PlayerView(QFrame):
 
     def apply_theme(self, colors):
         self.normal_colors = colors
+        self.update_background()
         self.header.apply_colors(colors)
         self.transportRefreshRequested.emit()
         from theme import colors_for
@@ -313,6 +315,9 @@ class PlayerView(QFrame):
         rating.fill_color = QColor(effective['accent'])
         rating.update()
         self.options.set_icon_color(effective['text_mid'])
+
+    def update_background(self):
+        self.player_empty.update()
 
     def shutdown(self):
         self.options.dismiss()

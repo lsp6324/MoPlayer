@@ -2,7 +2,7 @@ import json  # 读取便携版外观偏好。
 import os  # 原子提交外观配置文件。
 import uuid  # 为背景副本生成无冲突文件名。
 from pathlib import Path  # 将背景副本保存在便携数据目录。
-from PySide6.QtCore import Qt, QRectF, QSize  # 处理背景裁切与图标尺寸。
+from PySide6.QtCore import Qt, QRectF, QSize, Signal, QPoint  # 处理背景裁切与图标尺寸。
 from PySide6.QtGui import QColor, QPainter, QPixmap, QImageReader  # 绘制渐变背景并安全读取用户图片。
 from PySide6.QtWidgets import QWidget
 from accent_colors import DEFAULT_ACCENT, normalize_color
@@ -73,6 +73,8 @@ class Appearance:  # 独立于视频数据库保存界面偏好。
         self.accent = settings['accent']
 
 class BackgroundCanvas(QWidget):  # 用独立底层绘制实现网页般的柔和背景。
+    backgroundChanged = Signal()
+    geometryChanged = Signal()
     def __init__(self, appearance):  # 读取当前已保存的背景偏好。
         super().__init__()  # 初始化主窗口中央容器。
         self.appearance, self.image, self.strength = appearance, QPixmap(), appearance.strength  # 保存绘制所需状态。
@@ -87,9 +89,31 @@ class BackgroundCanvas(QWidget):  # 用独立底层绘制实现网页般的柔�
         self.image = QPixmap.fromImage(self.appearance.image(path)) if path else QPixmap()  # 用户背景使用安全读取后的图片。
         self.strength = strength  # 调节背景与浅色遮罩的混合比例。
         self.update()  # 更新主窗口背景。
+        self.backgroundChanged.emit()
+
+    @property
+    def has_background(self):
+        return not self.image.isNull()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.geometryChanged.emit()
+
+    def paint_region(self, painter, target):
+        if not self.has_background:
+            painter.fillRect(target.rect(),QColor('#101216'))
+            return
+        offset = target.mapTo(self,QPoint())
+        painter.save()
+        painter.translate(-offset.x(),-offset.y())
+        self._paint_background(painter)
+        painter.restore()
 
     def paintEvent(self, event):  # 以实际窗口尺寸绘制渐变或自定义图像。
         painter = QPainter(self)  # 在当前窗口背景上绘制。
+        self._paint_background(painter)
+
+    def _paint_background(self, painter):
         painter.setRenderHint(QPainter.SmoothPixmapTransform)  # 平滑缩放背景照片。
         base = QColor('#f7f8fa' if self.theme == 'light' else '#1a1d23')
         painter.fillRect(self.rect(), base)

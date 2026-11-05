@@ -34,7 +34,7 @@ class VideoDelegate(QStyledItemDelegate):
         painter.setRenderHint(QPainter.Antialiasing)
         card = option.rect.adjusted(1, 2, -2, -2)
         painter.setPen(Qt.NoPen)
-        painter.setBrush(QColor(colors['selected'] if selected else colors['hover'] if hovered else colors['library_bg']))
+        painter.setBrush(QColor(colors['selected'] if selected else colors['hover'] if hovered else colors['row_bg']))
         painter.drawRoundedRect(card, 6, 6)
         if playing:
             painter.setBrush(QColor(colors['accent']))
