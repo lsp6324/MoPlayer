@@ -1,4 +1,3 @@
-import json  # 读取当前视频的标签选择。
 from copy import deepcopy  # 草稿不直接修改全局分类。
 from PySide6.QtCore import Qt, QRect, QSize, QPoint, QMimeData, QTimer  # 实现胶囊换行、内部拖放与视口保持。
 from PySide6.QtGui import QDrag  # 使用原生拖动手势归类标签。
@@ -133,10 +132,10 @@ class ChildPanel(QFrame):  # 已由用户展开的子标签区域也可直接接
         self.editor.drop_tag(event, self.name)  # 避免两套不同的分类行为。
 
 class TagEditor(QDialog):  # 参考图式胶囊标签卡，父类只在主动点击后展示子类。
-    def __init__(self, store, vid, parent=None):  # 弹窗绑定原标签操作视频。
+    def __init__(self, tags, schema, parent=None):  # 只编辑传入的标签草稿。
         super().__init__(parent)  # 打开期间不强制暂停视频。
-        self.schema = deepcopy(store.tag_layout())  # 只有应用后才修改全局分类。
-        self.selected = set(json.loads(store.video(vid)['tags']))  # 读取当前视频已有标签。
+        self.schema = deepcopy(schema)  # 只有应用后才修改全局分类。
+        self.selected = set(tags)  # 读取当前视频已有标签。
         for name in self.selected:  # 兼容尚未进入公共字典的旧标签。
             self.schema.setdefault(name, {'name': name, 'kind': 'major', 'parent': None, 'is_parent': False})  # 普通根标签可以直接点击选择。
         for row in list(self.schema.values()):  # 已有子类的标签自动视为父标签。

@@ -21,7 +21,7 @@ def run(destination):  # 不运行播放、删除或完整回归。
     names = ['绝区零', '爱丽丝', '黑丝', '空父类']  # 同时覆盖普通标签、子类与空父类。
     for name in names:  # 初始化四个旧版平级标签。
         store.execute('INSERT INTO tags VALUES(?)', (name,))  # 新界面应兼容已有标签。
-    editor = TagEditor(store, vid)  # 打开真实标签卡。
+    editor = TagEditor(json.loads(store.video(vid)['tags']), store.tag_layout())  # 打开真实标签卡。
     editor.show()  # 允许控件计算几何与点击区域。
     application.processEvents()  # 完成首次布局。
     checks = []  # 只记录本次实际执行的专项。
@@ -95,7 +95,7 @@ def run(destination):  # 不运行播放、删除或完整回归。
     check('悬停预览不修改实际评分', preview.value == 8 and preview.preview == 9)  # 只有点击才提交。
     QTest.keyClick(preview, Qt.Key_Escape)  # 评分卡仍可取消。
     check('Esc 取消评分', preview.result() == QDialog.Rejected and store.video(vid)['score'] == 8)  # 不改变数据库。
-    scrolling = TagEditor(store, vid)  # 构造仅含草稿的大标签列表。
+    scrolling = TagEditor(json.loads(store.video(vid)['tags']), store.tag_layout())  # 构造仅含草稿的大标签列表。
     for index in range(100):  # 足够多的胶囊形成真实滚动区。
         name = f'滚动标签{index}'  # 与用户标签无关的隔离名称。
         scrolling.schema[name] = {'name': name, 'kind': 'major', 'parent': None, 'is_parent': False}  # 不写数据库。

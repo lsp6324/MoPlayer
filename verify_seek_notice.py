@@ -9,7 +9,9 @@ from PySide6.QtWidgets import QApplication, QDialog, QVBoxLayout, QLineEdit, QWi
 from seek_notice import notice_text  # 核对用户要求的两行格式。
 
 def run(destination):  # 只验证跳转提示，不运行完整回归。
-    from app import Window, BUNDLE, vlc  # 使用实际便携播放内核和正式窗口。
+    from app import Window, BUNDLE  # 使用实际便携播放内核和正式窗口。
+    from runtime import load_vlc
+    vlc = load_vlc()
     output = Path(destination).absolute()  # 不读写用户视频或数据库。
     output.mkdir(parents=True, exist_ok=True)  # 保存隔离样例和截图。
     ffmpeg = BUNDLE / 'ffmpeg.exe'  # 优先使用便携版内置工具。
@@ -50,10 +52,10 @@ def run(destination):  # 只验证跳转提示，不运行完整回归。
         check('两行格式与百分比符合示例', notice_text(5000, 10000, 60000) == '00:05→00:10(01:00)\n16.7%')  # 不显示多余小时或文案。
         window.current = window.store.register(sample)  # 绑定当前播放视频身份。
         window.play_path(sample, 0, False)  # 先完成解码准备，再固定跳转起点。
-        assert wait(lambda: window.resume is None and window.player.get_state() == vlc.State.Playing)  # 等待内核进入真实播放状态。
+        assert wait(lambda: window.playback.resume is None and window.player.get_state() == vlc.State.Playing)  # 等待内核进入真实播放状态。
         window.player.set_pause(1)  # 在开始本次跳转检查前暂停。
         assert wait(lambda: window.player.get_state() == vlc.State.Paused)  # VLC 暂停命令异步确认后再设置位置。
-        window.player.set_time(5000)  # 精确固定在用户示例的五秒位置。
+        window.set_playback_position(5000, window.player.get_length())  # 精确固定在用户示例的五秒位置。
         check('真实视频准备完成', wait(lambda: abs(window.player.get_time() - 5000) < 100))  # 不把异步暂停期间推进的时间当作提示错误。
         QTest.keyClick(window.surface, Qt.Key_D)  # 从五秒按 D 跳到十秒。
         check('D键跳转后显示居中偏上两行浮层', wait(lambda: abs(window.player.get_time() - 10000) < 100) and text() == '00:05→00:10(01:00)\n16.7%' and window.seek_notice.overlay.isVisible() and centered())
@@ -89,11 +91,11 @@ def run(destination):  # 只验证跳转提示，不运行完整回归。
         check('暂停时提示也会按时隐藏', wait(lambda: not panel.isVisible(), 3) and window.player.get_state() == vlc.State.Paused)
         QTest.keyClick(window.surface, Qt.Key_A)  # 后退同样显示前后进度。
         check('A键后退提示百分比正确', wait(lambda: abs(window.player.get_time() - 5000) < 100) and text() == '00:10→00:05(01:00)\n8.3%')
-        window.player.set_time(2000)  # 准备后退到开头的边界。
+        window.set_playback_position(2000, window.player.get_length())  # 准备后退到开头的边界。
         check('边界准备完成', wait(lambda: abs(window.player.get_time() - 2000) < 100))  # 等待实际定位完成。
         QTest.keyClick(window.surface, Qt.Key_Left)  # 后退五秒需要截断到零。
         check('边界显示实际零秒和零百分比', wait(lambda: window.player.get_time() == 0) and text() == '00:02→00:00(01:00)\n0.0%')
-        window.player.set_time(5000)  # 全屏也从明确的五秒开始。
+        window.set_playback_position(5000, window.player.get_length())  # 全屏也从明确的五秒开始。
         assert wait(lambda: abs(window.player.get_time() - 5000) < 100)  # 不接受尚未完成的异步定位。
         window.enter_fullscreen()  # 使用正式视频全屏布局。
         app.processEvents()  # 稳定全屏窗口几何。
@@ -115,8 +117,8 @@ def run(destination):  # 只验证跳转提示，不运行完整回归。
         check('重载清除上一条提示', text() == '' and not panel.isVisible())
         window.current = window.store.register(low_resolution)
         window.play_path(low_resolution, 5000, True)
-        check('低分辨率视频解码并暂停', wait(lambda: window.resume is None and window.player.get_state() == vlc.State.Paused and window.player.video_get_size(0) == (160, 90)))
-        window.player.set_time(5000)
+        check('低分辨率视频解码并暂停', wait(lambda: window.playback.resume is None and window.player.get_state() == vlc.State.Paused and window.player.video_get_size(0) == (160, 90)))
+        window.set_playback_position(5000, window.player.get_length())
         assert wait(lambda: abs(window.player.get_time() - 5000) < 100)
         QTest.keyClick(window.surface, Qt.Key_D)
         check('低分辨率视频浮层与高清样例字号尺寸相同',

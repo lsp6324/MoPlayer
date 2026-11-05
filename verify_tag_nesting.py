@@ -26,7 +26,7 @@ def run(destination):  # 只验证本次标签需求，不运行完整回归。
     store.execute('UPDATE videos SET tags=? WHERE id=?', (json.dumps(['待删除']), ids[2]))  # 未归档样例仅含将删除的标签。
     for name in ['游戏', '3D']:  # 创建两个并列父标签候选。
         store.execute('INSERT INTO tags VALUES(?)', (name,))  # 保留实际公共字典行为。
-    editor = TagEditor(store, ids[0])  # 打开生产标签卡。
+    editor = TagEditor(json.loads(store.video(ids[0])['tags']), store.tag_layout())  # 打开生产标签卡。
     editor.set_parent('游戏', True)  # 对应右键指定父标签。
     editor.set_parent('3D', True)  # 另一个根父标签。
     editor.assign_parent('角色', '3D')  # 为被移动父标签保留原有子标签。

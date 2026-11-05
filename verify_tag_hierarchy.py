@@ -13,7 +13,9 @@ from tag_editor import TagEditor, MIME  # 验证胶囊界面与内部拖动格�
 from score_editor import ScoreEditor  # 验证自动出现的评分界面。
 
 def run(destination):  # 源码和便携 EXE 使用相同验收入口。
-    from app import Window, BUNDLE, vlc  # 加载真实播放内核和窗口。
+    from app import Window, BUNDLE  # 加载真实播放内核和窗口。
+    from runtime import load_vlc
+    vlc = load_vlc()
     output = Path(destination).absolute()  # 每次测试指定独立目录。
     output.mkdir(parents=True, exist_ok=True)  # 不接触用户视频与数据库。
     samples = output / 'samples'  # 用于原播放上下文的来源目录。
@@ -55,7 +57,7 @@ def run(destination):  # 源码和便携 EXE 使用相同验收入口。
         editor.drop_tag(event, '绝区零')  # 调用生产落下校验与草稿更新。
         return event.isAccepted() and editor.schema['爱丽丝']['parent'] == '绝区零' and not editor.expanded  # 拖入不自动展开。
     try:  # 任意失败仍保留报告和界面证据。
-        window.file_task_thumbnail_pause = True  # 构造旧版样例期间不让缩略图读取马上要移动的来源路径。
+        window.thumbnail_service.pause(True)  # 构造旧版样例期间不让缩略图读取马上要移动的来源路径。
         window.load_folder(str(samples))  # 使用正式异步扫描建立原播放上下文。
         check('来源异步扫描完成', wait(lambda: window.browsing is not None))  # 等待完整快照。
         context = window.browsing  # 归档后仍需保持原播放顺序。
@@ -63,16 +65,16 @@ def run(destination):  # 源码和便携 EXE 使用相同验收入口。
         tags = ['绝区零', '爱丽丝', '黑丝', '足交', 'ASMR', 'cosplay']  # 使用用户给出的六标签场景。
         window.archiver.submit(vids[0], 8, tags)  # 创建旧版平级六入口样例。
         window.archiver.submit(vids[1], 9, ['爱丽丝', 'cosplay'])  # 第二条共享角色标签，评分保持独立。
-        window.file_task_thumbnail_pause = False  # 样例建立完成后恢复正式缩略图行为。
+        window.thumbnail_service.pause(False)  # 样例建立完成后恢复正式缩略图行为。
         for vid in vids:  # 全局迁移应保留这些元数据。
             window.store.execute('UPDATE videos SET star=1,position=1000,played=1 WHERE id=?', (vid,))  # 加入历史、收藏与续播进度。
         old = [Path(row['path']) for row in window.store.query('SELECT path FROM paths')]  # 保存旧平级入口用于检查清理。
         entities = {vid: identity(window.store.resolve(vid)) for vid in vids}  # 保留实际文件实体身份。
         window.start(context, (str(samples), 0))  # 从原播放上下文打开已归档视频。
-        check('视频真实解码播放', wait(lambda: window.resume is None and window.player.get_time() > 1100))  # 不仅检查当前 ID。
+        check('视频真实解码播放', wait(lambda: window.playback.resume is None and window.player.get_time() > 1100))  # 不仅检查当前 ID。
         window.player.set_pause(1)  # 固定场景以验证弹窗与归档保留暂停。
         check('播放暂停准备完成', wait(lambda: window.player.get_state() == vlc.State.Paused))  # 排除异步暂停未完成的假象。
-        draft = TagEditor(window.store, vids[0], window)  # 先验证取消不会移动任何文件。
+        draft = TagEditor(json.loads(window.store.video(vids[0])['tags']), window.store.tag_layout(), window)  # 先验证取消不会移动任何文件。
         draft.setModal(True)  # 复用正式弹窗输入优先规则。
         draft.show()  # 实际渲染类型控件与标签树。
         application.processEvents()  # 让模型行具备真实几何。

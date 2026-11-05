@@ -1,8 +1,6 @@
 from PySide6.QtCore import Qt, QSize, QPointF, QRectF
 from PySide6.QtGui import QIcon, QPixmap, QPainter, QPen, QColor, QPolygonF
 from PySide6.QtWidgets import QLabel, QPushButton, QSizePolicy
-from theme import TOKENS, LIGHT_TOKENS, STYLE_TEMPLATE, STYLE, apply_theme
-from layout import build_interface
 
 def icon(name, color='#cbd2dd', size=24):  # 绘制统一的圆角细线图标。
     pixmap = QPixmap(size * 2, size * 2)  # 用双倍像素保证高 DPI 下清晰。
@@ -93,3 +91,8 @@ class PathLabel(QLabel):  # 路径过长时省略显示而不挤压卡片布局�
     def resizeEvent(self, event):  # 左侧宽度改变后重新计算路径显示。
         super().resizeEvent(event)  # 保持 Qt 标签正常布局。
         self.setText(self.full_text)  # 不改变真实浏览路径。
+
+
+def format_time(ms):  # 将播放时间格式化为可读文本。
+    seconds = max(0, ms) // 1000  # 未知时长显示零。
+    return f'{seconds // 3600:02}:{seconds // 60 % 60:02}:{seconds % 60:02}'

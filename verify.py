@@ -41,7 +41,9 @@ def shell_thumbnail(path):  # 调用资源管理器所用的 Shell 图像工厂�
     return answer  # 证据单独区别于 VLC 解码结果。
 
 def run(destination):  # 执行源码与便携版共用的实际验收。
-    from app import Window, BUNDLE, vlc  # 在应用已配置运行库路径后导入。
+    from app import Window, BUNDLE  # 在应用已配置运行库路径后导入。
+    from runtime import load_vlc
+    vlc = load_vlc()
     output = Path(destination).absolute()  # 将全部测试数据放到指定隔离目录。
     output.mkdir(parents=True, exist_ok=True)  # 创建测试输出位置。
     ffmpeg = BUNDLE / 'ffmpeg.exe'  # 优先验证随包的解码工具。
@@ -274,7 +276,7 @@ def run(destination):  # 执行源码与便携版共用的实际验收。
             listing.itemDoubleClicked.emit(item)  # 触发正式恢复逻辑。
         QTimer.singleShot(100, open_saved)  # 在弹窗打开后执行双击。
         window.library('stars')  # 从独立收藏列表打开视频。
-        check('收藏归档后续播', wait_until(lambda: window.context.root == str(window.store.resolve(original).parent) and window.resume is None and window.player.get_time() >= saved - 100))  # 验证当前路径恢复和进度保留。
+        check('收藏归档后续播', wait_until(lambda: window.context.root == str(window.store.resolve(original).parent) and window.playback.resume is None and window.player.get_time() >= saved - 100))  # 验证当前路径恢复和进度保留。
         window.player.set_pause(1)  # 防止短样例在文件夹历史测试期间自然切换。
         active_context = window.context  # 保存恢复后的播放上下文。
         def open_folder_history():  # 在文件夹历史中选择原始导入根。

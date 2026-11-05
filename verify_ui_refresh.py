@@ -10,6 +10,8 @@ import threading
 import time
 import traceback
 
+from application.operations import Operation
+from unittest.mock import Mock
 
 def require_private_desktop():
     expected = os.environ.get('MOPLAYER_ISOLATED_DESKTOP', '')
@@ -45,7 +47,9 @@ def run(destination):
     from PySide6.QtCore import Qt, QPoint, QThreadPool, QTimer
     from PySide6.QtTest import QTest
     from PySide6.QtWidgets import QApplication, QWidget
-    from app import Window, vlc, BUNDLE
+    from app import Window, BUNDLE
+    from runtime import load_vlc
+    vlc = load_vlc()
     from core import scan
     output = Path(destination).absolute()
     output.mkdir(parents=True, exist_ok=True)
@@ -145,7 +149,7 @@ def run(destination):
         shutil.copyfile(sample, sample_dir / 'second.mp4')
         context, _ = scan(sample_dir, window.store, threading.Event())
         window.browsing = context
-        from app import TreeModel
+        from library_views import TreeModel
         window.tree.setModel(TreeModel(context))
         window.tree.expandAll()
         window.start(context, (str(sample_dir), 0))
@@ -175,7 +179,7 @@ def run(destination):
               window.seek_notice.overlay.isVisible() and
               window.player.video_get_marquee_int(vlc.VideoMarqueeOption.Enable) == 0)
         check('keyboard jump confirmation preserves paused timeline',
-              wait(lambda: window._pending_seek is None and abs(window.player.get_time() - target) < 100) and
+              wait(lambda: window.playback.pending_seek is None and abs(window.player.get_time() - target) < 100) and
               abs(window.seekbar.visual_fraction - target / window.player.get_length()) < .003 and
               not window.seekbar.animation.isActive())
         handle = int(window.surface.winId())
@@ -220,9 +224,8 @@ def run(destination):
         check('tag input accepts native-window click', panel.isVisible() and editor.entry.hasFocus() and editor.entry.text() == 'demo-tag')
         editor.add_button.click()
         check('new tag is unselected', 'demo-tag' in editor.schema and not editor.chosen())
-        from unittest.mock import Mock
         apply_tags = window.apply_tags
-        window.apply_tags = Mock()
+        window.apply_tags = Mock(return_value=Operation.success())
         def choose_tag_menu(label, child=None):
             errors = []
             def choose():
@@ -374,7 +377,7 @@ def run(destination):
         editor.entry.setText('demo-tag')
         editor.add_button.click()
         apply_tags = window.apply_tags
-        window.apply_tags = Mock()
+        window.apply_tags = Mock(return_value=Operation.success())
         choose_tag_menu('设为父标签')
         check('fullscreen parent menu preserves tag surface and controls',
               panel.isVisible() and fullscreen.overlay.isVisible() and editor.schema['demo-tag']['is_parent'] and window.apply_tags.call_count == 0)
@@ -422,7 +425,7 @@ def run(destination):
         report['error'] = traceback.format_exc()
         raise
     finally:
-        window.playback_options.tags_popup.baseline = None
+        window.tag_drafts.discard_all()
         window.close()
         QThreadPool.globalInstance().waitForDone()
         window.thumbnails.pool.waitForDone()

@@ -2,7 +2,8 @@ import json  # 保存音频实际解码证据。
 import sys  # 接收样例目录和输出路径。
 import time  # 等待解码器提交 PCM 数据。
 from pathlib import Path  # 查找生成的真实编码样例。
-from app import vlc  # 复用应用配置的独立 VLC 运行库。
+from runtime import load_vlc
+vlc = load_vlc()
 
 def verify(samples):  # 验证音频编码能解码成 PCM，而不依赖人工听音。
     instance = vlc.Instance('--no-video')  # 音频测试不启动视频输出窗口。

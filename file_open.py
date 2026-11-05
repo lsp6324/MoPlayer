@@ -66,7 +66,7 @@ class FileOpenServer(QLocalServer):  # 接收双击并在安全时机打开视�
                 target = Path(path).resolve(strict=True)  # 不按文件名猜测其他视频。
                 if not target.is_file():  # 默认应用只接收文件。
                     raise ValueError('请选择一个有效视频文件。')  # 不将目录当成视频。
-                vid = self.window.store.register(target)  # 使用同一套稳定身份和硬链接识别。
+                vid = self.window.catalog.register(target)  # 使用同一套稳定身份和硬链接识别。
                 self.window.load_folder(str(target.parent), vid)  # 建立所在目录上下文并恢复播放进度。
             except (OSError, ValueError) as error:  # 文件被删除或无权限时不崩溃。
                 self.window.fail(error)  # 显示实际打开失败原因。

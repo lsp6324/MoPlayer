@@ -5,13 +5,16 @@ private-desktop check in verify_ui_refresh.py.
 """
 import json
 import time
+from application.operations import Operation
 from unittest.mock import Mock
 import pytest
 from PySide6.QtCore import Qt, QPoint, QEvent, QCoreApplication, QThreadPool
 from PySide6.QtGui import QMouseEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
-from app import Window, vlc
+from app import Window
+from runtime import load_vlc
+vlc = load_vlc()
 from theme import apply_theme
 
 
@@ -30,7 +33,7 @@ def window(tmp_path):
     player.show()
     application.processEvents()
     yield player
-    player.playback_options.tags_popup.baseline = None
+    player.tag_drafts.discard_all()
     player.busy = False
     player.close()
     QThreadPool.globalInstance().waitForDone()
@@ -99,7 +102,7 @@ def test_heart_rating_saves_to_remote_metadata(window, score):
 
 
 def test_tag_input_native_dispatch_and_add_does_not_select(window):
-    window.apply_tags = Mock()
+    window.apply_tags = Mock(return_value=Operation.success())
     window.tags_dialog()
     panel = window.playback_options.tags_popup
     editor = panel.editor
@@ -123,7 +126,7 @@ def test_tag_input_native_dispatch_and_add_does_not_select(window):
 
 
 def test_tag_management_multiselect_and_close_flush(window):
-    window.apply_tags = Mock()
+    window.apply_tags = Mock(return_value=Operation.success())
     window.tags_dialog()
     panel = window.playback_options.tags_popup
     editor = panel.editor
@@ -157,7 +160,7 @@ def test_seek_previews_without_stale_tick_snapback(window):
     fake.get_time.return_value = 2000
     fake.get_state.return_value = vlc.State.Paused
     window.player = fake
-    window.last_save = time.monotonic()
+    window.playback.last_save = time.monotonic()
     try:
         slider = window.seekbar
         QTest.mousePress(slider, Qt.LeftButton, pos=QPoint(slider.width() // 2, slider.height() // 2))
@@ -171,7 +174,7 @@ def test_seek_previews_without_stale_tick_snapback(window):
         assert slider.value() == target
         fake.get_time.return_value = fake.set_time.call_args.args[0]
         window.tick()
-        assert window._pending_seek is None
+        assert window.playback.pending_seek is None
     finally:
         window.player = real
 
@@ -186,7 +189,7 @@ def test_keyboard_seek_combines_notice_and_timeline_without_stale_snapback(windo
     fake.get_state.return_value = vlc.State.Paused
     window.player = fake
     window.seek_notice.show = Mock()
-    window.last_save = time.monotonic()
+    window.playback.last_save = time.monotonic()
     try:
         window.seek(offset)
         fake.set_time.assert_called_once_with(target)
@@ -196,7 +199,7 @@ def test_keyboard_seek_combines_notice_and_timeline_without_stale_snapback(windo
         assert window.seekbar.visual_fraction == target / 100000
         fake.get_time.return_value = target
         window.tick()
-        assert window._pending_seek is None
+        assert window.playback.pending_seek is None
         assert not window.seekbar.animation.isActive()
     finally:
         window.player = real
@@ -439,7 +442,7 @@ def test_fullscreen_exit_restores_preexisting_video_cursor(window):
 
 
 def test_cancelled_storage_keeps_tag_draft(window):
-    window.apply_tags = Mock(return_value=False)
+    window.apply_tags = Mock(return_value=Operation.cancelled())
     window.tags_dialog()
     panel = window.playback_options.tags_popup
     editor = panel.editor
@@ -448,6 +451,162 @@ def test_cancelled_storage_keeps_tag_draft(window):
     window.tags_dialog()
     assert panel.editor is editor and editor.chosen() == ['existing']
     assert window.store.video(window.current)['tags'] == '[]'
+
+
+def _capture_file_task(window):
+    tasks = []
+    window.work = lambda function, callback: tasks.append((function, callback))
+    window.play_path = Mock()
+    window.fail = Mock()
+    return tasks
+
+
+def _finish_file_task(tasks):
+    function, completed = tasks.pop(0)
+    try:
+        value = function()
+    except Exception as error:
+        completed(None, error)
+    else:
+        completed(value, None)
+
+
+def test_background_tag_preflight_failure_preserves_reopened_draft_and_has_no_recovery_task(window, tmp_path):
+    window.storage.save(tmp_path / 'archive')
+    window.archiver.root = tmp_path / 'archive'
+    window.store.execute('UPDATE videos SET original_name=? WHERE id=?', ('a' * 240 + '.mp4', window.current))
+    tasks = _capture_file_task(window)
+    window.tags_dialog()
+    panel = window.playback_options.tags_popup
+    editor = panel.editor
+    editor.chips['existing'].click()
+    panel.dismiss()
+    _finish_file_task(tasks)
+    window.tags_dialog()
+    assert panel.editor is editor and editor.chosen() == ['existing']
+    assert window.store.video(window.current)['tags'] == '[]'
+    assert not window.catalog.pending_tasks()
+    assert '恢复' not in str(window.fail.call_args)
+
+
+def test_tag_save_continues_latest_selected_video(window, tmp_path):
+    from core import Snapshot
+    window.storage.save(tmp_path / 'archive')
+    window.archiver.root = tmp_path / 'archive'
+    original = window.current
+    entries = [(original, 'sample.mp4')]
+    for name in ('B.mp4', 'C.mp4'):
+        path = tmp_path / name
+        path.write_bytes(name.encode())
+        entries.append((window.store.register(path), name))
+    context = Snapshot(str(tmp_path), {str(tmp_path): ([], entries)})
+    window.context, window.location = context, (str(tmp_path), 0)
+    tasks = _capture_file_task(window)
+    window.tags_dialog()
+    window.playback_options.tags_popup.editor.chips['existing'].click()
+    window.start(context, (str(tmp_path), 1))
+    window.start(context, (str(tmp_path), 2))
+    assert window.current == original and len(tasks) == 1
+    _finish_file_task(tasks)
+    assert window.current == entries[2][0] and not tasks
+    assert json.loads(window.store.video(original)['tags']) == ['existing']
+    window.fail.assert_not_called()
+
+
+def test_failed_tag_save_does_not_navigate_and_retry_can_continue(window, tmp_path):
+    from core import Snapshot
+    window.storage.save(tmp_path / 'archive')
+    window.archiver.root = tmp_path / 'archive'
+    original = window.current
+    second = tmp_path / 'second.mp4'
+    second.write_bytes(b'second')
+    second_id = window.store.register(second)
+    context = Snapshot(str(tmp_path), {str(tmp_path): ([], [(original, 'sample.mp4'), (second_id, 'second.mp4')])})
+    window.context, window.location = context, (str(tmp_path), 0)
+    window.store.execute('UPDATE videos SET original_name=? WHERE id=?', ('a' * 240 + '.mp4', original))
+    tasks = _capture_file_task(window)
+    window.tags_dialog()
+    window.playback_options.tags_popup.editor.chips['existing'].click()
+    window.advance(1)
+    _finish_file_task(tasks)
+    assert window.current == original and not window.busy
+    window.store.execute('UPDATE videos SET original_name=? WHERE id=?', ('sample.mp4', original))
+    window.advance(1)
+    _finish_file_task(tasks)
+    assert window.current == second_id
+    assert json.loads(window.store.video(original)['tags']) == ['existing']
+
+
+def test_recovering_tag_task_confirms_existing_draft_without_submitting_it_again(window, tmp_path):
+    window.storage.save(tmp_path / 'archive')
+    window.archiver.root = tmp_path / 'archive'
+    tasks = _capture_file_task(window)
+    def fail_checkpoint(stage):
+        raise OSError('interrupted batch')
+    window.tag_migration.fault = fail_checkpoint
+    window.tags_dialog()
+    panel = window.playback_options.tags_popup
+    panel.editor.chips['existing'].click()
+    panel.dismiss()
+    _finish_file_task(tasks)
+    assert window.catalog.pending_tasks('hierarchy_jobs')
+    assert '恢复' in str(window.fail.call_args)
+    window.tag_migration.fault = None
+    window.retry_jobs()
+    _finish_file_task(tasks)
+    assert not window.catalog.pending_tasks()
+    window.tags_dialog()
+    assert panel.editor.chosen() == ['existing']
+    panel.dismiss()
+    assert not tasks and not window.busy
+
+
+def test_close_waits_for_tag_commit_then_closes_its_own_window(window, tmp_path):
+    window.storage.save(tmp_path / 'archive')
+    window.archiver.root = tmp_path / 'archive'
+    tasks = _capture_file_task(window)
+    window.tags_dialog()
+    window.playback_options.tags_popup.editor.chips['existing'].click()
+    assert window.close() is False
+    assert window.isVisible() and len(tasks) == 1
+    _finish_file_task(tasks)
+    QApplication.processEvents()
+    assert not window.isVisible()
+    assert json.loads(window.store.video(window.current)['tags']) == ['existing']
+
+
+def test_repeated_keyboard_seek_keeps_all_user_steps_before_backend_ack(window):
+    real = window.player
+    fake = Mock()
+    fake.get_length.return_value = 100000
+    fake.get_time.return_value = 10000
+    window.player = fake
+    try:
+        for _ in range(3):
+            window.seek(5000)
+        assert [call.args[0] for call in fake.set_time.call_args_list] == [15000, 20000, 25000]
+        assert window.seekbar.visual_fraction == .25
+    finally:
+        window.player = real
+
+
+def test_end_progress_remains_zero_on_later_saves_and_close(window):
+    real = window.player
+    fake = Mock()
+    fake.get_state.return_value = vlc.State.Ended
+    fake.get_length.return_value = 100000
+    fake.get_time.return_value = 99000
+    window.player = fake
+    window.context = Mock()
+    window.context.step.return_value = None
+    try:
+        window.tick()
+        assert window.store.video(window.current)['position'] == 0
+        window.save()
+        window.close()
+        assert window.store.video(window.current)['position'] == 0
+    finally:
+        window.player = real
 
 
 def test_escape_closes_editable_surface_before_leaving_fullscreen(window):
@@ -469,7 +628,7 @@ def test_escape_closes_editable_surface_before_leaving_fullscreen(window):
 def test_tag_context_menu_belongs_to_editable_surface(window):
     from PySide6.QtWidgets import QMenu
     from PySide6.QtCore import QTimer
-    window.apply_tags = Mock()
+    window.apply_tags = Mock(return_value=Operation.success())
     window.tags_dialog()
     panel = window.playback_options.tags_popup
     checks = []
@@ -486,7 +645,7 @@ def test_tag_context_menu_belongs_to_editable_surface(window):
 @pytest.mark.parametrize('cancel', [False, True])
 def test_native_tag_menu_input_does_not_dismiss_or_commit(window, cancel):
     from PySide6.QtCore import QTimer
-    window.apply_tags = Mock()
+    window.apply_tags = Mock(return_value=Operation.success())
     window.tags_dialog()
     panel = window.playback_options.tags_popup
     editor = panel.editor
@@ -564,7 +723,7 @@ def test_sidebar_delete_freezes_selected_id_without_playing(window, tmp_path):
     window.sidebar_list.clearSelection()
     ready(function(), None)
     assert window.busy and len(tasks) == 1
-    assert selected_id in window.deleting_ids and original not in window.deleting_ids
+    assert window.thumbnail_service.is_deleting(selected_id) and not window.thumbnail_service.is_deleting(original)
     window.play_path.assert_not_called()
     # Do not execute the queued deletion; this check only covers UI targeting.
 
@@ -577,7 +736,7 @@ def test_decode_failure_remains_visible_without_status_bar(window):
     fake.get_length.return_value = 0
     window.player = fake
     window.fail = Mock()
-    window.last_save = time.monotonic()
+    window.playback.last_save = time.monotonic()
     try:
         window.tick()
         window.tick()
@@ -595,7 +754,7 @@ def test_play_icon_survives_redraw_without_backend_transition(window):
     fake.get_length.return_value = 100000
     fake.get_time.return_value = 2000
     window.player = fake
-    window.last_save = time.monotonic()
+    window.playback.last_save = time.monotonic()
     expected = icon('pause', '#ffffff').pixmap(24, 24).toImage()
     try:
         window.tick()
@@ -649,7 +808,7 @@ def test_pause_command_waits_for_state_confirmation(window):
     fake.get_length.return_value = 100000
     fake.get_time.return_value = 2000
     window.player = fake
-    window.last_save = time.monotonic()
+    window.playback.last_save = time.monotonic()
     try:
         window.tick()
         window.play_button.click()

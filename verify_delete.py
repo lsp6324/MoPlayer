@@ -11,7 +11,9 @@ from PySide6.QtWidgets import QApplication, QLineEdit, QDialog  # 检查文本�
 from core import scan, Archiver  # 验证正式上下文与多标签归档。
 
 def run(destination):  # 源码和便携 EXE 共用验收流程。
-    from app import Window, BUNDLE, vlc  # 使用生产播放器与随包依赖。
+    from app import Window, BUNDLE  # 使用生产播放器与随包依赖。
+    from runtime import load_vlc
+    vlc = load_vlc()
     output = Path(destination).absolute()  # 明确测试输出边界。
     output.mkdir(parents=True, exist_ok=True)  # 不接触用户视频文件。
     samples = output / 'samples'  # 样例使用独立目录。
@@ -49,7 +51,7 @@ def run(destination):  # 源码和便携 EXE 共用验收流程。
         context = window.browsing  # 固定原播放上下文。
         vids = [entry[0] for entry in context.folders[str(samples)][1]]  # 记录自然排序身份。
         window.start(context, (str(samples), 0))  # 开始真实 VLC 解码。
-        check('首条实际播放', wait(lambda: window.resume is None and window.player.get_time() > 500))  # 确认正在读取目标文件。
+        check('首条实际播放', wait(lambda: window.playback.resume is None and window.player.get_time() > 500))  # 确认正在读取目标文件。
         edit = QLineEdit(window)  # 创建文本输入接收者。
         edit.show()  # 确保可以获取焦点。
         edit.setFocus()  # 模拟用户编辑文字。
@@ -82,7 +84,7 @@ def run(destination):  # 源码和便携 EXE 共用验收流程。
             kernel.CloseHandle(handle)  # 解除外部占用后允许重试。
         press()  # 删除正在播放的第一条。
         check('播放占用释放并回收原文件', wait(lambda: not window.busy and window.current == vids[1]) and not first.exists())  # 下一条来自原上下文。
-        check('下一条真正解码播放', wait(lambda: window.resume is None and window.player.get_time() > 500))  # 不只检查当前 ID。
+        check('下一条真正解码播放', wait(lambda: window.playback.resume is None and window.player.get_time() > 500))  # 不只检查当前 ID。
         check('删除身份历史收藏同步清理', not window.store.query('SELECT * FROM videos WHERE id=?', (vids[0],)))  # 无失效收藏记录。
         check('删除不改变原播放上下文', window.context is context and window.browsing.root == str(replacement))  # 浏览与播放继续独立。
         window.load_folder(str(samples))  # 重新显示剩余视频以测试单击选择。
@@ -94,14 +96,14 @@ def run(destination):  # 源码和便携 EXE 共用验收流程。
         QTest.mouseClick(window.tree.viewport(), Qt.LeftButton, Qt.NoModifier, window.tree.visualRect(selected).center())  # 真实鼠标单击选择第三条。
         press()  # 选中优先于当前播放的第二条。
         check('单击选择优先且删除后播放其下一条', wait(lambda: not window.busy and window.current == vids[3]) and not (samples / '3.mp4').exists() and (samples / '2.mp4').exists())  # 不误删正在播放的其他视频。
-        check('第四条实际播放', wait(lambda: window.resume is None and window.player.get_time() > 500))  # 确认自动开始解码。
+        check('第四条实际播放', wait(lambda: window.playback.resume is None and window.player.get_time() > 500))  # 确认自动开始解码。
         archive = Archiver(window.store, output / 'archive')  # 仅使用隔离归档根目录。
         window.player.stop()  # 归档前安全释放测试文件。
         window.player.set_media(None)  # 清除原媒体引用。
         archive.submit(vids[3], 8, ['甲', '乙'])  # 创建真实多标签硬链接。
         paths = [Path(row['path']) for row in window.store.query('SELECT path FROM paths WHERE id=?', (vids[3],)) if Path(row['path']).exists()]  # 收集当前有效入口。
         window.play_path(window.store.resolve(vids[3]), 0, False)  # 从归档入口继续实际播放。
-        check('多标签视频实际播放', wait(lambda: window.resume is None and window.player.get_time() > 300))  # 确认归档文件占用场景。
+        check('多标签视频实际播放', wait(lambda: window.playback.resume is None and window.player.get_time() > 300))  # 确认归档文件占用场景。
         press()  # 删除原上下文最后一条。
         check('全部标签入口回收且末尾停止', wait(lambda: not window.busy and window.current is None) and all(not path.exists() for path in paths))  # 没有下一条时不循环。
         window.grab().save(str(output / 'after-delete.png'))  # 保存实际删除后的界面状态。
