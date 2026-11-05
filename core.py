@@ -447,7 +447,7 @@ class Archiver:  # 使用可重放任务协调数据库和文件系统。
                         raise OSError('目标入口验证失败')  # 未验证不提交分类状态。
                 self.checkpoint(job, plan, 'linked')  # 所有新入口已建立。
                 with self.store.lock, self.store.db:  # 分类和路径映射在同一数据库事务内提交。
-                    self.store.db.execute('UPDATE videos SET score=?,tags=?,archived=1,name=COALESCE(?,name),original_name=COALESCE(original_name,?,name) WHERE id=?', (plan['score'], json.dumps(plan['tags'], ensure_ascii=False), plan.get('name'), plan.get('original_name'), plan['video']))  # 名称、评分、标签和路径同事务提交，也兼容旧版本未完成任务。
+                    self.store.db.execute('UPDATE videos SET score=?,tags=?,archived_at=CASE WHEN archived=0 THEN COALESCE(archived_at,?) ELSE archived_at END,archived=1,name=COALESCE(?,name),original_name=COALESCE(original_name,?,name) WHERE id=?', (plan['score'], json.dumps(plan['tags'], ensure_ascii=False), time.time(), plan.get('name'), plan.get('original_name'), plan['video']))  # 首次成功入库时间与有效路径同事务提交；旧库未知日期及后续整理均保留。
                     if 'favorite' in plan:
                         self.store.db.execute('UPDATE videos SET star=? WHERE id=?', (plan['favorite'], plan['video']))
                     for target in plan['targets']:  # 登记归档卷实际文件身份。
