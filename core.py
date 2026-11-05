@@ -13,7 +13,12 @@ from infrastructure.schema import migrate
 from pathlib import Path  # 统一处理 Windows 路径。
 
 ARCHIVE_ROOT = Path('E:/我觉得是学习资料')  # 固定用户指定的归档根目录。
-EXTENSIONS = {'.mp4', '.mkv', '.avi', '.mov', '.wmv', '.webm', '.m4v', '.mpeg', '.mpg', '.ts'}  # 仅用于候选文件筛选。
+VIDEO_EXTENSIONS = {'.mp4', '.mkv', '.avi', '.mov', '.wmv', '.webm', '.m4v', '.mpeg', '.mpg', '.ts'}  # 交给播放内核的视频容器。
+IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.bmp', '.webp', '.gif', '.tif', '.tiff'}  # 播放区按静态图片展示的格式。
+EXTENSIONS = VIDEO_EXTENSIONS | IMAGE_EXTENSIONS  # 仅用于候选文件筛选。
+
+def media_kind(name):  # 只决定播放区如何展示，不参与文件身份、归档或命名规则。
+    return 'image' if Path(name).suffix.lower() in IMAGE_EXTENSIONS else 'video'  # 视频与未知后缀继续走播放内核。
 
 def natural(value):  # 将数字片段按数值比较。
     return [(1, int(x)) if x.isdigit() else (0, x.casefold()) for x in re.split(r'(\d+)', str(value))]  # 保持中文名称和数字自然顺序。

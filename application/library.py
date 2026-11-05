@@ -230,6 +230,11 @@ class LibraryController:
         self._lists[mode] = [row['id'] for row in rows]
         self._changed('videos')
 
+    def clear_history(self):
+        """Empty the recent list without touching metadata or playback progress."""
+        self.repository.clear_history()
+        self.load_list('videos')
+
     def list_rows(self, mode):
         return [self.details[vid] for vid in self._lists.get(mode, ())]
 

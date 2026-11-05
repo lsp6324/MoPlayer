@@ -38,19 +38,28 @@ def view():
 
 
 def test_player_emits_intents_and_renders_without_application_window(view):
-    play, step, favorite, imports = [QSignalSpy(signal) for signal in
-                                    (view.playRequested, view.stepRequested, view.favoriteRequested, view.importRequested)]
+    play, step, favorite = [QSignalSpy(signal) for signal in
+                            (view.playRequested, view.stepRequested, view.favoriteRequested)]
     view.present_video(PlayerInfo('示例.mp4', 7, ('标签',), True))
     view.present_transport(PlaybackStatus.PLAYING, True, False)
     view.play_button.click()
     view.transport_buttons[0].click()
     view.transport_buttons[2].click()
     view.favorite_button.click()
-    view.empty_import.click()
-    assert play.count() == favorite.count() == imports.count() == 1
+    assert play.count() == favorite.count() == 1
     assert step.count() == 2 and step.at(0) == [-1] and step.at(1) == [1]
     assert view.header.accessibleName() == '示例.mp4' and view.header.accessibleDescription() == '标签，已收藏，7 分'
     assert view.play_button.accessibleName() == '暂停'
+
+
+def test_empty_area_shows_only_the_wordmark(view):
+    assert view.wordmark.isVisible()
+    assert not hasattr(view, 'empty_import'), '空态不再提供导入按钮'
+    image = view.wordmark.grab().toImage()
+    painted = sum(1 for x in range(0, image.width(), 3)
+                  for y in range(0, image.height(), 3)
+                  if image.pixelColor(x, y).alpha() > 0)
+    assert painted, '字标必须绘制出可见像素'
 
 
 def test_switching_same_named_videos_cancels_editor_and_ignores_late_rename(view):

@@ -1188,3 +1188,31 @@ def test_pause_command_waits_for_state_confirmation(window):
         assert window.player_view.play_button.property('iconName') == 'pause'
     finally:
         window.player = real
+
+
+def test_recent_tab_offers_confirmed_history_clearing(window, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+    view = window.library_view
+    view.show_mode('videos')
+    assert view.clear_history_button.isVisible()
+    assert not view.remove_favorite.isVisible()
+    view.show_mode('stars')
+    assert view.remove_favorite.isVisible()
+    assert not view.clear_history_button.isVisible()
+    view.show_mode('videos')
+    assert window.library_controller.list_rows('videos'), '需要先有播放记录'
+
+    asked = []
+
+    def refuse(box):
+        asked.append(box.text())
+        return QMessageBox.No
+
+    monkeypatch.setattr(QMessageBox, 'exec', refuse)
+    window.clear_history()
+    assert asked and '清空' in asked[0], '必须二次确认'
+    assert window.library_controller.list_rows('videos'), '取消后不能清空'
+
+    monkeypatch.setattr(QMessageBox, 'exec', lambda box: QMessageBox.Yes)
+    window.clear_history()
+    assert window.library_controller.list_rows('videos') == []

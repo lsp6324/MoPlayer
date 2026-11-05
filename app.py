@@ -2,7 +2,7 @@ import json  # 读取视频标签和诊断数据。
 import logging  # 记录可追踪的运行错误。
 import sys  # 区分源码和便携运行方式。
 from pathlib import Path  # 处理便携数据路径。
-if len(sys.argv) == 3 and sys.argv[1] in ('--ui-refresh-test', '--seek-notice-test', '--file-workflows-test', '--archive-settings-test', '--media-header-test', '--rename-test', '--continuous-classification-test', '--portable-layout-test', '--storage-test', '--accent-test', '--background-test'):
+if len(sys.argv) == 3 and sys.argv[1] in ('--ui-refresh-test', '--seek-notice-test', '--file-workflows-test', '--archive-settings-test', '--media-header-test', '--rename-test', '--continuous-classification-test', '--portable-layout-test', '--storage-test', '--accent-test', '--background-test', '--image-test'):
     # A windowed EXE has no stderr; keep explicit test failures reviewable.
     _test_output = Path(sys.argv[2]).absolute()
     _test_output.mkdir(parents=True, exist_ok=True)
@@ -18,6 +18,7 @@ from thumbnail_cache import ThumbnailCache
 from application.library import LibraryController
 from infrastructure.library_scanner import LibraryScanner
 from infrastructure.thumbnails import ThumbnailService
+from infrastructure.image_loader import ImageLoader
 from application.operations import Operation, UserActions
 from application.tag_drafts import TagDrafts
 from application.playback import PlaybackSession, PlaybackStatus
@@ -33,7 +34,7 @@ from application.recovery import Recovery
 from application.file_results import FileAction, PlaybackTarget
 from infrastructure.library_repository import LibraryRepository
 from infrastructure.library_watch import LibraryWatch
-from core import Store, Archiver
+from core import Store, Archiver, media_kind
 from video_delete import DeletionManager  # 以可恢复任务回收全部登记入口。
 from tag_migration import TagMigration  # 以可恢复批次同步全局标签层级。
 from archive_settings_dialog import ArchiveSettingsDialog
@@ -61,6 +62,9 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
         self.thumbnail_service = ThumbnailService(self.store.directory, self.catalog.resolve, BUNDLE)
         self.thumbnails = ThumbnailCache(self.thumbnail_service, lambda: self.busy, self)
         self.context, self.location, self.current = None, None, None
+        self.current_kind = 'video'  # 当前项交给播放内核还是图片展示层。
+        self.image_serial = 0  # 只接受最新一次图片读取结果。
+        self.image_loader = ImageLoader()
         self.jobs, self.busy = [], False
         self.library_controller = LibraryController(self.catalog, LibraryScanner(self.store),
             lambda function, callback: self.work(function, callback),
@@ -119,13 +123,13 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
         self.library_view.pathDropped.connect(self.import_library_path)
         self.library_view.videoRequested.connect(self.open_library_video)
         self.library_view.unfavoriteRequested.connect(self.remove_library_favorite)
+        self.library_view.historyClearRequested.connect(self.clear_history)
         self.setWindowIcon(QIcon(str(BUNDLE / 'assets/yunli.ico')))  # 窗口与任务栏使用同一云璃 Q 版图标。
         self.player.set_hwnd(self.player_view.video_handle())
         self.player.audio_set_volume(80)
         self.player_view.playRequested.connect(self.toggle)
         self.player_view.stepRequested.connect(self.advance)
         self.player_view.seekRequested.connect(self.seek_fraction)
-        self.player_view.importRequested.connect(self.library_view.choose_folder)
         self.player_view.sidebarRequested.connect(self.toggle_sidebar)
         self.player_view.favoriteRequested.connect(lambda: self.favorite(toggle=True))
         self.player_view.ratingRequested.connect(self.set_rating)
@@ -224,6 +228,8 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
 
 
     def save(self, *, before_release=False):
+        if self.current_kind == 'image':
+            return  # 静态图片没有可续播的位置。
         if self.current and (before_release or not self.file_tasks.media_released):
             position = self.playback.position_to_save(
                 self.player.get_time(), ended=self.player.get_state() == self.vlc.State.Ended)
@@ -246,14 +252,43 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
             return
         self.save()
         self.library_controller.cancel_playback_requests()
-        previous = self.current
+        previous, previous_kind = self.current, self.current_kind
         self.context, self.location, self.current = context, location, vid
+        self.current_kind = media_kind(path)
         self.library_view.playback_changed(previous, vid)
         self.catalog.mark_played(vid)
-        self.play_path(path, self.catalog.video(vid)['position'], False)
+        if self.current_kind == 'image':
+            self._load_image(vid, path, switching=previous_kind != 'image')
+        else:
+            self.play_path(path, self.catalog.video(vid)['position'], False)
         self.refresh_title()
 
+    def _load_image(self, vid, path, *, switching=False):
+        """Show one still image; the playback kernel keeps no media."""
+        self.playback.clear()
+        if switching:  # 从视频切来时先释放画面，图片层才能显示。
+            self.player.stop()
+            self.player.set_media(None)
+            self.player_view.media_loading()
+        self.image_serial += 1
+        serial = self.image_serial
+        self.work(lambda: self.image_loader.read(path),
+                  lambda image, error: self._image_loaded(vid, serial, image, error))
+
+    def _image_loaded(self, vid, serial, image, error):
+        if serial != self.image_serial or self.current != vid:
+            return  # 晚到的读取结果不覆盖当前媒体。
+        if error is not None:
+            self.clear_player()
+            self.fail(error)
+            return
+        self.player_view.present_image(image)
+        self.refresh_transport()
+
     def play_path(self, path, position, paused):
+        self.current_kind = 'video'
+        self.image_serial += 1  # 丢弃仍在读取的图片结果。
+        self.player_view.present_image(None)
         self.playback.begin(position, paused, source=str(path))
         self.player_view.media_loading()
         self.player.stop()
@@ -264,7 +299,9 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
         self.refresh_transport()
 
     def refresh_transport(self, state=None):
-        state = self.player.get_state() if state is None and self.current else state
+        still = self.current_kind == 'image' and self.current is not None
+        if state is None and not still and self.current:
+            state = self.player.get_state()
         status = {
             self.vlc.State.Opening: PlaybackStatus.LOADING,
             self.vlc.State.Buffering: PlaybackStatus.LOADING,
@@ -273,7 +310,8 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
             self.vlc.State.Ended: PlaybackStatus.ENDED,
             self.vlc.State.Error: PlaybackStatus.ERROR,
         }.get(state, PlaybackStatus.IDLE)
-        self.player_view.present_transport(status, bool(self.current), self.file_tasks.media_released, file_busy=self.busy)
+        self.player_view.present_transport(status, bool(self.current), self.file_tasks.media_released,
+                                           file_busy=self.busy, still=still)
 
     def refresh_title(self):
         video = self.catalog.video(self.current) if self.current else None
@@ -291,6 +329,8 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
         return None
 
     def set_playback_rate(self, rate):
+        if self.current_kind == 'image':
+            return  # 图片没有播放速度。
         try:
             if self.player.set_rate(rate) == -1:
                 raise ValueError('当前视频无法应用此播放速度。')
@@ -304,6 +344,23 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
     def remove_library_favorite(self, video_id):
         self.classification.favorite(video_id, False)
 
+    def clear_history(self):
+        """Confirm before dropping the recent list; nothing else is rewritten."""
+        box = QMessageBox(self)
+        box.setWindowTitle('清空最近记录')
+        box.setText('清空“最近”里的全部播放记录？\n视频文件、标签、评分、收藏和续播进度都不会改变。')
+        box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        accept, cancel = box.button(QMessageBox.Yes), box.button(QMessageBox.No)
+        if accept is not None:
+            accept.setText('清空')
+        if cancel is not None:
+            cancel.setText('取消')
+        box.setDefaultButton(QMessageBox.No)
+        if box.exec() != QMessageBox.Yes:
+            return
+        self.library_controller.clear_history()
+        self.message('已清空播放记录。')
+
     def toggle_sidebar(self):
         if self.player_view.fullscreen.active:
             return
@@ -316,6 +373,8 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
 
     def tick(self):
         self.cleanup.request()
+        if self.current_kind == 'image':
+            return  # 静态图片没有可轮询的播放状态。
         state = self.player.get_state() if self.current else self.vlc.State.NothingSpecial
         self.refresh_transport(state)
         if not self.current or self.file_tasks.media_released:
@@ -364,6 +423,8 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
         operation.on_finished(ready)
 
     def toggle(self):  # 空格或按钮切换暂停状态。
+        if self.current_kind == 'image':
+            return  # 图片没有暂停状态。
         if self.current and not self.file_tasks.media_released:
             if self.player.get_state() == self.vlc.State.Ended:  # 已结束时重新从头播放。
                 self.play_path(self.catalog.resolve(self.current), 0, False)  # 重播仍使用当前身份。
@@ -432,6 +493,8 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
     def clear_player(self):
         self.player_view.seek_notice.clear()
         previous, self.current = self.current, None
+        self.current_kind = 'video'
+        self.image_serial += 1  # 让仍在读取的图片结果失效。
         self.library_view.playback_changed(previous, None)
         self.playback.clear()
         self.refresh_title()
@@ -537,7 +600,7 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
         video = self.catalog.video(self.current) if self.current else None
         bookmark = (self.current, video['position'] if video else 0,
                     self.playback.paused_intent(self.player.get_state() != self.vlc.State.Playing),
-                    policy.release_media)
+                    policy.release_media, self.current_kind)
         self.busy = True
         self.thumbnail_service.pause(True)
         self.refresh_transport()
@@ -558,13 +621,18 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
     def _end_file_task(self, bookmark):
         self.busy = False
         self.thumbnail_service.pause(False)
-        vid, position, paused, released = bookmark
+        vid, position, paused, released, kind = bookmark
         if released and vid:
             if self.catalog.video(vid) is None:
                 self.clear_player()
             else:
                 try:
-                    self.play_path(self.catalog.resolve(vid), position, paused)
+                    path = self.catalog.resolve(vid)
+                    if kind == 'image':
+                        self.current_kind = 'image'
+                        self._load_image(vid, path, switching=True)
+                    else:
+                        self.play_path(path, position, paused)
                 except OSError:
                     self.clear_player()
                     raise
@@ -727,6 +795,9 @@ if __name__ == '__main__':  # 仅直接运行时启动应用。
         sys.exit(run(sys.argv[2]))
     if len(sys.argv) == 3 and sys.argv[1] == '--background-test':
         from verify_background import run
+        sys.exit(run(sys.argv[2]))
+    if len(sys.argv) == 3 and sys.argv[1] == '--image-test':
+        from verify_image_media import run
         sys.exit(run(sys.argv[2]))
     if len(sys.argv) == 3 and sys.argv[1] == '--accent-test':
         from verify_accent import run

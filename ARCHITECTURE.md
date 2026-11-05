@@ -32,6 +32,7 @@
 | infrastructure/library_scanner.py | 将既有扫描及 Snapshot 导航规则适配为资料库应用接口；统一拖放候选校验，执行前重新检查文件并固定视频身份，单视频扫描父目录。格式沿用 core.EXTENSIONS，不改变扫描、身份或播放顺序。 |
 | infrastructure/library_watch.py | Qt 目录监听、400ms 通知合并、失败/忙碌重试；监听扫描内目录及根的最近现存父级，2 秒探测根和未成功监听的目录以补偿遗漏。只请求控制器刷新，不读控件或拥有浏览/播放快照。关闭时停止监听和调度。 |
 | infrastructure/thumbnails.py | 缩略图磁盘缓存、FFmpeg 子进程和文件任务期间的暂停/删除屏障，不访问控件。 |
+| infrastructure/image_loader.py | QImageReader 读取静态图片：应用 EXIF 方向、按长边降采样；由调用方放到工作线程，不接触控件、播放状态或数据库。 |
 | ui.py / floating_surface.py / hover_panel.py | UI 基础图形、透明工具窗、共享悬停与焦点规则。 |
 | accent_colors.py / color_picker.py | 前者纯 RGB 校验、预设及可读颜色角色推导；后者独立预设色块、色相/饱和明度色板和 RGB 控件，只发出颜色意图，不访问窗口、偏好或播放器。 |
 | appearance.BackgroundCanvas / background_region.py | 画布拥有背景像素、强度与全窗裁切；BackgroundRegion 只通过注入的绘制端口呈现同一画布局部，供原生视频宿主上方的空闲区域使用，不查询存储或媒体。背景变更刷新主题透明角色，尺寸变更仅使空闲区重绘，不移动/重建视频宿主。 |
@@ -40,6 +41,8 @@
 | folder_navigation.py | 独立路径导航组件；导入根边界内的上一级、可点击路径、长路径折叠菜单与提示，只发目录意图，不持有资料库或播放对象。按钮在绘制时省略文本，不用截断文本反复改变布局尺寸。 |
 | library_views.py / thumbnail_cache.py / background_work.py | 单目录 FolderModel、最近/收藏 VideoListModel 与行绘制、保留拖放的 DropList、Qt 图像缓存、工作线程结果交付。FolderModel 的可见行保留快照原索引，绘制只读取模型准备好的元数据。 |
 | player_view.py | 播放区控件、元数据展示、时间轴展示、浮层与全屏 UI 装配；接收 PlayerInfo / PlaybackStatus 与进度，发出操作意图，不读数据库或具体播放器。 |
+| image_view.py | 静态图片展示：适应/100% 两态、指针锚点滚轮缩放、拖拽平移与边界限制；只接收已解码像素，不读存储、播放器或窗口业务属性。 |
+| wordmark.py | 空闲播放区的字标：Bahnschrift 粗体 Mo、细体 Player 与强调色播放箭头，矢量绘制；只接收主题颜色，不读播放器、资料库或窗口业务属性。 |
 | media_header.py / heart_rating.py | 前者绘制共用两行标题，并通过显式回调提供普通标题原位编辑，拥有输入焦点、错误展示及过期结果隔离；后者提供交互式评分及共用半心绘制。只读取展示数据与操作结果。 |
 | layout.py / playback_controls.py / playback_options.py / tag_popover.py | 窗口组合、响应式控制行和功能浮层；音量、静音、倍速和评分通过信号请求，倍率成功后才更新展示。 |
 | video_fullscreen.py / video_cursor.py / window_chrome.py | 全屏展示与 Windows 原生窗口、光标适配。 |
@@ -60,6 +63,8 @@
 - `PlaybackSession` 拥有续播意图和未确认跳转；UI 时间轴只负责平滑显示，不能成为播放器实际状态的来源。
 - `PlaybackSession.source` 表示当前实际打开的文件路径，分类后不改成新的逻辑归档路径；释放媒体或打开下一片时更新保护。FileTasks.media_released 与 Window 的文件/导航 busy 分工不同；PlayerView 分别接受播放阻塞和分类编辑阻塞，不能因后台分类冻结进度。
 - `PlayerView` 拥有播放区及其展示组件。PlayerInfo、最后一次呈现的 PlaybackStatus、时长、音量和倍率选择仅用于展示，不决定视频身份、任务准入或进度持久化。实际播放命令、状态读取和文件任务规则仍由窗口适配与应用会话处理。
+- 静态图片与视频共用同一浏览快照、稳定 ID 和 Z/X 切换顺序。`core.media_kind` 只按已登记扩展名分类，`Window.current_kind` 是该事实的唯一所有者；图片经 `ImageLoader` 在工作线程解码后交给 `PlayerView.present_image`，窗口既不启动播放内核，也不轮询其状态、不写续播进度。图片模式的展示差异（进度条与播放按钮禁用、徽标显示“图片”）由 `present_transport(still=True)` 表达，分类、评分、收藏、改名和全屏继续可用。缩放、平移和适应窗口只属于 `ImageView` 的展示状态，不参与任务准入或持久化。
+- 空闲播放区由 `Wordmark` 承担，替代原来的播放图标与“导入文件夹”按钮：`Mo` 用 Bahnschrift Bold、`Player` 用同族 Light，前置强调色箭头，全部按当前 DPI 矢量绘制。它只接收 `apply_theme` 传入的深底文字色与 `colors_for('dark', accent_source)` 的强调色，因为空闲区背景始终是深色画面；导入入口保留为左侧加号与拖放，不恢复空态按钮。
 - 主题及全屏切换通过明确的状态刷新信号取得最新播放状态，由同一入口绘制播放按钮。标题/收藏/评分只更新展示；拖动时间轴只预览，释放时发出比例意图，窗口按实际时长请求一次定位。VLC 倍速请求失败保持已接受的选择。
 - 全屏组件只接收 Qt 宿主、PlayerView、画布和分隔器，不读取窗口业务属性。全屏继续复用同一控制栏，不重新创建或移动原生视频宿主；播放区的普通标题和全屏标题共用同一份展示输入。
 - `LibraryController` 拥有浏览和异步资料库任务。新目录扫描取消旧目录扫描，旧回调不能发布快照、历史目录或播放请求。用户取消保留原目录；取消按钮反映全部资料库任务，单个任务结束不能隐藏仍在工作的其他任务。
@@ -97,7 +102,7 @@ package_release 只接收已验证的目录部署包，排除 data、video、por
 
 ## 自动守卫与验证
 
-`tests/test_architecture.py` 检查模块归类、应用层依赖、基础组件依赖方向、完整生产导入图（包含函数内导入）、UI SQL、绘制中的资料库访问，以及已迁出状态和资料库/播放区控件的所有权。播放视图及浮层另有禁止具体播放器、资料库和窗口业务访问的守卫。不得为新增功能放宽这些规则来保留错误依赖。
+`tests/test_architecture.py` 检查模块归类、应用层依赖、基础组件依赖方向、完整生产导入图（包含函数内导入）、UI SQL、绘制中的资料库访问，以及已迁出状态和资料库/播放区控件的所有权。播放视图及浮层另有禁止具体播放器、资料库和窗口业务访问的守卫，静态图片展示组件同样纳入该规则。不得为新增功能放宽这些规则来保留错误依赖。
 
 GitHub workflow `.github/workflows/architecture.yml` 在 push 和 pull request 时运行架构守卫、纯应用协议（含扫描、取消、过期回调和浏览/播放独立性）及资料库适配器测试，无需安装 Qt 或 VLC。该 workflow 提供持续检查；是否将其设为受保护分支的必需检查属于仓库管理设置，当前未变更该设置。
 

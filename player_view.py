@@ -6,7 +6,7 @@ tasks never derive their state from these widgets.
 from dataclasses import dataclass
 from string import Template
 from PySide6.QtCore import Qt, Signal, QSize
-from PySide6.QtWidgets import QWidget, QFrame, QLabel, QVBoxLayout, QHBoxLayout, QAbstractButton
+from PySide6.QtWidgets import QWidget, QFrame, QVBoxLayout, QHBoxLayout, QAbstractButton
 from PySide6.QtGui import QColor
 from application.playback import PlaybackStatus
 from media_header import MediaHeader
@@ -17,7 +17,9 @@ from seek_notice import SeekNotice
 from video_fullscreen import VideoFullscreen
 from floating_surface import owned_by
 from background_region import BackgroundRegion
-from theme import STYLE_TEMPLATE, TOKENS
+from image_view import ImageView
+from wordmark import Wordmark
+from theme import STYLE_TEMPLATE, TOKENS, colors_for
 from ui import icon, label, button, format_time
 
 
@@ -34,7 +36,6 @@ class PlayerView(QFrame):
     playRequested = Signal()
     stepRequested = Signal(int)
     seekRequested = Signal(float)
-    importRequested = Signal()
     sidebarRequested = Signal()
     fullscreenRequested = Signal()
     favoriteRequested = Signal()
@@ -47,7 +48,7 @@ class PlayerView(QFrame):
     def __init__(self, host, popup_host, splitter, drafts, rating_source, *, paint_background=None):
         super().__init__(host)
         self._info = None
-        self._transport = (PlaybackStatus.IDLE, False, False)
+        self._transport = (PlaybackStatus.IDLE, False, False, False)
         self._duration = 0
         self.normal_colors = TOKENS
 
@@ -79,17 +80,13 @@ class PlayerView(QFrame):
         self.player_empty.setAttribute(Qt.WA_StyledBackground)
         empty = QVBoxLayout(self.player_empty)
         empty.setAlignment(Qt.AlignCenter)
-        empty.setSpacing(20)
-        emblem = QLabel()
-        emblem.setFixedSize(56, 56)
-        emblem.setPixmap(icon('play', '#424a59', 48).pixmap(48, 48))
-        emblem.setAlignment(Qt.AlignCenter)
-        empty.addWidget(emblem, 0, Qt.AlignHCenter)
-        self.empty_import = button('导入文件夹', lambda: self.importRequested.emit(), 'plus', 'primary')
-        self.empty_import.setFixedHeight(38)
-        self.empty_import.setToolTip('也可将文件夹拖入左侧列表')
-        empty.addWidget(self.empty_import, 0, Qt.AlignHCenter)
+        empty.setSpacing(0)
+        self.wordmark = Wordmark()
+        empty.addWidget(self.wordmark)
         surface_layout.addWidget(self.player_empty)
+        self.image_view = ImageView()
+        self.image_view.hide()
+        surface_layout.addWidget(self.image_view)
         player.addWidget(self.surface, 1)
 
         self.playback_panel = QWidget()
@@ -175,26 +172,32 @@ class PlayerView(QFrame):
     def video_handle(self):
         return int(self.surface.winId())
 
-    def present_transport(self, status, loaded, busy, *, file_busy=None):
-        self._transport = status, loaded, busy
+    def present_transport(self, status, loaded, busy, *, file_busy=None, still=False):
+        self._transport = status, loaded, busy, still
         file_busy = busy if file_busy is None else file_busy
         self.header.set_rename_available(loaded and not file_busy)
         for control in self.transport_buttons:
-            control.setEnabled(loaded and not busy)
+            # 图片没有播放和暂停，但仍要用上一个、下一个翻页。
+            control.setEnabled(loaded and not busy and (not still or control is not self.play_button))
         for control in self.classify_buttons:
             control.setEnabled(loaded and not file_busy)
-        self.seekbar.setEnabled(loaded and not busy)
-        self.media_badge.setText({PlaybackStatus.PLAYING: '正在播放', PlaybackStatus.PAUSED: '已暂停',
-                                 PlaybackStatus.ENDED: '播放结束', PlaybackStatus.IDLE: '等待播放'}.get(status, '正在加载'))
+        self.seekbar.setEnabled(loaded and not busy and not still)
+        if still:
+            self.media_badge.setText('图片')
+            self.time_label.setText('图片')
+            self.seekbar.hold(0, 0)
+        else:
+            self.media_badge.setText({PlaybackStatus.PLAYING: '正在播放', PlaybackStatus.PAUSED: '已暂停',
+                                     PlaybackStatus.ENDED: '播放结束', PlaybackStatus.IDLE: '等待播放'}.get(status, '正在加载'))
         self._render_transport()
 
     def _render_transport(self, force=False):
-        status, loaded, busy = self._transport
+        status, loaded, busy, still = self._transport
         running = loaded and status in (PlaybackStatus.LOADING, PlaybackStatus.PLAYING)
         symbol = 'pause' if running else 'play'
         action = '暂停' if running else '重新播放' if status is PlaybackStatus.ENDED and loaded else '播放'
         tooltip = action + ' · 空格'
-        self.play_button.setEnabled(loaded and not busy)
+        self.play_button.setEnabled(loaded and not busy and not still)
         if force or self.play_button.property('iconName') != symbol or self.play_button.toolTip() != tooltip:
             self.play_button.setProperty('iconName', symbol)
             colors = self.fullscreen.colors if self.fullscreen.active else self.normal_colors
@@ -229,10 +232,23 @@ class PlayerView(QFrame):
         self.options.dismiss()
         self.seek_notice.clear()
         self.player_empty.hide()
+        self.present_image(None)
+
+    def present_image(self, image):
+        """Show decoded still pixels, or drop the image layer for playback."""
+        if image is None:
+            self.image_view.clear()
+            self.image_view.hide()
+            return
+        self.player_empty.hide()
+        self.image_view.set_image(image)
+        self.image_view.show()
+        self.image_view.setFocus()
 
     def clear_media(self):
         self.present_video(None)
         self.present_transport(PlaybackStatus.IDLE, False, False)
+        self.present_image(None)
         self.player_empty.show()
         self.media_badge.setText('等待播放')
         self._duration = 0
@@ -289,11 +305,13 @@ class PlayerView(QFrame):
 
     def apply_theme(self, colors):
         self.normal_colors = colors
+        # 空闲区始终是深色画面，字标要用深底可读的对比，强调色仍跟随用户选择。
+        dark = colors_for('dark', colors['accent_source'])
+        self.wordmark.set_colors(dark['text_strong'], dark['text_faint'], dark['accent'])
         self.update_background()
         self.header.apply_colors(colors)
         self.transportRefreshRequested.emit()
-        from theme import colors_for
-        self.fullscreen.apply_theme(colors_for('dark',colors['accent_source']))
+        self.fullscreen.apply_theme(colors_for('dark', colors['accent_source']))
         effective = self.fullscreen.colors if self.fullscreen.active else colors
         roots = (self, self.playback_panel, *self.options.panels)
         for root in roots:

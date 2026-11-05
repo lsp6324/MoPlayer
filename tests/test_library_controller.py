@@ -37,6 +37,10 @@ class Repository:
     def set_favorite(self, vid, value):
         self.rows[vid]['star'] = int(value)
 
+    def clear_history(self):
+        for row in self.rows.values():
+            row['played'] = 0
+
 
 class Scanner:
     def __init__(self):
@@ -363,3 +367,16 @@ def test_reentrant_choice_during_cancellation_keeps_latest_scan():
     finish(tasks[1])
     finish(tasks[0])
     assert library.browsing.root == 'C'
+
+
+def test_clear_history_empties_recent_but_keeps_metadata_and_favorites():
+    library, repo, _, _ = controller()
+    repo.rows['a'].update(played=9, star=1, score=8)
+    library.load_list('videos')
+    library.load_list('stars')
+    assert len(library.list_rows('videos')) == 3
+    library.clear_history()
+    assert library.list_rows('videos') == []
+    assert [row['id'] for row in library.list_rows('stars')] == ['a']
+    assert repo.rows['a']['score'] == 8 and repo.rows['a']['star'] == 1
+    assert all(row['played'] == 0 for row in repo.rows.values())

@@ -24,6 +24,7 @@ class LibraryView(QFrame):
     pathDropped = Signal(str)
     videoRequested = Signal(object)
     unfavoriteRequested = Signal(str)
+    historyClearRequested = Signal()
 
     def __init__(self, controller, thumbnails, current_video, theme_owner):
         super().__init__(theme_owner)
@@ -84,8 +85,12 @@ class LibraryView(QFrame):
         self.cancel_button.hide()
         self.remove_favorite = button('取消收藏', self._remove_favorite, 'star', 'quiet')
         self.remove_favorite.hide()
+        self.clear_history_button = button('清空记录', self.historyClearRequested.emit, 'history', 'quiet')
+        self.clear_history_button.setToolTip('清空“最近”里的播放记录')
+        self.clear_history_button.hide()
         layout.addWidget(self.cancel_button)
         layout.addWidget(self.remove_favorite)
+        layout.addWidget(self.clear_history_button)
         controller.subscribe(self.render)
 
     def choose_folder(self):
@@ -105,6 +110,7 @@ class LibraryView(QFrame):
         self.folder_navigation.setVisible(mode == 'files')
         self.file_count.setVisible(mode == 'files')
         self.remove_favorite.setVisible(mode == 'stars')
+        self.clear_history_button.setVisible(mode == 'videos')
 
     @staticmethod
     def _sync_view(view, sync):

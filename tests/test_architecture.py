@@ -7,9 +7,9 @@ import re
 ROOT = Path(__file__).resolve().parents[1]
 UI = {
     'accent_colors', 'color_picker', 'appearance_dialog', 'archive_settings_dialog', 'appearance', 'background_region', 'background_work', 'file_open', 'floating_surface', 'heart_rating',
-    'hover_panel', 'folder_navigation', 'layout', 'library_view', 'library_views', 'media_header', 'player_view', 'playback_controls', 'playback_options',
+    'hover_panel', 'folder_navigation', 'image_view', 'layout', 'library_view', 'library_views', 'media_header', 'player_view', 'playback_controls', 'playback_options',
     'score_editor', 'seek_notice', 'seek_slider', 'tag_editor', 'tag_popover',
-    'theme', 'thumbnail_cache', 'ui', 'video_cursor', 'video_fullscreen', 'window_chrome',
+    'theme', 'thumbnail_cache', 'ui', 'video_cursor', 'video_fullscreen', 'window_chrome', 'wordmark',
 }
 LEGACY = {'core', 'tag_migration', 'video_delete', 'storage_settings'}
 BOOTSTRAP = {'app', 'runtime'}
@@ -29,6 +29,8 @@ FOUNDATION_IMPORTS = {
     'media_header': {'heart_rating', 'ui'},
     'background_work': set(),
     'thumbnail_cache': {'background_work'},
+    'image_view': set(),
+    'wordmark': set(),
 }
 
 
@@ -138,7 +140,8 @@ def test_window_does_not_reclaim_application_or_thumbnail_owned_state():
              'deleting_ids', 'deleted_ids', 'browsing', 'video_details',
              'scan_cancel', 'scan_serial', 'navigation_cancel', 'navigation_pending',
              'tree', 'current_folder', '_folder_positions', 'folder_navigation', 'sidebar', 'sidebar_mode', 'sidebar_list', 'sidebar_tabs',
-             'folder_label', 'file_count', 'library_stack', 'cancel_button', 'remove_favorite'}
+             'folder_label', 'file_count', 'library_stack', 'cancel_button', 'remove_favorite',
+             'clear_history_button'}
     modules = production_modules()
     for name in ('app', 'layout'):
         for node in ast.walk(modules[name]):
@@ -159,7 +162,7 @@ def test_library_controls_and_task_state_stay_with_their_owners():
 
 def test_player_widgets_and_rendering_are_not_owned_by_window_or_layout():
     controls = {'surface', 'player_header', 'header', 'now', 'metadata', 'media_badge',
-                'player_empty', 'empty_import', 'playback_panel', 'seekbar', 'time_label',
+                'player_empty', 'empty_import', 'image_view', 'wordmark', 'playback_panel', 'seekbar', 'time_label',
                 'control_row', 'transport_buttons', 'play_button', 'playback_options',
                 'volume', 'volume_button', 'speed_button', 'sidebar_toggle', 'fullscreen_button',
                 'classify_bar', 'classify_buttons', 'tags_button', 'rating_button', 'favorite_button',
@@ -177,7 +180,7 @@ def test_player_widgets_and_rendering_are_not_owned_by_window_or_layout():
 
 def test_player_presentation_has_no_backend_or_repository_access():
     modules = production_modules()
-    for name in ('media_header', 'player_view', 'playback_options', 'video_fullscreen', 'seek_notice'):
+    for name in ('media_header', 'player_view', 'playback_options', 'video_fullscreen', 'seek_notice', 'image_view', 'wordmark'):
         dependencies = imports(modules[name], name)
         assert not any(dep.split('.')[0] in {'app', 'core', 'infrastructure', 'runtime', 'vlc', 'sqlite3'} for dep in dependencies), name
         for node in ast.walk(modules[name]):

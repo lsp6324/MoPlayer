@@ -49,6 +49,10 @@ class LibraryRepository:
     def mark_played(self, video_id):
         self.store.execute('UPDATE videos SET played=? WHERE id=?', (time.time(), video_id))
 
+    def clear_history(self):
+        """Drop the recent-play history; files, tags, scores, stars and progress stay."""
+        self.store.execute('UPDATE videos SET played=0')
+
     def remember_folder(self, folder):
         self.store.execute('INSERT OR REPLACE INTO folders VALUES(?,?)', (str(Path(folder).absolute()), time.time()))
 
