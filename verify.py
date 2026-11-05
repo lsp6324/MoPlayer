@@ -111,17 +111,16 @@ def run(destination):  # 执行源码与便携版共用的实际验收。
         mime = QMimeData()  # 构造来自文件管理器的本地 URL 数据。
         mime.setUrls([QUrl.fromLocalFile(str(source))])  # 每次仅拖入一个根文件夹。
         drag_event = QDragEnterEvent(QPoint(20, 20), Qt.CopyAction, mime, Qt.LeftButton, Qt.NoModifier)  # 模拟进入左侧目录区域。
-        app.sendEvent(window.library_view.tree.viewport(), drag_event)  # 经 Qt 事件分发而非直接调用导入函数。
+        app.sendEvent(window.library_view.files.viewport(), drag_event)  # 经 Qt 事件分发而非直接调用导入函数。
         check('左侧接受文件夹拖放', drag_event.isAccepted())  # 验证实际拖放过滤规则。
         drop_event = QDropEvent(QPointF(20, 20), Qt.CopyAction, mime, Qt.LeftButton, Qt.NoModifier)  # 构造实际释放事件。
-        app.sendEvent(window.library_view.tree.viewport(), drop_event)  # 触发左侧导入信号和异步扫描。
+        app.sendEvent(window.library_view.files.viewport(), drop_event)  # 触发左侧导入信号和异步扫描。
         check('异步目录加载', wait_until(lambda: window.library_controller.browsing and window.library_controller.browsing.root == str(source)))  # 等待实际发布目录树。
         context = window.library_controller.browsing  # 保存原始浏览快照。
         folder = str(source / '第1组')  # 选择第一组视频。
-        root_index = window.library_view.tree.model().index(0, 0)  # 获取可见根节点。
-        folder_index = window.library_view.tree.model().index(0, 0, root_index)  # 获取第一个子目录。
-        video_index = window.library_view.tree.model().index(0, 0, folder_index)  # 获取自然排序的第一部视频。
-        window.library_view.tree.doubleClicked.emit(video_index)  # 触发实际双击信号连接。
+        window.library_view.browse_folder(folder)
+        video_index = window.library_view.files.model().index(0, 0)
+        window.library_view.files.doubleClicked.emit(video_index)  # 触发实际双击信号连接。
         check('双击播放接线', wait_until(lambda: window.player.get_time() > 300))  # 验证右侧开始播放。
         original = window.current  # 保存当前视频身份。
         window.load_folder(str(output / 'samples'))  # 播放时替换浏览目录。
@@ -141,7 +140,7 @@ def run(destination):  # 执行源码与便携版共用的实际验收。
         original_sizes = window.canvas.findChild(QSplitter).sizes()  # 记录用户工作区比例。
         QTest.keyClick(window.player_view.surface, Qt.Key_Return)  # 发送 Enter 全屏。
         app.processEvents()  # 等待全屏窗口与原生视频重新布局。
-        check('仅视频全屏隐藏目录', window.isFullScreen() and not window.library_view.tree.isVisible() and window.player_view.surface.isVisible())  # 按用户修订要求隐藏目录。
+        check('仅视频全屏隐藏目录', window.isFullScreen() and not window.library_view.files.isVisible() and window.player_view.surface.isVisible())  # 按用户修订要求隐藏目录。
         check('全屏画面铺满窗口', window.player_view.surface.width() >= window.width() - 2 and window.player_view.surface.height() >= window.height() - 2)  # 不保留卡片留白和其他应用区域。
         check('全屏保留视频句柄和暂停状态', int(window.player_view.surface.winId()) == original_handle and window.player.get_state() == vlc.State.Paused and window.context is context and window.current == original)  # 不重载或改变播放身份。
         QTest.keyClick(window.player_view.surface, Qt.Key_A)  # 视频全屏仍接受 A 后退。
@@ -176,14 +175,14 @@ def run(destination):  # 执行源码与便携版共用的实际验收。
         check('Esc 优先关闭弹窗保留全屏', not fullscreen_modal.isVisible() and window.isFullScreen())  # 不让同一个 Esc 同时退出两层状态。
         QTest.keyClick(window.player_view.surface, Qt.Key_Escape)  # 发送 Esc 退出全屏。
         app.processEvents()  # 等待普通布局恢复。
-        check('Esc 退出并恢复目录和控制栏', not window.isFullScreen() and window.library_view.tree.isVisible() and window.player_view.playback_panel.parentWidget() is window.player_view.surface.parentWidget())  # 恢复同一套工作控件。
+        check('Esc 退出并恢复目录和控制栏', not window.isFullScreen() and window.library_view.files.isVisible() and window.player_view.playback_panel.parentWidget() is window.player_view.surface.parentWidget())  # 恢复同一套工作控件。
         check('退出全屏恢复窗口大小与目录比例', window.geometry() == original_geometry and window.player_view.fullscreen.splitter.sizes() == original_sizes)  # 不丢失用户进入前布局。
         QTest.mouseClick(window.player_view.fullscreen_button, Qt.LeftButton)  # 验证可见按钮与 Enter 使用同一实现。
         app.processEvents()  # 应用按钮进入全屏。
-        check('全屏按钮进入视频模式', window.isFullScreen() and not window.library_view.tree.isVisible())  # 不仅验证快捷键。
+        check('全屏按钮进入视频模式', window.isFullScreen() and not window.library_view.files.isVisible())  # 不仅验证快捷键。
         QTest.keyClick(window.player_view.surface, Qt.Key_Return)  # 再按 Enter 应退出全屏。
         app.processEvents()  # 应用恢复布局。
-        check('Enter 再次退出全屏', not window.isFullScreen() and window.library_view.tree.isVisible())  # 支持直接切换而非只进不出。
+        check('Enter 再次退出全屏', not window.isFullScreen() and window.library_view.files.isVisible())  # 支持直接切换而非只进不出。
         QTest.keyClick(window.player_view.surface, Qt.Key_W)  # 收藏当前视频。
         QTest.keyClick(window.player_view.surface, Qt.Key_W)  # 重复收藏不新增身份。
         check('W 幂等收藏', len(window.store.query('SELECT * FROM videos WHERE star=1')) == 1)  # 只有一条收藏。

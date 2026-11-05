@@ -7,7 +7,7 @@ import re
 ROOT = Path(__file__).resolve().parents[1]
 UI = {
     'accent_colors', 'color_picker', 'appearance_dialog', 'archive_settings_dialog', 'appearance', 'background_region', 'background_work', 'file_open', 'floating_surface', 'heart_rating',
-    'hover_panel', 'layout', 'library_view', 'library_views', 'media_header', 'player_view', 'playback_controls', 'playback_options',
+    'hover_panel', 'folder_navigation', 'layout', 'library_view', 'library_views', 'media_header', 'player_view', 'playback_controls', 'playback_options',
     'score_editor', 'seek_notice', 'seek_slider', 'tag_editor', 'tag_popover',
     'theme', 'thumbnail_cache', 'ui', 'video_cursor', 'video_fullscreen', 'window_chrome',
 }
@@ -18,6 +18,7 @@ TOOLS = {
     'register_player', 'repair_thumbnails', 'run_isolated_desktop', 'setup_explorer_thumbnails',
 }
 FOUNDATION_IMPORTS = {
+    'folder_navigation': {'ui'},
     'background_region': set(),
     'accent_colors': set(),
     'color_picker': {'accent_colors'},
@@ -136,7 +137,7 @@ def test_window_does_not_reclaim_application_or_thumbnail_owned_state():
              'thumbnail_guard', 'thumbnail_processes', 'file_task_thumbnail_pause',
              'deleting_ids', 'deleted_ids', 'browsing', 'video_details',
              'scan_cancel', 'scan_serial', 'navigation_cancel', 'navigation_pending',
-             'tree', 'sidebar', 'sidebar_mode', 'sidebar_list', 'sidebar_tabs',
+             'tree', 'current_folder', '_folder_positions', 'folder_navigation', 'sidebar', 'sidebar_mode', 'sidebar_list', 'sidebar_tabs',
              'folder_label', 'file_count', 'library_stack', 'cancel_button', 'remove_favorite'}
     modules = production_modules()
     for name in ('app', 'layout'):
@@ -150,7 +151,7 @@ def test_library_controls_and_task_state_stay_with_their_owners():
     for name in ('layout', 'app'):
         for node in ast.walk(modules[name]):
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-                assert node.func.id not in {'DropTree', 'TreeModel', 'VideoListModel', 'VideoDelegate', 'ScanButton'}, f'{name}:{node.lineno}: library controls belong to LibraryView'
+                assert node.func.id not in {'DropTree', 'TreeModel', 'DropList', 'FolderModel', 'FolderNavigation', 'VideoListModel', 'VideoDelegate', 'ScanButton'}, f'{name}:{node.lineno}: library controls belong to LibraryView'
     for name in ('library_view', 'library_views'):
         dependencies = imports(modules[name], name)
         assert not any(dep.split('.')[0] in {'core', 'infrastructure', 'threading'} for dep in dependencies), f'{name}: use the library application protocol'

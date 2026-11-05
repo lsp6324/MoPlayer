@@ -26,6 +26,7 @@ class BrowseResult:
 class LibraryChange:
     kind: str
     video_ids: tuple = ()
+    location: tuple | None = None
 
 
 @dataclass(frozen=True)
@@ -54,8 +55,8 @@ class LibraryController:
     def subscribe(self, observer):
         self._observers.append(observer)
 
-    def _changed(self, kind, ids=()):
-        change = LibraryChange(kind, tuple(ids))
+    def _changed(self, kind, ids=(), *, location=None):
+        change = LibraryChange(kind, tuple(ids), location)
         for observer in tuple(self._observers):
             observer(change)
 
@@ -152,19 +153,19 @@ class LibraryController:
             if play_id and location is None:
                 raise FileNotFoundError('扫描后未找到原视频身份；文件可能已被移动或替换。')
             self.repository.remember_folder(snapshot.root)
-            self.adopt_snapshot(snapshot, details)
+            self.adopt_snapshot(snapshot, details, location=location)
             return BrowseResult(snapshot, errors, location)
 
         return self._run('browse', work, publish, playback_request=playback_request)
 
-    def adopt_snapshot(self, snapshot, details=None):
+    def adopt_snapshot(self, snapshot, details=None, *, location=None):
         """Publish a prepared browse snapshot; playback remains caller-owned."""
         if details is None:
             details = self.repository.video_details(
                 vid for _, files in snapshot.folders.values() for vid, _ in files)
         self.details.update(details)
         self.browsing = snapshot
-        self._changed('folder')
+        self._changed('folder', location=location)
 
     def advance(self, context, location, direction):
         if self.navigation_pending:

@@ -60,7 +60,7 @@ def run(destination):
     def drop(urls):
         mime = QMimeData()
         mime.setUrls(urls)
-        viewport = window.library_view.tree.viewport()
+        viewport = window.library_view.files.viewport()
         enter = QDragEnterEvent(QPoint(24, 24), Qt.CopyAction, mime, Qt.LeftButton, Qt.NoModifier)
         application.sendEvent(viewport, enter)
         event = QDropEvent(QPointF(24, 24), Qt.CopyAction, mime, Qt.LeftButton, Qt.NoModifier)

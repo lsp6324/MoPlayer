@@ -91,8 +91,8 @@ def run(destination):
         window.archiver.fault = None
         recovered = window.recovery.retry()
         check('recovery completes ordinary archive', wait(lambda: not recovered.pending) and recovered.outcome.succeeded and not window.catalog.pending_tasks())
-        model = window.library_view.tree.model()
-        index = model.index(1, 0, model.index(0, 0))
+        model = window.library_view.files.model()
+        index = model.index(1, 0)
         check('recovered B name visible in original tree', index.data() == window.catalog.video(vids[1])['name'] != 'B.mp4')
         check('recovery preserves C and its pause', wait(lambda: window.current == vids[2] and window.playback.resume is None and window.player.get_state() == vlc.State.Paused))
         check('only the expected interruption was reported', len(failures) == 1 and 'expected interrupted archive' in failures[0])

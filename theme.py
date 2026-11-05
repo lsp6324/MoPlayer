@@ -87,10 +87,11 @@ QPushButton[role="caption"]:focus { border-bottom:2px solid $accent_ring; }
 QPushButton#closeWindow:hover { background:#e94a53; }
 QPushButton#closeWindow:pressed { background:#d83b45; }
 QPushButton::menu-indicator { image:none; width:0; }
-QTreeView#libraryTree,QListView#sidebarList { border:none; outline:none; background:transparent; padding:0; selection-background-color:transparent; }
-QTreeView#libraryTree::branch { background:transparent; }
-QTreeView#libraryTree::item { min-height:30px; }
-QTreeView#libraryTree::item:selected { color:$accent; }
+QListView#folderList,QListView#sidebarList { border:none; outline:none; background:transparent; padding:0; selection-background-color:transparent; }
+QPushButton[role="breadcrumb"] { background:transparent; color:$text_dim; border:1px solid transparent; border-radius:4px; padding:4px 6px; }
+QPushButton[role="breadcrumb"][current="true"] { color:$text_strong; }
+QPushButton[role="breadcrumb"]:hover { background:$hover; }
+QPushButton[role="breadcrumb"]:focus { border-color:$accent_ring; }
 QListWidget { border:1px solid $line; background:$surface_plain; border-radius:$radius_sm; padding:4px; outline:none; }
 QListWidget::item:selected { background:$selected; color:$text_strong; }
 QLineEdit,QComboBox,QPlainTextEdit,QTextEdit,QSpinBox { background:$surface_plain; border:1px solid $line; border-radius:$radius_sm; padding:8px; selection-background-color:$button_fill; selection-color:$button_text; }

@@ -57,11 +57,10 @@ def run(destination):  # 源码和打包后的 EXE 使用同一可见性检查�
         window.show()  # 必须展示真实列表，不只测试后台函数。
         window.load_folder(str(samples))  # 通过正式异步导入流程加载目录。
         check('无需选择视频自动显示缩略图', wait_until(lambda: window.library_controller.browsing is not None and vid in window.thumbnails.images))  # 导入展开后无需点击视频。
-        root = window.library_view.tree.model().index(0, 0)  # 获取导入根目录节点。
-        first_index = window.library_view.tree.model().index(0, 0, root)  # 获取第一部视频的真实模型索引。
-        second_index = window.library_view.tree.model().index(1, 0, root)  # 获取同内容的第二个硬链接入口。
-        check('目录树实际绘制140×79视频画面', colored_pixels(window.library_view.tree, first_index))
-        check('两个硬链接入口均显示且共用缓存', colored_pixels(window.library_view.tree, second_index) and len(window.thumbnails.images) == 1)  # 不重复解码同一个视频。
+        first_index = window.library_view.files.model().index(0, 0)
+        second_index = window.library_view.files.model().index(1, 0)
+        check('目录树实际绘制140×79视频画面', colored_pixels(window.library_view.files, first_index))
+        check('两个硬链接入口均显示且共用缓存', colored_pixels(window.library_view.files, second_index) and len(window.thumbnails.images) == 1)  # 不重复解码同一个视频。
         check('旧32×32缓存重建为240×160', QImageReader(str(cache / f'{vid}.jpg')).size().width() == 240 and QImageReader(str(cache / f'{vid}.jpg')).size().height() == 160)  # 检查实际缓存迁移。
         check('生成缩略图不自动播放', window.current is None)  # 保持启动和导入时不自动播放规则。
         window.grab().save(str(output / 'directory-thumbnails.png'))  # 保存可供人工查看的目录缩略图截图。

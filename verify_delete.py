@@ -95,11 +95,10 @@ def run(destination, *, recycle=None):  # 默认核对真实回收站；测试�
         check('删除不改变原播放上下文', window.context is context and window.library_controller.browsing.root == str(replacement))  # 浏览与播放继续独立。
         window.load_folder(str(samples))  # 重新显示剩余视频以测试单击选择。
         check('剩余目录加载完成', wait(lambda: window.library_controller.browsing.root == str(samples)))  # 等待异步模型。
-        root = window.library_view.tree.model().index(0, 0)  # 取得根目录索引。
-        selected = window.library_view.tree.model().index(1, 0, root)  # 当前顺序为二、三、四，选择第三条。
-        window.library_view.tree.scrollTo(selected)  # 保证鼠标目标可见。
+        selected = window.library_view.files.model().index(1, 0)  # 当前顺序为二、三、四，选择第三条。
+        window.library_view.files.scrollTo(selected)  # 保证鼠标目标可见。
         application.processEvents()  # 刷新可见位置。
-        QTest.mouseClick(window.library_view.tree.viewport(), Qt.LeftButton, Qt.NoModifier, window.library_view.tree.visualRect(selected).center())  # 真实鼠标单击选择第三条。
+        QTest.mouseClick(window.library_view.files.viewport(), Qt.LeftButton, Qt.NoModifier, window.library_view.files.visualRect(selected).center())  # 真实鼠标单击选择第三条。
         press()  # 选中优先于当前播放的第二条。
         check('单击选择优先且删除后播放其下一条', wait(lambda: not window.busy and window.current == vids[3]) and not (samples / '3.mp4').exists() and (samples / '2.mp4').exists())  # 不误删正在播放的其他视频。
         check('第四条实际播放', wait(lambda: window.playback.resume is None and window.player.get_time() > 500))  # 确认自动开始解码。

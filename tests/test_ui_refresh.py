@@ -48,7 +48,7 @@ def test_integrated_layout_and_quiet_feedback(window):
     assert window.windowFlags() & Qt.FramelessWindowHint
     assert window.splitter.widget(0) is window.library_view
     from PySide6.QtCore import QModelIndex
-    assert window.library_view.tree.itemDelegate().sizeHint(None, QModelIndex()).height() == 32
+    assert window.library_view.files.itemDelegate().sizeHint(None, QModelIndex()).height() == 44
     height = window.player_view.surface.height()
     window.message('saved')
     QApplication.processEvents()
@@ -72,7 +72,7 @@ def test_single_video_drop_loads_parent_and_plays_selected_identity_after_save(w
     window.play_path = lambda path, position, paused: played.append((path, position))
     saving = Operation()
     window.player_view.options.flush_pending = lambda: saving if saving.pending else Operation.success()
-    tree = window.library_view.tree
+    tree = window.library_view.files
     def drop(path):
         mime = QMimeData()
         mime.setUrls([QUrl.fromLocalFile(str(path))])
@@ -97,7 +97,7 @@ def test_drop_rejects_invalid_payloads_and_rechecks_removed_file(window, tmp_pat
     from PySide6.QtCore import QMimeData, QUrl, QPointF
     from PySide6.QtGui import QDragEnterEvent, QDropEvent
     from PySide6.QtTest import QSignalSpy
-    tree = window.library_view.tree
+    tree = window.library_view.files
     signal = QSignalSpy(tree.dropped)
     video = tmp_path / 'drop.mp4'
     video.write_bytes(b'video')
@@ -134,6 +134,131 @@ def test_failed_draft_save_prevents_dropped_video_from_replacing_current(window,
     saving.finish(Outcome(Status.FAILED, error=OSError('save failed')))
     QApplication.processEvents()
     assert window.current == previous and window.library_controller.browsing is None
+
+
+def test_folder_browse_uses_flat_rows_and_does_not_change_playback(window, tmp_path):
+    from core import Snapshot
+    from library_views import FOLDER_ROLE, LOCATION_ROLE
+    from PySide6.QtTest import QSignalSpy
+    root, child, leaf = map(str, (tmp_path, tmp_path / 'child', tmp_path / 'child' / 'leaf'))
+    snapshot = Snapshot(root, {root: ([child], [(window.current, 'root.mp4')]),
+        child: ([leaf], []), leaf: ([], [(window.current, 'leaf.mp4')])})
+    panel = window.library_view
+    requested = QSignalSpy(panel.videoRequested)
+    previous = window.current
+    window.library_controller.adopt_snapshot(snapshot)
+    QApplication.processEvents()
+    assert panel.current_folder == root and panel.files.model().rowCount() == 2
+    assert not panel.folder_navigation.up.isEnabled()
+    left = panel.files.visualRect(panel.files.model().index(1, 0)).left()
+    for folder in (child, leaf):
+        index = panel.files.model().index(0, 0)
+        assert index.data(FOLDER_ROLE) == folder
+        panel.files.doubleClicked.emit(index)
+        QApplication.processEvents()
+        assert panel.current_folder == folder
+    model = panel.files.model()
+    assert model.rowCount() == 1 and model.index(0, 0).data(LOCATION_ROLE) == (leaf, 0)
+    assert panel.files.visualRect(model.index(0, 0)).left() == left
+    assert requested.count() == 0 and window.current == previous
+    panel.folder_navigation.up.click()
+    assert panel.current_folder == child
+    panel.show_mode('videos')
+    panel.show_mode('files')
+    assert panel.current_folder == child
+
+
+def test_short_folder_breadcrumb_remains_readable_after_layout(window, tmp_path):
+    from core import Snapshot
+    from PySide6.QtWidgets import QPushButton, QStyleOptionButton, QStyle
+    root = str(tmp_path / '样例')
+    window.library_controller.adopt_snapshot(Snapshot(root, {root: ([], [])}))
+    QApplication.processEvents()
+    navigation = window.library_view.folder_navigation
+    current = next(control for control in navigation.findChildren(QPushButton) if control.property('current'))
+    assert current.text() == '样例'
+    option = QStyleOptionButton()
+    current.initStyleOption(option)
+    available = current.style().subElementRect(QStyle.SE_PushButtonContents, option, current).width()
+    assert current.fontMetrics().horizontalAdvance(current.text()) <= available
+
+
+def test_folder_return_restores_selection_scroll_and_metadata_refresh_preserves_rows(window, tmp_path):
+    from core import Snapshot
+    from PySide6.QtTest import QSignalSpy
+    from PySide6.QtWidgets import QAbstractItemView
+    window.thumbnails.request = lambda vid: None
+    root, child = str(tmp_path), str(tmp_path / 'child')
+    entries = []
+    for n in range(50):
+        path = tmp_path / f'clip-{n}.mp4'
+        path.write_bytes(str(n).encode())
+        entries.append((window.catalog.register(path), path.name))
+    snapshot = Snapshot(root, {root: ([child], entries), child: ([], [])})
+    window.library_controller.adopt_snapshot(snapshot)
+    panel, view = window.library_view, window.library_view.files
+    QApplication.processEvents()
+    selected_key = view.model().key(view.model().index(30, 0))
+    view.setCurrentIndex(view.model().index(30, 0))
+    view.scrollTo(view.currentIndex(), QAbstractItemView.PositionAtTop)
+    view.verticalScrollBar().setValue(view.verticalScrollBar().value() + 21)
+    anchor_key = view.model().key(view.indexAt(QPoint(1, 1)))
+    offset = view.visualRect(view.indexAt(QPoint(1, 1))).top()
+    panel.browse_folder(child)
+    assert panel.file_count.text() == '0 部'
+    panel.browse_folder(root)
+    QApplication.processEvents()
+    assert view.model().key(view.currentIndex()) == selected_key
+    assert view.model().key(view.indexAt(QPoint(1, 1))) == anchor_key
+    assert view.visualRect(view.indexAt(QPoint(1, 1))).top() == offset
+    resets = QSignalSpy(view.model().modelReset)
+    vid = view.currentIndex().data(Qt.UserRole)
+    window.catalog.set_score(vid, 8)
+    window.library_controller.refresh([vid])
+    assert view.currentIndex().data(Qt.UserRole) == vid and resets.count() == 0
+    window.library_controller.exclude([vid])
+    assert panel.file_count.text() == '49 部' and not view.selectionModel().hasSelection()
+    assert snapshot.folders[root][1][selected_key[1][1]][0] == vid
+
+
+def test_deep_breadcrumbs_fold_and_allow_ancestor_navigation(window, tmp_path):
+    from core import Snapshot
+    from PySide6.QtWidgets import QPushButton
+    paths = [tmp_path]
+    for n in range(8):
+        paths.append(paths[-1] / f'很长的目录名称{n}')
+    folders = {str(path): ([str(paths[n + 1])] if n + 1 < len(paths) else [], []) for n, path in enumerate(paths)}
+    window.library_controller.adopt_snapshot(Snapshot(str(tmp_path), folders))
+    panel = window.library_view
+    panel.browse_folder(str(paths[-1]))
+    navigation = panel.folder_navigation
+    navigation.setFixedWidth(260)
+    QApplication.processEvents()
+    overflow = next(control for control in navigation.findChildren(QPushButton) if control.menu() and control.isVisible())
+    assert overflow.menu().actions()[3].toolTip() == str(paths[3])
+    assert navigation.toolTip() == str(paths[-1])
+    for control in navigation.findChildren(QPushButton):
+        if control.isVisible():
+            assert control.geometry().right() < navigation.width()
+    overflow.menu().actions()[3].trigger()
+    assert panel.current_folder == str(paths[3])
+
+
+def test_requested_nested_video_opens_its_directory_in_flat_browser(window, tmp_path):
+    child = tmp_path / 'nested'
+    child.mkdir()
+    target = child / 'chosen.mp4'
+    target.write_bytes(b'target')
+    vid = window.catalog.register(target)
+    window.play_path = lambda *args: None
+    operation = window.load_folder(str(tmp_path), vid)
+    deadline = time.monotonic() + 5
+    while operation.pending and time.monotonic() < deadline:
+        QApplication.processEvents()
+        time.sleep(.01)
+    assert operation.outcome.succeeded and window.current == vid
+    assert window.library_view.current_folder == str(child)
+    assert window.library_view.files.currentIndex().data(Qt.UserRole) == vid
 
 
 def test_library_refresh_preserves_selection_and_visible_scroll_anchor(window, tmp_path):
@@ -715,8 +840,8 @@ def test_recovering_another_archived_video_updates_its_visible_tree_name(window,
     window.archiver.fault = None
     window.recovery.retry()
     _finish_file_task(tasks)
-    model = window.library_view.tree.model()
-    index = model.index(0, 0, model.index(0, 0))
+    model = window.library_view.files.model()
+    index = model.index(0, 0)
     assert not window.catalog.pending_tasks('jobs')
     assert index.data(Qt.DisplayRole) == window.catalog.video(vid)['name'] == 'B.mp4' != second.name
 

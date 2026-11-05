@@ -712,6 +712,9 @@ def main():  # 程序统一启动入口。
         return 1  # 报告失败退出码。
 
 if __name__ == '__main__':  # 仅直接运行时启动应用。
+    if len(sys.argv) == 3 and sys.argv[1] == '--folder-navigation-test':
+        from verify_folder_navigation import run
+        sys.exit(run(sys.argv[2]))
     if len(sys.argv) == 3 and sys.argv[1] == '--library-drop-test':
         from verify_library_drop import run
         sys.exit(run(sys.argv[2]))

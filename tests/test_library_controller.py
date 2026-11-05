@@ -96,10 +96,13 @@ def test_latest_scan_wins_even_if_old_success_arrives_last():
 
 def test_import_selects_requested_identity_and_folder_import_does_not_autoplay():
     library, repo, _, tasks = controller()
+    changes = []
+    library.subscribe(changes.append)
     operation = library.import_path('/library/c.mp4')
     finish(tasks.pop())
     result = operation.outcome.value
     assert operation.outcome.succeeded and result.location == ('/library', 2)
+    assert next(change for change in changes if change.kind == 'folder').location == result.location
     assert repo.history == ['/library']
     operation = library.import_path('B')
     finish(tasks.pop())
