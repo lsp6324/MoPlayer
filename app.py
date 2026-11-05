@@ -2,7 +2,7 @@ import json  # 读取视频标签和诊断数据。
 import logging  # 记录可追踪的运行错误。
 import sys  # 区分源码和便携运行方式。
 from pathlib import Path  # 处理便携数据路径。
-if len(sys.argv) == 3 and sys.argv[1] in ('--ui-refresh-test', '--seek-notice-test'):
+if len(sys.argv) == 3 and sys.argv[1] in ('--ui-refresh-test', '--seek-notice-test', '--file-workflows-test'):
     # A windowed EXE has no stderr; keep explicit test failures reviewable.
     _test_output = Path(sys.argv[2]).absolute()
     _test_output.mkdir(parents=True, exist_ok=True)
@@ -22,7 +22,11 @@ from application.operations import Operation, UserActions
 from application.tag_drafts import TagDrafts
 from application.playback import PlaybackSession, PlaybackStatus
 from player_view import PlayerInfo
-from application.file_tasks import FileTasks, FileTaskPolicy
+from application.file_tasks import FileTasks
+from application.classification import Classification
+from application.deletion import Deletion
+from application.recovery import Recovery
+from application.file_results import FileAction, PlaybackTarget
 from infrastructure.library_repository import LibraryRepository
 from core import Store, Archiver
 from video_delete import DeletionManager  # 以可恢复任务回收全部登记入口。
@@ -54,10 +58,28 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
         self.playback = PlaybackSession()
         self.user_actions = UserActions()
         self.tag_drafts = TagDrafts(self.catalog,
-            lambda vid, values: self.apply_tags(vid, values.tags, list(values.schema.values()), prompt_score=False),
+            lambda vid, values: self.classification.apply_tags(vid, values.tags, list(values.schema.values()), prompt_score=False),
             lambda: self.current, lambda: not self.busy)
         self.file_tasks = FileTasks(lambda function, callback: self.work(function, callback),
-                                    self._begin_file_task, self._end_file_task, self.has_pending_file_tasks)
+                                    self._begin_file_task, self._end_file_task, self.has_pending_file_tasks,
+                                    prepare=self.thumbnail_service.stop)
+        self.classification = Classification(self.file_tasks, self.catalog,
+            lambda vid, score, tags, schema: self.tag_migration.submit(vid, score, tags, schema),
+            lambda vid, score, tags: self.archiver.submit(vid, score, tags),
+            available=lambda: not self.busy, ensure_storage=self.ensure_storage,
+            current_video=lambda: self.current, refresh=self._refresh_file_records, notify=self._file_notice)
+        self.deletion = Deletion(self.file_tasks, self.library_controller, lambda vid: self.deleter.submit(vid),
+            available=lambda: not self.busy, playback_target=self._playback_target,
+            navigation_busy=self._navigation_busy, mark_deleting=self.thumbnail_service.mark_deleting,
+            refresh_deleted=self.refresh_deleted, save=self.save, clear=self.clear_player,
+            start=self.start, notify=self._file_notice)
+        self.recovery = Recovery(self.file_tasks, self.catalog, self.tag_drafts,
+            recover_archive=lambda: self.archiver.recover(), recover_tags=lambda: self.tag_migration.recover(),
+            recover_deletions=lambda: self.deleter.recover(), available=lambda: not self.busy,
+            playback_target=self._playback_target, mark_deleting=self.thumbnail_service.mark_deleting,
+            refresh=self._refresh_file_records, refresh_deleted=self.refresh_deleted,
+            continue_after_delete=self.deletion.continue_after_delete,
+            storage_ready=self._restore_storage_target, notify=self._file_notice)
         self.vlc, self.instance, self.player = create_player()
         self.setWindowTitle('MoPlayer · 本地视频与分类')  # 设置可识别的窗口标题。
         self.resize(1440, 920)  # 为品牌导航、双层控制和大缩略图保留舒适留白。
@@ -86,7 +108,7 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
         self.timer.start(250)  # 每四分之一秒刷新一次。
         QApplication.instance().installEventFilter(self)  # 保留弹窗与文本输入优先的快捷键处理。
         if self.has_pending_file_tasks():
-            QTimer.singleShot(0, self.retry_jobs)  # 等界面启动后异步恢复未完成归档。
+            QTimer.singleShot(0, self.recovery.retry)  # 等界面启动后异步恢复未完成归档。
 
     def work(self, function, callback):  # 启动后台任务并保持信号对象存活。
         job = Work(function)  # 封装工作函数。
@@ -377,21 +399,6 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
         self.player_view.clear_media()
         self.refresh_transport()
 
-    def after_deleted_current(self, context, location):
-        self.clear_player()
-        self.busy = True
-        operation = self.library_controller.advance(context, location, 1)
-        def ready(outcome):
-            self.busy = False
-            if outcome.error:
-                self.fail(f'删除完成，查找下一个视频失败：{outcome.error}')
-            elif outcome.succeeded and outcome.value:
-                self.start(context, outcome.value)
-                self.message('已移入回收站，正在播放下一个视频。')
-            else:
-                self.message('已移入回收站，没有下一个视频，播放已停止。')
-        operation.on_finished(ready)
-
 
     def delete_video(self, _target=None, _context=None):
         if self.busy and not self.tag_drafts.saving:
@@ -407,36 +414,8 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
             context = (self.context, self.location)
         elif context is None and selected and selected.video_id == vid and selected.context is not None:
             context = (selected.context, selected.location)
-        self.user_actions.request(lambda: self._delete_video(vid, context), self.player_view.options.flush_pending)
+        self.user_actions.request(lambda: self.deletion.delete(vid, context), self.player_view.options.flush_pending)
 
-    def _delete_video(self, vid, context):
-        playing = vid == self.current
-        if context is None:
-            self.busy = True
-            operation = self.library_controller.locate_video(vid)
-            def ready(outcome):
-                self.busy = False
-                if outcome.error:
-                    self.fail(outcome.error)
-                elif outcome.succeeded:
-                    self._delete_video(vid, outcome.value)
-            operation.on_finished(ready)
-            return
-        snapshot, location = context
-        self.thumbnail_service.mark_deleting({vid}, True)
-        self.message('正在移入回收站……')
-        operation = self.file_tasks.run(self._file_work(lambda: self.deleter.submit(vid)),
-                                        policy=FileTaskPolicy(release_media=playing))
-        def completed(outcome):
-            self.thumbnail_service.mark_deleting({vid}, False)
-            if not outcome.succeeded:
-                self._report_file_result(outcome)
-                return
-            self.refresh_deleted({vid})
-            if not playing:
-                self.save()
-            self.after_deleted_current(snapshot, location)
-        operation.on_finished(completed)
 
     def favorite(self, toggle=False):
         if self.current and not self.busy:
@@ -465,14 +444,52 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
         if video['score'] == score:
             return
         if video['archived']:
-            self.archive(vid, score, json.loads(video['tags']))
+            self.classification.archive(vid, score, json.loads(video['tags']))
         else:
             self.catalog.set_score(vid, score)
             self.library_controller.refresh((vid,), self.context)
             self.refresh_title()
 
-    def refresh_names(self, vids):
-        self.library_controller.refresh(vids, self.context)
+
+    def _playback_target(self):
+        return PlaybackTarget(self.current, self.context, self.location)
+
+    def _navigation_busy(self, busy):
+        self.busy = busy
+        self.refresh_transport()
+
+    def _refresh_file_records(self, video_ids):
+        self.library_controller.refresh(video_ids, self.context)
+        self.refresh_title()
+
+    def _restore_storage_target(self):
+        if self.legacy_storage_recovery:
+            self.archiver.root = self.storage.root
+            self.legacy_storage_recovery = False
+
+    def _file_notice(self, notice):
+        if notice.outcome is None:
+            self.message({FileAction.TAGS: '正在应用标签并同步相关视频……',
+                          FileAction.ARCHIVE: '正在归档，完成后恢复原进度和播放状态。',
+                          FileAction.DELETE: '正在移入回收站……',
+                          FileAction.RECOVERY: '正在恢复未完成文件任务……'}[notice.action])
+            return
+        outcome = notice.outcome
+        if outcome.error:
+            if notice.action is FileAction.NEXT:
+                self.fail(f'删除完成，查找下一个视频失败：{outcome.error}')
+            else:
+                recovery = '\n可在“更多 → 文件任务”恢复。' if outcome.recoverable else '\n修改未完成，请修正后重试。'
+                self.fail(str(outcome.error) + recovery)
+        elif outcome.succeeded:
+            if notice.action is FileAction.TAGS:
+                self.message(f'标签已应用，已同步 {notice.count} 个视频。')
+            elif notice.action is FileAction.NEXT:
+                self.message('已移入回收站，正在播放下一个视频。' if notice.count else '已移入回收站，没有下一个视频，播放已停止。')
+            elif notice.action is FileAction.RECOVERY and not notice.continuing:
+                self.message('文件任务恢复完成。')
+        if notice.score_video is not None:
+            QTimer.singleShot(0, lambda: self.rating_dialog(notice.score_video))
 
     def _begin_file_task(self, policy):
         self.save()
@@ -511,47 +528,6 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
                     raise
         self.refresh_transport()
 
-    def _file_work(self, function):
-        def run():
-            self.thumbnail_service.stop()
-            return function()
-        return run
-
-    def _report_file_result(self, outcome):
-        if outcome.error:
-            recovery = '\n可在“更多 → 文件任务”恢复。' if outcome.recoverable else '\n修改未完成，请修正后重试。'
-            self.fail(str(outcome.error) + recovery)
-
-    def apply_tags(self, vid, tags, schema, prompt_score=True):
-        if self.busy or not self.ensure_storage():
-            return Operation.cancelled()
-        self.message('正在应用标签并同步相关视频……')
-        operation = self.file_tasks.run(self._file_work(
-            lambda: self.tag_migration.submit(vid, self.catalog.video(vid)['score'], tags, schema)))
-        def completed(outcome):
-            updated = outcome.value or [row['id'] for row in self.catalog.videos('archived')]
-            self.refresh_names(updated)
-            self.refresh_title()
-            self._report_file_result(outcome)
-            if outcome.succeeded:
-                self.message(f'标签已应用，已同步 {len(updated)} 个视频。')
-                if prompt_score:
-                    QTimer.singleShot(0, lambda: self.rating_dialog(vid))
-        operation.on_finished(completed)
-        return operation
-
-    def archive(self, vid, score, tags):
-        if self.busy or not self.ensure_storage():
-            return Operation.cancelled()
-        self.message('正在归档，完成后恢复原进度和播放状态。')
-        operation = self.file_tasks.run(self._file_work(lambda: self.archiver.submit(vid, score, tags)),
-                                        policy=FileTaskPolicy(release_media=vid == self.current))
-        def completed(outcome):
-            self.refresh_names([vid])
-            self.refresh_title()
-            self._report_file_result(outcome)
-        operation.on_finished(completed)
-        return operation
 
     def folder_history(self):
         if self.busy:
@@ -588,44 +564,10 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
         text.setPlainText('\n\n'.join(f'{kinds[row["kind"]]} {row["id"]}  [{row["state"]}]\n{row["error"] or "无错误"}' for row in self.catalog.task_history()) or '暂无文件任务。')
         layout.addWidget(text)  # 放置任务日志。
         retry = QPushButton('重试所有未完成任务')  # 明确执行恢复动作。
-        retry.clicked.connect(lambda: (dialog.accept(), self.retry_jobs()))  # 关闭列表后异步恢复。
+        retry.clicked.connect(lambda: (dialog.accept(), self.recovery.retry()))  # 关闭列表后异步恢复。
         layout.addWidget(retry)  # 提供可见恢复入口。
         dialog.exec()  # Esc 优先关闭当前弹窗。
 
-    def retry_jobs(self):
-        if self.busy:
-            return
-        pending = {row['video'] for row in self.catalog.pending_tasks('deletion_jobs')}
-        context, location, active = self.context, self.location, self.current
-        tag_plans = [json.loads(row['plan']) for row in self.catalog.pending_tasks('hierarchy_jobs')]
-        self.thumbnail_service.mark_deleting(pending, True)
-        self.message('正在恢复未完成文件任务……')
-        def recover():
-            errors = self.archiver.recover() + self.tag_migration.recover()
-            if not errors:
-                errors += self.deleter.recover()
-            if errors:
-                raise RuntimeError('\n'.join(errors))
-        operation = self.file_tasks.run(self._file_work(recover))
-        def recovered(outcome):
-            if outcome.succeeded:
-                self.tag_drafts.reconcile(entry['video'] for plan in tag_plans for entry in plan['videos']
-                                          if self.catalog.video(entry['video']) is not None)
-            if self.legacy_storage_recovery and not self.has_pending_file_tasks():
-                self.archiver.root = self.storage.root
-                self.legacy_storage_recovery = False
-            self.refresh_names([entry['video'] for plan in tag_plans for entry in plan['videos']])
-            self.thumbnail_service.mark_deleting(pending, False)
-            deleted = {vid for vid in pending if self.catalog.video(vid) is None}
-            self.refresh_deleted(deleted)
-            self._report_file_result(outcome)
-            if active in deleted:
-                self.after_deleted_current(context, location)
-            else:
-                self.refresh_title()
-                if outcome.succeeded:
-                    self.message('文件任务恢复完成。')
-        operation.on_finished(recovered)
 
     def help_dialog(self):  # 显示核心交互和部署说明。
         self.message('Ctrl+D：选中视频优先，否则删除当前视频；移入回收站后自动播放下一条，末尾停止。')  # 帮助关闭后仍显示新增快捷键说明。
@@ -715,6 +657,9 @@ def main():  # 程序统一启动入口。
         return 1  # 报告失败退出码。
 
 if __name__ == '__main__':  # 仅直接运行时启动应用。
+    if len(sys.argv) == 3 and sys.argv[1] == '--file-workflows-test':
+        from verify_file_workflows import run
+        sys.exit(run(sys.argv[2]))
     if len(sys.argv) == 3 and sys.argv[1] == '--ui-refresh-test':
         from verify_ui_refresh import run
         try:

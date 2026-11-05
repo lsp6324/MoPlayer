@@ -157,7 +157,7 @@ def test_heart_rating_saves_to_remote_metadata(window, score):
 
 
 def test_tag_input_native_dispatch_and_add_does_not_select(window):
-    window.apply_tags = Mock(return_value=Operation.success())
+    window.classification.apply_tags = Mock(return_value=Operation.success())
     window.player_view.toggle_tags()
     panel = window.player_view.options.tags_popup
     editor = panel.editor
@@ -171,17 +171,17 @@ def test_tag_input_native_dispatch_and_add_does_not_select(window):
     assert panel.isVisible() and editor.entry.text() == 'new-tag'
     editor.add_button.click()
     assert 'new-tag' in editor.schema and 'new-tag' not in editor.chosen()
-    assert not window.apply_tags.called
+    assert not window.classification.apply_tags.called
     editor.chips['existing'].click()
     assert editor.chosen() == ['existing']
     panel.dismiss()
-    window.apply_tags.assert_called_once()
-    assert window.apply_tags.call_args.kwargs == {'prompt_score': False}
-    assert window.apply_tags.call_args.args[0] == window.current
+    window.classification.apply_tags.assert_called_once()
+    assert window.classification.apply_tags.call_args.kwargs == {'prompt_score': False}
+    assert window.classification.apply_tags.call_args.args[0] == window.current
 
 
 def test_tag_management_multiselect_and_close_flush(window):
-    window.apply_tags = Mock(return_value=Operation.success())
+    window.classification.apply_tags = Mock(return_value=Operation.success())
     window.player_view.toggle_tags()
     panel = window.player_view.options.tags_popup
     editor = panel.editor
@@ -195,8 +195,8 @@ def test_tag_management_multiselect_and_close_flush(window):
     assert not editor.schema and not editor.chosen()
     panel.flush_pending()
     panel.dismiss()
-    assert window.apply_tags.call_count == 1
-    assert window.apply_tags.call_args.args[2] == []
+    assert window.classification.apply_tags.call_count == 1
+    assert window.classification.apply_tags.call_args.args[2] == []
     assert window.store.resolve(window.current).exists()
 
 
@@ -497,7 +497,7 @@ def test_fullscreen_exit_restores_preexisting_video_cursor(window):
 
 
 def test_cancelled_storage_keeps_tag_draft(window):
-    window.apply_tags = Mock(return_value=Operation.cancelled())
+    window.classification.apply_tags = Mock(return_value=Operation.cancelled())
     window.player_view.toggle_tags()
     panel = window.player_view.options.tags_popup
     editor = panel.editor
@@ -607,13 +607,38 @@ def test_recovering_tag_task_confirms_existing_draft_without_submitting_it_again
     assert window.catalog.pending_tasks('hierarchy_jobs')
     assert '恢复' in str(window.fail.call_args)
     window.tag_migration.fault = None
-    window.retry_jobs()
+    window.recovery.retry()
     _finish_file_task(tasks)
     assert not window.catalog.pending_tasks()
     window.player_view.toggle_tags()
     assert panel.editor.chosen() == ['existing']
     panel.dismiss()
     assert not tasks and not window.busy
+
+
+def test_recovering_another_archived_video_updates_its_visible_tree_name(window, tmp_path):
+    from core import Snapshot
+    root = str(tmp_path)
+    second = tmp_path / 'B.mp4'
+    second.write_bytes(b'independent archive recovery fixture')
+    vid = window.catalog.register(second)
+    window.storage.save(tmp_path / 'archive')
+    window.archiver.root = tmp_path / 'archive'
+    window.library_controller.adopt_snapshot(Snapshot(root, {root: ([], [(vid, second.name)])}))
+    tasks = _capture_file_task(window)
+    def interrupted(stage):
+        raise OSError('interrupted archive')
+    window.archiver.fault = interrupted
+    window.classification.archive(vid, 8, ['existing'])
+    _finish_file_task(tasks)
+    assert window.catalog.pending_tasks('jobs')
+    window.archiver.fault = None
+    window.recovery.retry()
+    _finish_file_task(tasks)
+    model = window.library_view.tree.model()
+    index = model.index(0, 0, model.index(0, 0))
+    assert not window.catalog.pending_tasks('jobs')
+    assert index.data(Qt.DisplayRole) == window.catalog.video(vid)['name'] != second.name
 
 
 def test_close_waits_for_tag_commit_then_closes_its_own_window(window, tmp_path):
@@ -683,7 +708,7 @@ def test_escape_closes_editable_surface_before_leaving_fullscreen(window):
 def test_tag_context_menu_belongs_to_editable_surface(window):
     from PySide6.QtWidgets import QMenu
     from PySide6.QtCore import QTimer
-    window.apply_tags = Mock(return_value=Operation.success())
+    window.classification.apply_tags = Mock(return_value=Operation.success())
     window.player_view.toggle_tags()
     panel = window.player_view.options.tags_popup
     checks = []
@@ -700,7 +725,7 @@ def test_tag_context_menu_belongs_to_editable_surface(window):
 @pytest.mark.parametrize('cancel', [False, True])
 def test_native_tag_menu_input_does_not_dismiss_or_commit(window, cancel):
     from PySide6.QtCore import QTimer
-    window.apply_tags = Mock(return_value=Operation.success())
+    window.classification.apply_tags = Mock(return_value=Operation.success())
     window.player_view.toggle_tags()
     panel = window.player_view.options.tags_popup
     editor = panel.editor
@@ -719,7 +744,7 @@ def test_native_tag_menu_input_does_not_dismiss_or_commit(window, cancel):
     QTimer.singleShot(0, choose)
     editor.menu('existing', editor.mapToGlobal(QPoint(30, 30)))
     assert observations == [True]
-    assert panel.isVisible() and not window.apply_tags.called
+    assert panel.isVisible() and not window.classification.apply_tags.called
     assert editor.schema['existing']['is_parent'] == (not cancel)
 
 

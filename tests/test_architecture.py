@@ -177,3 +177,23 @@ def test_item_painting_never_performs_repository_queries():
                 for call in ast.walk(node):
                     if isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute):
                         assert call.func.attr not in {'query', 'execute', 'video', 'resolve', 'register', 'work'}, f'{name}:{call.lineno}: prepare presentation data before painting'
+
+
+def test_file_workflow_decisions_are_not_reintroduced_into_window_callbacks():
+    window = next(node for node in production_modules()['app'].body
+                  if isinstance(node, ast.ClassDef) and node.name == 'Window')
+    obsolete = {'apply_tags', 'archive', 'retry_jobs', '_delete_video', 'after_deleted_current',
+                '_file_work', '_report_file_result', 'refresh_names'}
+    for method in window.body:
+        if not isinstance(method, ast.FunctionDef):
+            continue
+        assert method.name not in obsolete, f'{method.name}: use the application workflow, not a forwarding window API'
+        if method.name == '__init__':
+            continue  # Explicit service ports are connected at composition.
+        for node in ast.walk(method):
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+                assert node.func.attr not in {'submit', 'recover'}, f'app:{node.lineno}: submit/recover belongs to its application workflow'
+                if isinstance(node.func.value, ast.Attribute) and node.func.value.attr == 'file_tasks':
+                    assert node.func.attr != 'run', f'app:{node.lineno}: file task admission belongs to the workflow'
+                if method.name == '_file_notice':
+                    assert node.func.attr not in {'video', 'videos', 'pending_tasks', 'reconcile', 'refresh_deleted', 'start'}, f'app:{node.lineno}: render the workflow result without deciding recovery or playback'

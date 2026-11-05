@@ -248,8 +248,8 @@ def run(destination):
         check('tag input accepts native-window click', panel.isVisible() and editor.entry.hasFocus() and editor.entry.text() == 'demo-tag')
         editor.add_button.click()
         check('new tag is unselected', 'demo-tag' in editor.schema and not editor.chosen())
-        apply_tags = window.apply_tags
-        window.apply_tags = Mock(return_value=Operation.success())
+        apply_tags = window.classification.apply_tags
+        window.classification.apply_tags = Mock(return_value=Operation.success())
         def choose_tag_menu(label, child=None):
             errors = []
             def choose():
@@ -284,9 +284,9 @@ def run(destination):
                 raise AssertionError(errors)
         choose_tag_menu('设为父标签')
         check('parent menu native click preserves draft and surface',
-              editor.schema['demo-tag']['is_parent'] and panel.isVisible() and window.apply_tags.call_count == 0)
+              editor.schema['demo-tag']['is_parent'] and panel.isVisible() and window.classification.apply_tags.call_count == 0)
         choose_tag_menu('escape')
-        check('menu Escape cancels menu without closing tag surface', panel.isVisible() and window.apply_tags.call_count == 0)
+        check('menu Escape cancels menu without closing tag surface', panel.isVisible() and window.classification.apply_tags.call_count == 0)
         choose_tag_menu('取消父标签')
         check('unsetting parent keeps tag surface active', not editor.schema['demo-tag']['is_parent'] and panel.isVisible())
         editor.schema['target'] = {'name': 'target', 'kind': 'major', 'parent': None, 'is_parent': True}
@@ -294,11 +294,11 @@ def run(destination):
         choose_tag_menu('移入父标签', 'target')
         check('native submenu click belongs to tag surface', editor.schema['demo-tag']['parent'] == 'target' and panel.isVisible())
         choose_tag_menu('移出父标签')
-        check('detach menu keeps draft open', editor.schema['demo-tag']['parent'] is None and panel.isVisible() and window.apply_tags.call_count == 0)
+        check('detach menu keeps draft open', editor.schema['demo-tag']['parent'] is None and panel.isVisible() and window.classification.apply_tags.call_count == 0)
         editor.schema.pop('target')
         editor.schema.pop('demo-tag')
         editor.rebuild()
-        window.apply_tags = apply_tags
+        window.classification.apply_tags = apply_tags
         snapshot('tags')
         # Opening another surface closes the active tag tool and must leave
         # activation inside the player, without an extra click to recover it.
@@ -400,14 +400,14 @@ def run(destination):
         check('fullscreen editable tool keeps focus and player activation', panel.isActiveWindow() and editor.entry.hasFocus() and editor.entry.text() == 'w a r x')
         editor.entry.setText('demo-tag')
         editor.add_button.click()
-        apply_tags = window.apply_tags
-        window.apply_tags = Mock(return_value=Operation.success())
+        apply_tags = window.classification.apply_tags
+        window.classification.apply_tags = Mock(return_value=Operation.success())
         choose_tag_menu('设为父标签')
         check('fullscreen parent menu preserves tag surface and controls',
-              panel.isVisible() and fullscreen.overlay.isVisible() and editor.schema['demo-tag']['is_parent'] and window.apply_tags.call_count == 0)
+              panel.isVisible() and fullscreen.overlay.isVisible() and editor.schema['demo-tag']['is_parent'] and window.classification.apply_tags.call_count == 0)
         editor.schema.pop('demo-tag')
         editor.rebuild()
-        window.apply_tags = apply_tags
+        window.classification.apply_tags = apply_tags
         middle = window.canvas.mapToGlobal(window.canvas.rect().center())
         fullscreen.last_cursor, fullscreen.last_activity = middle, 0
         fullscreen.poll(middle)

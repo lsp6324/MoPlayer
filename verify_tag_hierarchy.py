@@ -137,14 +137,14 @@ def run(destination):  # 源码和便携 EXE 使用相同验收入口。
             elif time.monotonic() < failure_deadline:  # 等待后台注入的异常返回。
                 QTimer.singleShot(30, close_failure)  # 持续处理 Qt 主线程事件。
         QTimer.singleShot(30, close_failure)  # 在提交异步任务前开始观察。
-        window.apply_tags(vids[0], json.loads(window.store.video(vids[0])['tags']), list(window.store.tag_layout().values()))  # 即使结构不变，也通过正式应用路径验证失败保护。
+        window.classification.apply_tags(vids[0], json.loads(window.store.video(vids[0])['tags']), list(window.store.tag_layout().values()))  # 即使结构不变，也通过正式应用路径验证失败保护。
         check('标签部分失败不提前弹出评分', wait(lambda: bool(failures) and not window.busy) and not premature)  # 不把局部完成显示成整个操作成功。
         check('失败批次保留恢复日志及有效文件', bool(window.store.query('SELECT id FROM hierarchy_jobs WHERE state<>"done"')) and all(window.store.resolve(vid).exists() for vid in vids))  # 所有视频仍可恢复和播放。
         window.tag_migration.fault = None  # 模拟用户重试时故障消失。
         automatic.clear()  # 重新观察恢复完成后的评分弹窗。
         deadline = time.monotonic() + 30  # 恢复使用同样的有限等待。
         QTimer.singleShot(30, rate_after_apply)  # 只在恢复确实完成后点击评分。
-        window.retry_jobs()  # 使用更多 → 文件任务中的正式恢复入口。
+        window.recovery.retry()  # 使用更多 → 文件任务中的正式恢复入口。
         check('恢复全部标签后再自动评分', wait(lambda: bool(automatic) and not window.busy) and all(automatic) and not window.store.query('SELECT id FROM hierarchy_jobs WHERE state<>"done"'))  # 全局结构、文件和评分状态最终一致。
         for chosen, object_name in [(0, 'score_0'), (None, 'score_unrated')]:  # 明确测试兼容原有的两个特殊状态。
             score = ScoreEditor(window.store.video(vids[0]), window)  # 与自动弹窗使用同一真实组件。

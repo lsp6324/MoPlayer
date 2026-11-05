@@ -11,9 +11,10 @@ class FileTaskPolicy:
 
 
 class FileTasks:
-    def __init__(self, dispatch, begin, end, has_pending):
+    def __init__(self, dispatch, begin, end, has_pending, prepare=lambda: None):
         self.dispatch, self.begin, self.end = dispatch, begin, end
         self.has_pending = has_pending
+        self.prepare = prepare
         self.active: Operation | None = None
 
     def run(self, work, *, policy=FileTaskPolicy()):
@@ -38,7 +39,10 @@ class FileTasks:
                                      recoverable=bool(error and self.has_pending())))
 
         try:
-            self.dispatch(work, completed)
+            def prepared_work():
+                self.prepare()
+                return work()
+            self.dispatch(prepared_work, completed)
         except Exception as error:
             if operation.pending:
                 completed(None, error)

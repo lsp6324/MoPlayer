@@ -243,7 +243,7 @@ def run(destination):  # 执行源码与便携版共用的实际验收。
         second_rating = auto_rating(9)  # 每次标签完全应用后再次明确评分。
         QTest.keyClick(window.player_view.surface, Qt.Key_Q)  # 使用真实分类快捷键。
         check('取消标签同步替换前缀并自动评分', wait_until(lambda: bool(second_rating) and not window.busy, 30) and window.store.resolve(original).name == '9分 测试乙 第2集.mp4')  # 标签和评分流程完整结束后验证实际文件名。
-        window.archive(original, 8, ['测试甲', '测试乙'])  # 恢复后续原有回归使用的评分及两个标签。
+        window.classification.archive(original, 8, ['测试甲', '测试乙'])  # 恢复后续原有回归使用的评分及两个标签。
         check('反复修改不叠加旧前缀', wait_until(lambda: not window.busy, 30) and window.store.resolve(original).name == expected_name)  # 始终由永久原名重建完整名称。
         check('恢复分类后暂停状态保留', wait_until(lambda: window.player.get_state() == vlc.State.Paused))  # 避免短样例在后续导航断言前自然结束。
         entries = list((output / 'archive/8分').glob('*/*.mp4'))  # 后续缩略图检查使用最新有效入口。
