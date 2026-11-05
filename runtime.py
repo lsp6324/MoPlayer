@@ -46,7 +46,7 @@ def configure_portable(base=BASE):
 def load_vlc():
     global _dll_handle
     directory = (BUNDLE / 'vlc' if getattr(sys, 'frozen', False) else
-                 Path(os.environ.get('MOPLAYER_VLC_DIR', BASE / 'dist/MoPlayer-UI-preview/_internal/vlc')))
+                 Path(os.environ.get('MOPLAYER_VLC_DIR', BASE / 'dist/MoPlayer-startup-preview/_internal/vlc')))
     os.environ['PYTHON_VLC_LIB_PATH'] = str(directory / 'libvlc.dll')
     os.environ['PYTHON_VLC_MODULE_PATH'] = str(directory)
     os.environ['VLC_PLUGIN_PATH'] = str(directory / 'plugins')

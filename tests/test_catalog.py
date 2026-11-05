@@ -15,8 +15,8 @@ SCHEMA = {'风景': {'parent': None}, '山川': {'parent': '风景'}, '雪山': 
 
 
 def row(vid, name=None, **values):
-    return dict(dict(id=vid, name=name or vid+'.mp4', archived=1, score=None, star=0, played=0,
-                     position=0, kind='video', tag_names=(), tags='[]', archived_at=None), **values)
+    return dict(dict(id=vid, name=name or vid+'.mp4', archived=1, in_library=1, score=None, star=0, played=0,
+                     position=0, kind='video', tag_names=(), tags='[]', library_added_at=None), **values)
 
 
 def query(rows, **filters):
@@ -25,7 +25,11 @@ def query(rows, **filters):
 
 def test_search_natural_order_and_identity_deduplication():
     a, b, c = row('a', 'Clip10.mp4'), row('b', 'clip2.mp4'), row('c', 'clip2.mp4')
-    assert query([a, b, c, a, row('d', archived=0)], search='CLIP') == ['b', 'c', 'a']
+    assert query([a, b, c, a, row('d', in_library=0)], search='CLIP') == ['b', 'c', 'a']
+
+
+def test_membership_is_independent_of_disk_archive_state():
+    assert query([row('managed', archived=0), row('unmanaged', archived=1, in_library=0)]) == ['managed']
 
 
 def test_parent_descendants_multiple_tag_intersection_and_untagged():
@@ -78,8 +82,8 @@ def test_preferences_upgrade_keeps_old_filter_meaning_and_view_default(tmp_path)
     ({'sort':'added_desc'}, ['b','a','c']),
 ])
 def test_independent_filters_and_date_unknown_last_in_both_directions(filters, expected):
-    rows = [row('a', star=1, score=7, played=3, archived_at=100),
-            row('b', score=0, played=5, archived_at=200), row('c', kind='image')]
+    rows = [row('a', star=1, score=7, played=3, library_added_at=100),
+            row('b', score=0, played=5, library_added_at=200), row('c', kind='image')]
     assert query(rows, **filters) == expected
 
 

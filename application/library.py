@@ -312,7 +312,7 @@ class LibraryController:
     def refresh(self, video_ids, playback_context=None, *, catalog_changed=False):
         ids = tuple(dict.fromkeys(video_ids))
         rows = self.repository.video_details(ids)
-        fields = ('name', 'score', 'star', 'tags', 'archived', 'archived_at')
+        fields = ('name', 'score', 'star', 'tags', 'in_library', 'library_added_at')
         changed = catalog_changed or any(
             any(self.details.get(vid, {}).get(key) != rows.get(vid, {}).get(key) for key in fields) for vid in ids)
         # Preserve prepared presentation fields when progress-only refreshes arrive.

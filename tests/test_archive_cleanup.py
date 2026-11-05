@@ -139,7 +139,7 @@ def test_old_database_upgrade_preserves_records_and_is_idempotent(library):
     upgraded=Store(directory)
     try:
         assert upgraded.video(vid)==before and upgraded.resolve(vid)==source
-        assert upgraded.query('PRAGMA user_version')[0]['user_version']==2
+        assert upgraded.query('PRAGMA user_version')[0]['user_version']==3
         migrate(upgraded.db)
         assert upgraded.query('SELECT * FROM cleanup_jobs')==[]
     finally:

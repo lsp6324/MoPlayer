@@ -125,7 +125,6 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
         self.library_view.videoRequested.connect(self.open_library_video)
         self.library_view.unfavoriteRequested.connect(self.remove_library_favorite)
         self.library_view.historyClearRequested.connect(self.clear_history)
-        self.library_view.archiveSettingsRequested.connect(self.storage_dialog)
         self.setWindowIcon(QIcon(str(BUNDLE / 'assets/yunli.ico')))  # 窗口与任务栏使用同一云璃 Q 版图标。
         self.player.set_hwnd(self.player_view.video_handle())
         self.player.audio_set_volume(80)

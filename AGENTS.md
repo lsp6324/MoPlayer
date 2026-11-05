@@ -47,7 +47,7 @@
 
 - 唯一源码目录是本仓库；Git、测试、构建明确以本目录为工作目录。
 - Python：`E:/tools/videoplayerenv/venv/Scripts/python.exe`。
-- 源码测试设置 `MOPLAYER_VLC_DIR=<仓库>/dist/MoPlayer-UI-preview/_internal/vlc`、`QT_QPA_PLATFORM=offscreen`。
+- 固定预览入口为 `dist/MoPlayer-startup-preview/MoPlayer.exe`，候选包存入忽略的测试证据目录，验收后原位更新。源码测试设置 `MOPLAYER_VLC_DIR=<仓库>/dist/MoPlayer-startup-preview/_internal/vlc`、`QT_QPA_PLATFORM=offscreen`。
 - 构建缓存：`E:/tools/moplayer-ui-refresh-build`。遵循交接文件中的显式构建参数和 PATH 限制。
 - 默认保持简洁界面、左侧文件列表，视觉验收由用户完成。
 - 后续独立修改验证后可提交并推送 `feature/ui-refresh`；合入目标为 `develop`。提交前审查最终 diff 和测试结果。

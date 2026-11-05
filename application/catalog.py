@@ -1,4 +1,4 @@
-"""Archived-library queries and frozen playback order, independent of disk/UI."""
+"""Managed-library queries and frozen playback order, independent of disk/UI."""
 from dataclasses import dataclass, replace
 import re
 
@@ -76,7 +76,7 @@ def select_rows(rows, schema, filters, cancel):
     for number, row in enumerate(rows):
         if number % 128 == 0 and cancel.is_set():
             raise InterruptedError('查询已取消')
-        if not row['archived'] or row['id'] in seen:
+        if not row['in_library'] or row['id'] in seen:
             continue
         seen.add(row['id'])
         if search and search not in row['name'].casefold():
@@ -105,7 +105,7 @@ def select_rows(rows, schema, filters, cancel):
         result.sort(key=lambda row: -row['played'])
     elif filters.sort.startswith('added_'):
         direction = -1 if filters.sort == 'added_desc' else 1
-        result.sort(key=lambda row: (row.get('archived_at') is None, direction * (row.get('archived_at') or 0)))
+        result.sort(key=lambda row: (row.get('library_added_at') is None, direction * (row.get('library_added_at') or 0)))
     if cancel.is_set():
         raise InterruptedError('查询已取消')
     return result

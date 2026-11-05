@@ -50,7 +50,7 @@ def verify_zip(path):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--portable-directory', type=Path, default=BASE / 'dist' / 'MoPlayer-UI-preview')
+    parser.add_argument('--portable-directory', type=Path, default=BASE / 'dist' / 'MoPlayer-startup-preview')
     parser.add_argument('--output-directory', type=Path, default=BASE / 'release')
     arguments = parser.parse_args()
     outputs = [package_portable(arguments.portable_directory, arguments.output_directory / 'MoPlayer-portable-win64.zip'),

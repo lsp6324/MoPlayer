@@ -15,7 +15,7 @@
 | application/file_tasks.py | 文件操作的准入、开始/结束生命周期、完成结果和可恢复失败分类。 |
 | application/cleanup.py | 独立旧入口清理的准入、节流、合并运行与保护路径快照，不拥有媒体生命周期。 |
 | infrastructure/archive_cleanup.py | 重试 cleanup_jobs；保护播放源及已重新成为有效路径的入口，校验身份/内容状态，失败持久记账，不回写分类元数据。 |
-| infrastructure/schema.py | SQLite PRAGMA user_version 的显式加法迁移；版本 1 创建 cleanup_jobs；版本 2 增加可空 archived_at 与归档日期索引，DDL 与版本号同事务提交，旧库日期保留未知。 |
+| infrastructure/schema.py | SQLite PRAGMA user_version 的显式加法迁移；版本 1 创建 cleanup_jobs；版本 2 增加可空 archived_at 与归档日期索引；版本 3 增加 in_library / library_added_at，与归档状态和日期分离。INSERT / 标记及归档 UPDATE 触发器在同一事务内记录首次入库，清空标记不退库，恢复任务也经过同一入口；旧已归档或已标记记录补入，可靠归档日期沿用为入库日期，其他旧日期保留未知。DDL、回填、触发器与版本号同事务提交。 |
 | application/classification.py | 冻结分类/归档输入，协调标签、评分和收藏写入及结果刷新；用操作前后的有效目录、元数据和标签结构判断实际变化，成功后交付回执及评分提示意图，无变化不发成功回执。 |
 | application/renaming.py | 固定视频 ID 和新名称，执行只读预检、文件任务准入及实际结果刷新；失败直接交付原位编辑器。 |
 | infrastructure/file_renaming.py | 校验并改名全部有效登记入口；冻结 jobs/action=rename 计划，按文件身份恢复，事务提交 name、original_name 和路径，不改变目录及分类状态。 |
@@ -28,7 +28,7 @@
 | application/file_results.py | FileNotice、播放上下文快照与完成交付协议；状态刷新结束后才完成依赖操作，刷新异常不会误放行换片。 |
 | application/playback.py | 播放会话中的续播、未确认跳转、终态和进度持久化规则。 |
 | application/library.py | 浏览快照、视频元数据、最近/收藏记录，以及扫描、取消、延迟导航和按稳定 ID 准备删除上下文；不拥有当前播放。 |
-| application/catalog.py | 不依赖 Qt/SQL/磁盘的库筛选值、标签祖先匹配、自然及日期排序，以及固定 ID 顺序的集合播放上下文；进度与路径仍按现有资料库解析。 |
+| application/catalog.py | 不依赖 Qt/SQL/磁盘的库筛选值、标签祖先匹配、自然及首次入库日期排序，以及固定 ID 顺序的集合播放上下文；仅以 in_library 判断库成员，不以 archived 判断，进度与路径仍按现有资料库解析。 |
 | infrastructure/library_preferences.py | 原子保存 data/library.json 中的筛选排序、列表/网格视图与当前页面，校验损坏输入。启动只采用筛选与视图，页面字段不决定打开哪一页；恢复不播放、不扫描。 |
 | catalog_panel.py / catalog_filter_popup.py / catalog_delegate.py / media_badges.py | 第一者持有工具栏、结果数、排序、列表/网格切换、已选条件摘要和库行视图，搜索合并计时也在此；第二者是筛选浮窗，只发出筛选值、重置与关闭意图，不查询存储或读取媒体；第三者按当前排布绘制已准备的库行，列表尺寸复用 library_views 的 THUMB_ROW / THUMB_VIEW / THUMB_RADIUS，与文件、最近、收藏页保持相同卡片比例；第四者向库行及 MediaHeader 提供相同胶囊和收藏绘制，评分复用 heart_rating。 |
 | infrastructure/library_repository.py | 面向应用和 UI 的视频、收藏、进度、目录及任务查询/写入；集中使用 SQL。所有视频行经 presented() 统一带出派生展示字段 kind 与 tag_names，使任何一次列表加载都不能让另一个列表丢掉标签或类型。 |

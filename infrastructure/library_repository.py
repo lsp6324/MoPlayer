@@ -33,7 +33,8 @@ class LibraryRepository:
                      tag_names=tuple(json.loads(row['tags'] or '[]'))) for row in rows]
 
     def videos(self, mode):
-        condition = {'videos': 'played>0', 'stars': 'star=1', 'archived': 'archived=1', 'all': '1'}[mode]
+        condition = {'videos': 'played>0', 'stars': 'star=1', 'archived': 'archived=1',
+                     'catalog': 'in_library=1', 'all': '1'}[mode]
         return self.presented(self.store.query('SELECT * FROM videos WHERE ' + condition + ' ORDER BY played DESC'))
 
     def video_details(self, video_ids):
@@ -48,7 +49,7 @@ class LibraryRepository:
     def catalog_data(self):
         # Query stable identities, never paths: hard links cannot duplicate rows.
         with self.store.lock:
-            rows = self.videos('archived')
+            rows = self.videos('catalog')
             schema = self.store.tag_layout()
         return rows, schema
 

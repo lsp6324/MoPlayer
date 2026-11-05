@@ -177,7 +177,7 @@ class VideoListModel(QAbstractListModel):
             return row
         if role in (Qt.DisplayRole, Qt.ToolTipRole):
             if role == Qt.ToolTipRole and 'tag_names' in row:
-                date = row.get('archived_at')
+                date = row.get('library_added_at')
                 stamp = datetime.fromtimestamp(date).strftime('%Y-%m-%d %H:%M') if date is not None else '未知'
                 kind = '图片' if row['kind'] == 'image' else '视频'
                 favorite = '已收藏' if row['star'] else '未收藏'

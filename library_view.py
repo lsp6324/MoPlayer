@@ -27,7 +27,6 @@ class LibraryView(QFrame):
     videoRequested = Signal(object)
     unfavoriteRequested = Signal(str)
     historyClearRequested = Signal()
-    archiveSettingsRequested = Signal()
 
     def __init__(self, controller, thumbnails, current_video, theme_owner, *, preferences=None):
         super().__init__(theme_owner)
@@ -96,7 +95,6 @@ class LibraryView(QFrame):
         self.catalog_panel.filtersChanged.connect(self._catalog_filters)
         self.catalog_panel.viewChanged.connect(lambda mode: self._remember_preferences())
         self.catalog_panel.openRequested.connect(self._open_catalog)
-        self.catalog_panel.settingsRequested.connect(self.archiveSettingsRequested)
         self.catalog_panel.retryRequested.connect(lambda: self.controller.query_catalog(self.catalog_panel.filters))
         layout.addWidget(self.stack, 1)
         self.cancel_button = button('取消扫描', lambda: controller.cancel(), role='quiet')

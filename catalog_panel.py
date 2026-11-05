@@ -87,7 +87,6 @@ class CatalogPanel(QWidget):
     filtersChanged = Signal(object)
     viewChanged = Signal(str)
     openRequested = Signal(str)
-    settingsRequested = Signal()
     retryRequested = Signal()
 
     def __init__(self, parent, *, theme_owner):
@@ -148,8 +147,6 @@ class CatalogPanel(QWidget):
         self.message.setAlignment(Qt.AlignCenter)
         self.message.setContentsMargins(12, 12, 12, 12)
         layout.addWidget(self.message)
-        self.empty_action = button('归档设置', self.settingsRequested.emit, role='quiet')
-        layout.addWidget(self.empty_action, alignment=Qt.AlignHCenter)
         self.retry = button('重新载入', self.retryRequested.emit, role='quiet')
         self.retry.hide()
         layout.addWidget(self.retry, alignment=Qt.AlignHCenter)
@@ -239,9 +236,8 @@ class CatalogPanel(QWidget):
     def present_status(self, count, total, pending, error):
         self.result.setText('查询中…' if pending else f'{count} / {total} 项')
         self.popup.result.setText('查询中…' if pending else f'{count} 项符合条件')
-        self.message.setText(error or ('还没有入库内容\n在文件页保存标签即可入库' if not total else '没有符合条件的内容\n试试减少筛选条件'))
+        self.message.setText(error or ('还没有入库内容\n在文件页添加标签、评分或收藏即可入库' if not total else '没有符合条件的内容\n试试减少筛选条件'))
         self.message.setVisible(not count and not pending or bool(error))
-        self.empty_action.setVisible(not total and not pending and not error)
         self.retry.setVisible(bool(error) and not pending)
         self.reset.setVisible(bool(not count and total and not pending and (self._summaries or self.filters.search)))
         self.list.setEnabled(not pending)

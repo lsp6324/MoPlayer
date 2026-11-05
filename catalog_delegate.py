@@ -1,4 +1,4 @@
-"""Archived cards consume prepared rows and share title metadata graphics."""
+"""Managed media cards consume prepared rows and share title metadata graphics."""
 from PySide6.QtCore import Qt, QRect, QRectF, QSize
 from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath
 from PySide6.QtWidgets import QStyledItemDelegate, QStyle

@@ -244,6 +244,38 @@ def run(destination):
         app.setActiveWindow(window)
         window.start(image_context,image_location)
         check('退出视频测试后图片继续可用', wait(lambda: window.player_view.image_view.has_image()))
+        # Real marker actions on unarchived identities must form the library
+        # without requiring file tasks, new paths, or any directory policy.
+        panel.reset_filters()
+        check('原位标记测试前清除筛选', wait(lambda: not controller.catalog_pending))
+        original_paths, marked_ids = [], []
+        for name in ('仅评分', '仅收藏', '仅浏览'):
+            path = samples / (name + '.png')
+            image = QImage(320, 180, QImage.Format_RGB32)
+            image.fill(QColor('#497e92'))
+            image.save(str(path))
+            original_paths.append(path)
+            marked_ids.append(window.catalog.register(path))
+        window.classification.rating(marked_ids[0], 0)
+        check('未归档文件评分零分即可入库', wait(lambda: not controller.catalog_pending)
+              and marked_ids[0] in controller.catalog_ids)
+        window.classification.favorite(marked_ids[1], True)
+        check('未归档文件收藏即可入库且仅浏览不入库', wait(lambda: not controller.catalog_pending)
+              and marked_ids[1] in controller.catalog_ids and marked_ids[2] not in controller.catalog_ids)
+        check('入库不移动原文件或创建归档任务', all(window.catalog.resolve(vid) == path
+              and not window.catalog.video(vid)['archived'] for vid, path in zip(marked_ids, original_paths))
+              and not window.catalog.pending_tasks())
+        added = [window.catalog.video(vid)['library_added_at'] for vid in marked_ids[:2]]
+        panel.change(score=0)
+        check('零分筛选命中未归档文件', wait(lambda: not controller.catalog_pending)
+              and controller.catalog_ids == [marked_ids[0]])
+        panel.reset_filters()
+        window.classification.rating(marked_ids[0], None)
+        window.classification.favorite(marked_ids[1], False)
+        check('清空标记仍保留库记录和首次入库日期', wait(lambda: not controller.catalog_pending)
+              and all(vid in controller.catalog_ids for vid in marked_ids[:2])
+              and [window.catalog.video(vid)['library_added_at'] for vid in marked_ids[:2]] == added)
+        screenshot('catalog-unarchived.png')
         panel.change(kind='all',score=7,score_mode='gte',tags=('摄影','旅行'),tag_mode='or')
         check('保存新的评分与标签规则', wait(lambda: not controller.catalog_pending))
         saved_filters = panel.filters

@@ -23,7 +23,7 @@ def test_upgrade_keeps_old_dates_unknown_and_preserves_rows(tmp_path):
         assert row['archived_at'] is None and row['score'] == 7 and row['position'] == 123
         assert store.resolve(vid) == media
         migrate(store.db)
-        assert store.query('PRAGMA user_version')[0]['user_version'] == 2
+        assert store.query('PRAGMA user_version')[0]['user_version'] == 3
     finally:
         store.db.close()
 
