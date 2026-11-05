@@ -72,6 +72,14 @@ def test_switching_same_named_videos_cancels_editor_and_ignores_late_rename(view
     assert view.header.filename=='same.mp4' and not view.header.error_label.isVisible()
 
 
+def test_live_file_task_preserves_play_and_seek_but_blocks_metadata_edits(view):
+    view.present_video(PlayerInfo('live.mp4',7,(),False,'live'))
+    view.present_transport(PlaybackStatus.PLAYING,True,False,file_busy=True)
+    assert view.play_button.isEnabled() and view.seekbar.isEnabled()
+    assert all(control.isEnabled() for control in view.transport_buttons)
+    assert not any(control.isEnabled() for control in view.classify_buttons)
+
+
 def test_theme_and_fullscreen_keep_transport_and_video_host(view):
     from ui import icon
     view.present_video(PlayerInfo('视频.mp4', None, (), False))

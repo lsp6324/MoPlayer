@@ -46,7 +46,7 @@ class Deletion:
                     self.save()
                 self.continue_after_delete(*context)
             return FileNotice(FileAction.DELETE, outcome)
-        return complete_file_task(source, FileAction.DELETE, reconcile, self.notify)
+        return self.tasks.track(complete_file_task(source, FileAction.DELETE, reconcile, self.notify))
 
     def continue_after_delete(self, context, location):
         self.clear()

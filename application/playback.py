@@ -40,16 +40,25 @@ class PlaybackSession:
         self.completed = False
         self.last_save = 0
         self._restore_requested = False
+        self.source = None
 
-    def begin(self, position, paused):
+    def begin(self, position, paused, *, source=None):
+        self.source = source
         self.resume = ResumeTarget(max(0, position), paused)
         self.pending_seek = None
         self.terminal_handled = self.completed = self._restore_requested = False
 
     def clear(self):
+        self.release_source()
         self.resume = self.pending_seek = None
         self.terminal_handled = True
         self.completed = self._restore_requested = False
+
+    def release_source(self):
+        self.source = None
+
+    def protected_paths(self):
+        return (self.source,) if self.source is not None else ()
 
     def paused_intent(self, backend_paused):
         return self.resume.paused if self.resume is not None else backend_paused

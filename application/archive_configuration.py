@@ -32,4 +32,4 @@ class ArchiveConfiguration:
             if outcome.status is not Status.CANCELLED:
                 self.refresh(affected)
             return FileNotice(action, outcome, len(affected))
-        return complete_file_task(source, action, reconcile, notify)
+        return self.tasks.track(complete_file_task(source, action, reconcile, notify))

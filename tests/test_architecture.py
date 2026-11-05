@@ -214,3 +214,14 @@ def test_filename_editor_cannot_rename_files_or_reach_storage_directly():
     for node in ast.walk(tree):
         if isinstance(node,ast.Call) and isinstance(node.func,ast.Attribute):
             assert node.func.attr not in {'rename','replace','unlink','link','stat','exists','open','submit','recover'}, 'The inline editor submits presentation intent through its injected port'
+
+
+def test_file_workflows_publish_reconciled_completion_to_navigation():
+    for name,tree in production_modules().items():
+        if not name.startswith('application.') or name=='application.file_results':
+            continue
+        parents={child:parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
+        for node in ast.walk(tree):
+            if isinstance(node,ast.Call) and isinstance(node.func,ast.Name) and node.func.id=='complete_file_task':
+                parent=parents[node]
+                assert isinstance(parent,ast.Call) and isinstance(parent.func,ast.Attribute) and parent.func.attr=='track', f'{name}: navigation must await reconciled completion'

@@ -2,7 +2,7 @@ import json  # 读取视频标签和诊断数据。
 import logging  # 记录可追踪的运行错误。
 import sys  # 区分源码和便携运行方式。
 from pathlib import Path  # 处理便携数据路径。
-if len(sys.argv) == 3 and sys.argv[1] in ('--ui-refresh-test', '--seek-notice-test', '--file-workflows-test', '--archive-settings-test', '--media-header-test', '--rename-test'):
+if len(sys.argv) == 3 and sys.argv[1] in ('--ui-refresh-test', '--seek-notice-test', '--file-workflows-test', '--archive-settings-test', '--media-header-test', '--rename-test', '--continuous-classification-test'):
     # A windowed EXE has no stderr; keep explicit test failures reviewable.
     _test_output = Path(sys.argv[2]).absolute()
     _test_output.mkdir(parents=True, exist_ok=True)
@@ -26,6 +26,8 @@ from application.file_tasks import FileTasks
 from application.classification import Classification
 from application.renaming import Renaming
 from infrastructure.file_renaming import FileRenaming
+from application.cleanup import Cleanup
+from infrastructure.archive_cleanup import ArchiveCleanup
 from application.deletion import Deletion
 from application.recovery import Recovery
 from application.file_results import FileAction, PlaybackTarget
@@ -62,13 +64,17 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
         self.library_controller = LibraryController(self.catalog, LibraryScanner(self.store),
             lambda function, callback: self.work(function, callback))
         self.playback = PlaybackSession()
-        self.user_actions = UserActions()
+        self.user_actions = UserActions(before_action=lambda:self.file_tasks.completion or Operation.success())
         self.tag_drafts = TagDrafts(self.catalog,
             lambda vid, values: self.classification.apply_tags(vid, values.tags, list(values.schema.values()), prompt_score=False),
             lambda: self.current, lambda: not self.busy)
         self.file_tasks = FileTasks(lambda function, callback: self.work(function, callback),
                                     self._begin_file_task, self._end_file_task, self.has_pending_file_tasks,
                                     prepare=self.thumbnail_service.stop)
+        self.cleanup_service = ArchiveCleanup(self.store)
+        self.cleanup = Cleanup(lambda function,callback:self.work(function,callback),self.cleanup_service.drain,
+            available=lambda:not self.busy and not self.has_pending_file_tasks(),
+            pending=lambda:bool(self.catalog.pending_tasks('cleanup_jobs')),protected=self.playback.protected_paths)
         self.rename_service = FileRenaming(self.store)
         self.renaming = Renaming(self.file_tasks, self.catalog, self.rename_service.submit,
             available=lambda: not self.busy, current_video=lambda: self.current, refresh=self._refresh_file_records,
@@ -78,12 +84,12 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
             available=lambda: not self.busy, refresh=self._refresh_file_records,
             restore_names=lambda: self.archive_configuration_service.restore_original_names(), notify=self._file_notice)
         self.classification = Classification(self.file_tasks, self.catalog,
-            lambda vid, score, tags, schema: self.tag_migration.submit(vid, score, tags, schema),
-            lambda vid, score, tags: self.archiver.submit(vid, score, tags),
+            lambda vid, score, tags, schema: self.tag_migration.submit(vid, score, tags, schema, defer_cleanup=True),
+            lambda vid, score, tags: self.archiver.submit(vid, score, tags, defer_cleanup=True),
             available=lambda: not self.busy, ensure_storage=self.ensure_storage,
-            current_video=lambda: self.current, refresh=self._refresh_file_records, notify=self._file_notice,
+            refresh=self._refresh_file_records, notify=self._file_notice,
             favorite_folders=lambda: self.storage.folders.favorite,
-            submit_favorite=lambda vid, score, tags, value: self.archiver.submit(vid, score, tags, favorite=value))
+            submit_favorite=lambda vid, score, tags, value: self.archiver.submit(vid, score, tags, favorite=value, defer_cleanup=True))
         self.deletion = Deletion(self.file_tasks, self.library_controller, lambda vid: self.deleter.submit(vid),
             available=lambda: not self.busy, playback_target=self._playback_target,
             navigation_busy=self._navigation_busy, mark_deleting=self.thumbnail_service.mark_deleting,
@@ -192,7 +198,7 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
         return operation.on_finished(ready)
 
     def open_library_video(self, selection):
-        if self.busy and not self.tag_drafts.saving:
+        if self.busy and self.file_tasks.active is None:
             return
         if selection.context is not None:
             self.start(selection.context, selection.location)
@@ -205,8 +211,8 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
         self.user_actions.request(opened, self.player_view.options.flush_pending)
 
 
-    def save(self):
-        if self.current and not self.busy:
+    def save(self, *, before_release=False):
+        if self.current and (before_release or not self.file_tasks.media_released):
             position = self.playback.position_to_save(
                 self.player.get_time(), ended=self.player.get_state() == self.vlc.State.Ended)
             if position is not None:
@@ -214,7 +220,7 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
                 self.library_controller.refresh((self.current,))
 
     def start(self, context, location):
-        if self.busy and not self.tag_drafts.saving:
+        if self.busy and self.file_tasks.active is None:
             self.message('文件任务正在处理，请稍候。')
             return
         self.user_actions.request(lambda: self._start(context, location), self.player_view.options.flush_pending)
@@ -236,7 +242,7 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
         self.refresh_title()
 
     def play_path(self, path, position, paused):
-        self.playback.begin(position, paused)
+        self.playback.begin(position, paused, source=str(path))
         self.player_view.media_loading()
         self.player.stop()
         media = self.instance.media_new(str(path))
@@ -255,7 +261,7 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
             self.vlc.State.Ended: PlaybackStatus.ENDED,
             self.vlc.State.Error: PlaybackStatus.ERROR,
         }.get(state, PlaybackStatus.IDLE)
-        self.player_view.present_transport(status, bool(self.current), self.busy)
+        self.player_view.present_transport(status, bool(self.current), self.file_tasks.media_released, file_busy=self.busy)
 
     def refresh_title(self):
         video = self.catalog.video(self.current) if self.current else None
@@ -297,9 +303,10 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
             self.library_view.hide()
 
     def tick(self):
+        self.cleanup.request()
         state = self.player.get_state() if self.current else self.vlc.State.NothingSpecial
         self.refresh_transport(state)
-        if not self.current or (self.busy and not self.tag_drafts.saving):
+        if not self.current or self.file_tasks.media_released:
             self.player_view.freeze_progress()
             return
         length, position = self.player.get_length(), self.player.get_time()
@@ -323,7 +330,7 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
                 self.fail('无法解码或读取此视频，请检查文件权限、完整性和编码。')
 
     def advance(self, direction, ended=False):
-        if not self.current or (self.busy and not self.tag_drafts.saving):
+        if not self.current or (self.busy and self.file_tasks.active is None):
             return
         self.user_actions.request(lambda: self._advance(direction, ended), self.player_view.options.flush_pending)
 
@@ -345,7 +352,7 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
         operation.on_finished(ready)
 
     def toggle(self):  # 空格或按钮切换暂停状态。
-        if self.current and not self.busy:  # 不操作空播放器或归档中的句柄。
+        if self.current and not self.file_tasks.media_released:
             if self.player.get_state() == self.vlc.State.Ended:  # 已结束时重新从头播放。
                 self.play_path(self.catalog.resolve(self.current), 0, False)  # 重播仍使用当前身份。
             else:  # 正常播放和暂停互相切换。
@@ -353,7 +360,7 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
                 self.refresh_transport()
 
     def seek(self, offset):
-        if self.current and not self.busy and self.player.get_length() > 0:
+        if self.current and not self.file_tasks.media_released and self.player.get_length() > 0:
             total = self.player.get_length()
             before, after = self.playback.relative_seek(self.player.get_time(), offset, total)
             self.set_playback_position(after, total)
@@ -366,7 +373,7 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
 
 
     def seek_fraction(self, fraction):
-        if self.current and not self.busy and self.player.get_length() > 0:
+        if self.current and not self.file_tasks.media_released and self.player.get_length() > 0:
             length = self.player.get_length()
             self.set_playback_position(int(fraction * length), length)
 
@@ -423,7 +430,7 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
 
 
     def delete_video(self, _target=None, _context=None):
-        if self.busy and not self.tag_drafts.saving:
+        if self.busy and self.file_tasks.active is None:
             self.message('文件任务正在处理，请稍候。')
             return
         selected = self.library_view.selection() if self.library_view.isVisible() and not self.player_view.fullscreen.active else None
@@ -492,7 +499,7 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
         if notice.outcome is None:
             self.message({FileAction.NAMES: '正在恢复已归档视频的原文件名……',
                           FileAction.TAGS: '正在应用标签并同步相关视频……',
-                          FileAction.ARCHIVE: '正在归档，完成后恢复原进度和播放状态。',
+                          FileAction.ARCHIVE: '正在保存分类并整理目录……',
                           FileAction.DELETE: '正在移入回收站……',
                           FileAction.RECOVERY: '正在恢复未完成文件任务……'}[notice.action])
             return
@@ -514,7 +521,7 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
             QTimer.singleShot(0, lambda: self.rating_dialog(notice.score_video))
 
     def _begin_file_task(self, policy):
-        self.save()
+        self.save(before_release=True)
         video = self.catalog.video(self.current) if self.current else None
         bookmark = (self.current, video['position'] if video else 0,
                     self.playback.paused_intent(self.player.get_state() != self.vlc.State.Playing),
@@ -528,6 +535,7 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
             if policy.release_media:
                 self.player.stop()
                 self.player.set_media(None)
+                self.playback.release_source()
         except Exception:
             self.busy = False
             self.thumbnail_service.pause(False)
@@ -582,12 +590,17 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
         dialog.setLayout(layout)  # 安装任务布局。
         text = QPlainTextEdit()  # 以只读文本展示持久任务。
         text.setReadOnly(True)  # 防止用户直接改写日志。
-        kinds = {'hierarchy_jobs': '标签结构', 'jobs': '文件操作', 'deletion_jobs': '删除', 'archive_setting_jobs': '归档整理'}
+        kinds = {'hierarchy_jobs': '标签结构', 'jobs': '文件操作', 'deletion_jobs': '删除', 'archive_setting_jobs': '归档整理', 'cleanup_jobs': '旧入口清理'}
         text.setPlainText('\n\n'.join(f'{kinds[row["kind"]]} {row["id"]}  [{row["state"]}]\n{row["error"] or "无错误"}' for row in self.catalog.task_history()) or '暂无文件任务。')
         layout.addWidget(text)  # 放置任务日志。
         retry = QPushButton('重试所有未完成任务')  # 明确执行恢复动作。
+        retry.setEnabled(bool(self.catalog.pending_tasks()))
         retry.clicked.connect(lambda: (dialog.accept(), self.recovery.retry()))  # 关闭列表后异步恢复。
         layout.addWidget(retry)  # 提供可见恢复入口。
+        clean = QPushButton('重试旧入口清理')
+        clean.setEnabled(bool(self.catalog.pending_tasks('cleanup_jobs')))
+        clean.clicked.connect(lambda:(dialog.accept(),self.cleanup.request(force=True)))
+        layout.addWidget(clean)
         dialog.exec()  # Esc 优先关闭当前弹窗。
 
 
@@ -624,7 +637,11 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
             self.message('系统缩略图正在配置，请等待完成后退出。')
             event.ignore()
             return
-        if self.busy and not self.tag_drafts.saving:
+        if self.busy:
+            if self.file_tasks.completion is not None:
+                self.user_actions.request(lambda:QTimer.singleShot(0,self.close),self.player_view.options.flush_pending,closing=True)
+                event.ignore()
+                return
             self.message('文件任务正在处理，请等待完成后退出。')
             event.ignore()
             return
@@ -642,6 +659,8 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
         self.timer.stop()
         self.player_view.shutdown()
         self.player.stop()
+        self.player.set_media(None)
+        self.playback.release_source()
         QApplication.instance().removeEventFilter(self)
         event.accept()
 
@@ -679,6 +698,9 @@ def main():  # 程序统一启动入口。
         return 1  # 报告失败退出码。
 
 if __name__ == '__main__':  # 仅直接运行时启动应用。
+    if len(sys.argv) == 3 and sys.argv[1] == '--continuous-classification-test':
+        from verify_continuous_classification import run
+        sys.exit(run(sys.argv[2]))
     if len(sys.argv) == 3 and sys.argv[1] == '--rename-test':
         from verify_renaming import run
         sys.exit(run(sys.argv[2]))

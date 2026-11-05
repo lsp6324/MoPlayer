@@ -25,4 +25,4 @@ class Renaming:
             if outcome.status is not Status.CANCELLED:
                 self.refresh((video_id,))
             return FileNotice(FileAction.RENAME, outcome)
-        return complete_file_task(source, FileAction.RENAME, reconcile, lambda notice: None)
+        return self.tasks.track(complete_file_task(source, FileAction.RENAME, reconcile, lambda notice: None))

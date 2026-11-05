@@ -79,7 +79,8 @@ class UserActions:
     While the same commit is pending, the latest selection wins. An explicit
     close request takes precedence over selection changes until it completes.
     """
-    def __init__(self):
+    def __init__(self, before_action=lambda: Operation.success()):
+        self.before_action = before_action
         self._waiting = None
         self._action = None
         self._closing = False
@@ -92,16 +93,20 @@ class UserActions:
         if self._waiting is not None:
             return self._waiting
         self._commit = commit
-        operation = commit()
+        operation = self._prepare()
         self._waiting = operation
         operation.on_finished(self._finished)
         return operation
+
+    def _prepare(self):
+        barrier = self.before_action()
+        return self._commit() if not barrier.pending and barrier.outcome.succeeded else barrier
 
     def _finished(self, outcome):
         if outcome.succeeded:
             # A caller may have changed its working draft while the submitted
             # snapshot was saving. Confirm that draft before executing an intent.
-            remaining = self._commit()
+            remaining = self._prepare()
             if remaining.pending:
                 self._waiting = remaining
                 remaining.on_finished(self._finished)

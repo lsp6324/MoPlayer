@@ -50,7 +50,7 @@ def test_configuration_refreshes_before_completion_and_preserves_failed_state():
 
 def classification(repo,tasks,events,folders=True,submit=None):
     return Classification(tasks,repo,lambda *args:None,lambda *args:None,
-        available=lambda:True,ensure_storage=lambda:True,current_video=lambda:'a',
+        available=lambda:True,ensure_storage=lambda:True,
         refresh=lambda ids:events.append(('refresh',tuple(ids))),notify=events.append,
         favorite_folders=lambda:folders,submit_favorite=submit)
 

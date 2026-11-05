@@ -174,11 +174,14 @@ class PlayerView(QFrame):
     def video_handle(self):
         return int(self.surface.winId())
 
-    def present_transport(self, status, loaded, busy):
+    def present_transport(self, status, loaded, busy, *, file_busy=None):
         self._transport = status, loaded, busy
-        self.header.set_rename_available(loaded and not busy)
-        for control in self.transport_buttons + self.classify_buttons:
+        file_busy = busy if file_busy is None else file_busy
+        self.header.set_rename_available(loaded and not file_busy)
+        for control in self.transport_buttons:
             control.setEnabled(loaded and not busy)
+        for control in self.classify_buttons:
+            control.setEnabled(loaded and not file_busy)
         self.seekbar.setEnabled(loaded and not busy)
         self.media_badge.setText({PlaybackStatus.PLAYING: '正在播放', PlaybackStatus.PAUSED: '已暂停',
                                  PlaybackStatus.ENDED: '播放结束', PlaybackStatus.IDLE: '等待播放'}.get(status, '正在加载'))

@@ -8,7 +8,7 @@ from application.deletion import Deletion
 from application.recovery import Recovery
 from application.file_results import PlaybackTarget, FileAction
 from application.file_tasks import FileTasks
-from application.operations import Operation, Outcome, Status
+from application.operations import Operation, Outcome, Status, UserActions
 
 
 class Repository:
@@ -40,7 +40,7 @@ class Harness:
                                lambda: bool(self.repo.pending_tasks()), prepare=lambda: self.order.append('prepare'))
         self.classification = Classification(self.tasks, self.repo, self.submit_tags, self.submit_archive,
             available=lambda: not self.busy, ensure_storage=lambda: self.configured,
-            current_video=lambda: self.target.video_id, refresh=self.refresh, notify=self.notices.append)
+            refresh=self.refresh, notify=self.notices.append)
         library = SimpleNamespace(locate_video=lambda vid: self.preparation,
                                   advance=lambda context, location, direction: self.next)
         self.deletion = Deletion(self.tasks, library, self.submit_delete,
@@ -166,11 +166,11 @@ def test_media_restore_failure_still_refreshes_records_but_does_not_acknowledge_
     assert h.notices[-1].score_video is None and not h.busy
 
 
-@pytest.mark.parametrize('video_id,release', [('a', True), ('b', False)])
-def test_archive_release_policy_uses_target_identity_and_updates_that_record(video_id, release):
+@pytest.mark.parametrize('video_id', ['a', 'b'])
+def test_classification_keeps_current_media_and_updates_only_the_target(video_id):
     h = Harness()
     operation = h.classification.archive(video_id, 8, ['tag'])
-    assert h.policy.release_media is release
+    assert not h.policy.release_media
     h.finish()
     assert operation.outcome.succeeded and h.visible[video_id] == 'archived'
 
@@ -353,3 +353,39 @@ def test_recovery_replays_rename_before_tag_batches_and_refreshes_renamed_identi
     h.finish()
     assert operation.outcome.succeeded and h.visible['b']=='renamed.mp4'
     assert h.order.index('rename-recovered')<h.order.index('tags-recovered')
+
+
+def test_navigation_after_rating_waits_for_reconciliation_and_last_selection_wins():
+    h=Harness()
+    actions=UserActions(before_action=lambda:h.tasks.completion or Operation.success())
+    operation=h.classification.archive('a',8,[])
+    selected=[]
+    actions.request(lambda:selected.append(('b',h.visible['a'])),lambda:Operation.success())
+    actions.request(lambda:selected.append(('c',h.visible['a'])),lambda:Operation.success())
+    assert not selected and not h.tasks.media_released
+    h.finish()
+    assert operation.outcome.succeeded and selected==[('c','archived')]
+    assert h.tasks.completion is None
+
+
+def test_navigation_never_continues_on_raw_io_success_if_reconciliation_failed():
+    h=Harness()
+    actions=UserActions(before_action=lambda:h.tasks.completion or Operation.success())
+    h.classification.refresh=lambda ids:(_ for _ in ()).throw(ValueError('projection failed'))
+    operation=h.classification.archive('a',8,[])
+    selected=[]
+    actions.request(lambda:selected.append('b'),lambda:Operation.success())
+    h.finish()
+    assert operation.outcome.status is Status.FAILED and not selected and h.tasks.completion is None
+
+
+def test_rejected_reentrant_task_cannot_unpublish_the_running_completion():
+    h=Harness()
+    h.classification.available=lambda:True
+    first=h.classification.archive('a',8,[])
+    published=h.tasks.completion
+    rejected=h.classification.archive('b',9,[])
+    assert rejected.outcome.status is Status.CANCELLED and h.tasks.completion is published
+    assert h.tasks.completion.pending
+    h.finish()
+    assert first.outcome.succeeded and h.visible['b']=='b' and h.tasks.completion is None

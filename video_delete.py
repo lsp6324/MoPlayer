@@ -77,6 +77,11 @@ class DeletionManager:  # 用持久任务协调文件回收和元数据提交。
                 raise RuntimeError('此视频有未完成归档，请先通过任务列表恢复。')  # 不删除归档的最后安全入口。
             record = self.store.video(vid)  # 保存当前元数据以供审计与恢复诊断。
             paths = self.store.query('SELECT * FROM paths WHERE id=? ORDER BY path', (vid,))  # 只处理明确登记的入口。
+            known = {str(Path(row['path'])).casefold() for row in paths}
+            for retired in self.store.query('SELECT * FROM cleanup_jobs WHERE video=? AND state<>"done"',(vid,)):
+                if retired['path'].casefold() not in known and not self.store.query('SELECT id FROM paths WHERE path=?',(retired['path'],)):
+                    paths.append(retired)
+                    known.add(retired['path'].casefold())
             valid = []  # 计划中仅包含当前确实匹配的文件。
             for row in paths:  # 提交前完整预检，避免删了一半才发现同名替换。
                 path = Path(row['path'])  # 不使用文件名搜索其他视频。
@@ -120,6 +125,7 @@ class DeletionManager:  # 用持久任务协调文件回收和元数据提交。
                 with self.store.lock, self.store.db:  # 文件已回收时，数据库删除一次性提交。
                     self.store.db.execute('DELETE FROM paths WHERE id=?', (plan['video'],))  # 不删除后来绑定到其他 ID 的路径。
                     self.store.db.execute('DELETE FROM videos WHERE id=?', (plan['video'],))  # 同步移除历史、收藏、评分和标签关系。
+                    self.store.db.execute('UPDATE cleanup_jobs SET state="done",error=NULL,updated=? WHERE video=?',(time.time(),plan['video']))
                     self.store.db.execute('UPDATE deletion_jobs SET state="done",error=NULL,updated=? WHERE id=?', (time.time(), job))  # 任务完成与元数据删除保持原子性。
                 logging.info('视频已移至回收站 %s 共 %s 个入口', plan['video'], len(plan['paths']))  # 不记录虚假的成功状态。
                 return plan  # 返回显示所需的名字和入口数。

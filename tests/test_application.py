@@ -209,3 +209,14 @@ def test_completed_media_stays_at_zero_until_a_new_session_starts():
     session.begin(1234, False)
     session.restore(playing=True, paused=False, duration=100000)
     assert session.position_to_save(1500, ended=False) == 1500
+
+
+def test_source_protection_changes_only_with_open_and_release():
+    session=PlaybackSession()
+    session.begin(0,False,source='old.mp4')
+    session.seek(5000,10000)
+    assert session.protected_paths()==('old.mp4',)
+    session.begin(0,False,source='next.mp4')
+    assert session.protected_paths()==('next.mp4',)
+    session.release_source()
+    assert not session.protected_paths()

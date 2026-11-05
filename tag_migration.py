@@ -15,7 +15,7 @@ class TagMigration:  # 在现有逐视频归档日志之上协调全局分类迁
         if self.fault:  # 故障注入只用于隔离验收。
             self.fault(state)  # 正式运行不会主动中断。
 
-    def submit(self, vid, score, tags, rows):  # 明确确认后才创建全库迁移意图。
+    def submit(self, vid, score, tags, rows, *, defer_cleanup=False):  # 明确确认后才创建全库迁移意图。
         with self.archiver.lock, self.lock, self.store.file_lock:  # 与归档设置保持相同锁顺序。
             if self.store.query('SELECT id FROM archive_setting_jobs WHERE state<>"done"'):
                 raise RuntimeError('有未完成的归档设置整理，请先恢复。')
@@ -46,6 +46,8 @@ class TagMigration:  # 在现有逐视频归档日志之上协调全局分类迁
             if not any(entry['video'] == vid for entry in entries):  # 当前身份已被外部删除时不得作用于其他视频。
                 raise FileNotFoundError('当前视频记录已不存在，未提交标签修改。')  # 保留原全局结构。
             plan = {'layout': list(layout.values()), 'videos': entries, 'current': vid, 'archive_root': str(self.archiver.root), 'archive_folders': self.archiver.folders.to_dict()}  # 冻结根目录，重启后不使用后来修改的设置。
+            if defer_cleanup:
+                plan['defer_cleanup']=True
             job = uuid.uuid4().hex  # 分配本次迁移身份。
             self.store.execute('INSERT INTO hierarchy_jobs VALUES(?,?,?,?,?)', (job, 'planned', json.dumps(plan, ensure_ascii=False), None, time.time()))  # 任何文件修改之前记录恢复批次。
             return self.run(job)  # 开始逐视频安全归档。
@@ -68,7 +70,8 @@ class TagMigration:  # 在现有逐视频归档日志之上协调全局分类迁
                     if entry.get('metadata_only'):  # 全局删除不让原本未归档的视频突然归档。
                         self.store.execute('UPDATE videos SET tags=? WHERE id=?', (json.dumps(entry['tags'], ensure_ascii=False), entry['video']))  # 仍由持久批次记录进度以便恢复。
                     else:  # 已归档视频或本次主动确认的视频同步实际目录。
-                        batch_archiver.submit(entry['video'], entry['score'], entry['tags'], layout=layout, hierarchy_job=job)  # 使用冻结根目录创建入口，最后才清理旧路径。
+                        batch_archiver.submit(entry['video'], entry['score'], entry['tags'], layout=layout, hierarchy_job=job,
+                                              defer_cleanup=plan.get('defer_cleanup',False))
                     entry['done'] = True  # 单视频归档真正完成后再记录完成。
                     self.checkpoint(job, plan, 'migrating')  # 断电后从下一条继续。
                 with self.store.lock, self.store.db:  # 所有视频完成后一次提交公共标签结构。

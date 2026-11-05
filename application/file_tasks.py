@@ -16,15 +16,35 @@ class FileTasks:
         self.has_pending = has_pending
         self.prepare = prepare
         self.active: Operation | None = None
+        self.policy = None
+        self.completion = None
+
+    def track(self, operation):
+        """Navigation waits for the workflow's reconciled result, not just I/O."""
+        if not operation.pending:
+            return operation
+        self.completion = operation
+        def settled(outcome):
+            if self.completion is operation:
+                self.completion = None
+        operation.on_finished(settled)
+        return operation
+
+    @property
+    def media_released(self):
+        return bool(self.active is not None and self.policy.release_media)
 
     def run(self, work, *, policy=FileTaskPolicy()):
         if self.active is not None:
             return Operation.cancelled()
         operation = self.active = Operation()
+        self.track(operation)
+        self.policy = policy
         try:
             bookmark = self.begin(policy)
         except Exception as error:
             self.active = None
+            self.policy = None
             operation.finish(Outcome(Status.FAILED, error=error))
             return operation
 
@@ -34,6 +54,7 @@ class FileTasks:
             except Exception as restore_error:
                 error = restore_error if error is None else RuntimeError(f'{error}\n恢复播放失败：{restore_error}')
             self.active = None
+            self.policy = None
             operation.finish(Outcome(Status.FAILED if error else Status.SUCCEEDED,
                                      value=value, error=error,
                                      recoverable=bool(error and self.has_pending())))

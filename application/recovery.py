@@ -60,4 +60,4 @@ class Recovery:
             if continuing:
                 self.continue_after_delete(playback.context, playback.location)
             return FileNotice(FileAction.RECOVERY, outcome, continuing=continuing)
-        return complete_file_task(source, FileAction.RECOVERY, reconcile, self.notify)
+        return self.tasks.track(complete_file_task(source, FileAction.RECOVERY, reconcile, self.notify))

@@ -11,7 +11,8 @@ from application.tag_drafts import TagValues
 
 
 class LibraryRepository:
-    TASK_TABLES = ('jobs', 'hierarchy_jobs', 'deletion_jobs', 'archive_setting_jobs')
+    BLOCKING_TABLES = ('jobs', 'hierarchy_jobs', 'deletion_jobs', 'archive_setting_jobs')
+    TASK_TABLES = (*BLOCKING_TABLES, 'cleanup_jobs')
 
     def __init__(self, store):
         self.store = store
@@ -64,7 +65,7 @@ class LibraryRepository:
         return self.store.register(path)
 
     def pending_tasks(self, table=None):
-        tables = (table,) if table else self.TASK_TABLES
+        tables = (table,) if table else self.BLOCKING_TABLES
         if any(name not in self.TASK_TABLES for name in tables):
             raise ValueError('Unknown task kind')
         return [dict(row, kind=name) for name in tables for row in

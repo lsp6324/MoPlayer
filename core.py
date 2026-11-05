@@ -9,6 +9,7 @@ import threading  # 串行化数据库写入。
 import time  # 记录历史时间。
 import uuid  # 生成不依赖路径的视频标识。
 from application.archive_folders import ArchiveFolders
+from infrastructure.schema import migrate
 from pathlib import Path  # 统一处理 Windows 路径。
 
 ARCHIVE_ROOT = Path('E:/我觉得是学习资料')  # 固定用户指定的归档根目录。
@@ -124,6 +125,7 @@ class Store:  # 管理持久视频身份和元数据。
         self.execute('CREATE TABLE IF NOT EXISTS archive_setting_jobs(id TEXT PRIMARY KEY,state TEXT,plan TEXT,error TEXT,updated REAL)')
         if 'original_name' not in {row['name'] for row in self.query('PRAGMA table_info(videos)')}:  # 兼容已有便携数据库并保留历史身份。
             self.execute('ALTER TABLE videos ADD COLUMN original_name TEXT')  # 独立保存原文件名，旧记录首次归档时补全。
+        migrate(self.db)
 
     def query(self, sql, args=()):  # 提供线程安全查询。
         with self.lock:  # 避免连接交叉使用。
@@ -141,6 +143,10 @@ class Store:  # 管理持久视频身份和元数据。
         path = str(Path(path).absolute())  # 统一数据库记录为绝对路径。
         key = identity(path)  # 查询真实文件身份。
         with self.lock, self.db:  # 原子登记避免扫描线程重复创建身份。
+            retired = self.db.execute('SELECT c.video FROM cleanup_jobs c JOIN videos v ON v.id=c.video WHERE c.path=? AND c.identity=? AND c.state<>"done" LIMIT 1',(path,key)).fetchone()
+            active = self.db.execute('SELECT id FROM paths WHERE path=? AND identity=?',(path,key)).fetchone()
+            if retired and not active:
+                return retired['video']  # 已提交分类的旧入口不是新的可播放位置，扫描不将其重新登记。
             row = self.db.execute('SELECT id FROM paths WHERE identity=? LIMIT 1', (key,)).fetchone()  # 优先按硬链接身份查找。
             if not row:  # 跨卷归档入口可能先于元数据提交被扫描到。
                 for pending in self.db.execute('SELECT video,plan FROM jobs WHERE state<>"done"').fetchall():  # 查找正在提交的归档身份。
@@ -314,7 +320,7 @@ class Archiver:  # 使用可重放任务协调数据库和文件系统。
         if self.fault:  # 测试覆盖断电式中断位置。
             self.fault(state)  # 故障注入不参与正式运行。
 
-    def submit(self, vid, score, tags, layout=None, hierarchy_job=None, *, folders=None, favorite=None, settings_job=None, preserve_directories=False):  # 创建单视频归档或全局结构迁移的子任务。
+    def submit(self, vid, score, tags, layout=None, hierarchy_job=None, *, folders=None, favorite=None, settings_job=None, preserve_directories=False, defer_cleanup=False):  # 创建单视频归档或全局结构迁移的子任务。
         with self.lock, self.store.file_lock:  # 文件操作与目录扫描的身份登记共用串行边界。
             if any(row['id'] != settings_job for row in self.store.query('SELECT id FROM archive_setting_jobs WHERE state<>"done"')):
                 raise RuntimeError('有未完成的归档设置整理，请先在文件任务中恢复。')
@@ -334,14 +340,12 @@ class Archiver:  # 使用可重放任务协调数据库和文件系统。
             tags = canonical_tags(tags, layout)  # 小类隐含父级，不生成重复的大类入口。
             if self.store.query('SELECT id FROM jobs WHERE state<>"done"'):  # 失败任务需先恢复以避免相互覆盖。
                 raise RuntimeError('有未完成归档，请先通过“归档任务”重试。')  # 显示真实状态。
-            require_ntfs(self.root)  # 创建任务前检查目标能力。
             source = self.store.resolve(vid)  # 只使用已验证视频位置。
             record = self.store.video(vid)  # 保存原始状态和名称。
             original_name = record['original_name'] or record['name']  # 老版本数据使用原显示名初始化，之后始终复用该原名。
             name = archive_name(original_name)  # 文件操作之前校验记录的原名。
             job = uuid.uuid4().hex  # 为归档分配稳定任务标识。
             stage = self.root / '.moplayer-staging' / job  # 独立暂存目录保证中断可定位。
-            stage.mkdir(parents=True, exist_ok=True)  # 不与用户视频目录重名。
             old = []  # 保存允许清理的已知入口。
             for row in self.store.query('SELECT * FROM paths WHERE id=?', (vid,)):  # 枚举当前已知入口。
                 try:  # 跳过已失效路径。
@@ -359,7 +363,6 @@ class Archiver:  # 使用可重放任务协调数据库和文件系统。
                 for component in (folder, *folder.parents):
                     if component.exists() and getattr(component.lstat(), 'st_file_attributes', 0) & 0x400:
                         raise OSError(f'归档目录含重解析点，拒绝写入：{component}')
-                folder.mkdir(parents=True, exist_ok=True)  # 确保目标标签目录存在。
                 target = folder / name  # 每个分类入口都保留同一原文件名。
                 counter = 0  # 冲突时追加稳定标识和序号。
                 while target.exists() and identity(target) != identity(source):  # 不覆盖同名不同视频。
@@ -368,9 +371,21 @@ class Archiver:  # 使用可重放任务协调数据库和文件系统。
                     if len(target.name.encode('utf-16-le')) // 2 > 255:  # 冲突后缀也不能超出 Windows 文件名上限。
                         raise ValueError('增加同名冲突后缀后文件名过长，请缩短标签后重试。')  # 来源文件和原有入口继续保留。
                 targets.append(str(target))  # 固化任务目标路径。
+            if defer_cleanup and record['archived'] and {os.path.normcase(p) for p in targets}=={os.path.normcase(row['path']) for row in old}:
+                with self.store.lock,self.store.db:
+                    self.store.db.execute('UPDATE videos SET score=?,tags=? WHERE id=?',(score,json.dumps(tags,ensure_ascii=False),vid))
+                    if favorite is not None:
+                        self.store.db.execute('UPDATE videos SET star=? WHERE id=?',(star,vid))
+                    for tag in tags:
+                        self.store.db.execute('INSERT OR IGNORE INTO tags VALUES(?)',(tag,))
+                return vid  # 目录未变化时只提交元数据，不创建文件任务日志或暂存入口。
+            require_ntfs(self.root)  # 真正需要文件操作时才检查卷与硬链接能力。
+            stage.mkdir(parents=True, exist_ok=True)
             plan = dict(video=vid, source=str(source), source_identity=identity(source), size=source.stat().st_size, mtime=source.stat().st_mtime_ns, anchor=str(stage / original_name), targets=targets, old=old, score=score, tags=tags, name=name, original_name=original_name)  # 恢复日志同时固化新文件名与永久原名。
             if favorite is not None:
                 plan['favorite'] = star
+            if defer_cleanup:
+                plan['defer_cleanup'] = True
             self.store.execute('INSERT INTO jobs VALUES(?,?,?,?,?,?)', (job, vid, 'planned', json.dumps(plan, ensure_ascii=False), None, time.time()))  # 先持久化计划再修改视频文件。
             return self.run(job)  # 执行幂等归档流程。
 
@@ -434,7 +449,20 @@ class Archiver:  # 使用可重放任务协调数据库和文件系统。
                         self.store.db.execute('INSERT OR REPLACE INTO paths VALUES(?,?,?)', (target, plan['video'], plan['anchor_identity']))  # 复用原视频 ID。
                     for tag in plan['tags']:  # 成功确认的标签进入公共标签库。
                         self.store.db.execute('INSERT OR IGNORE INTO tags VALUES(?)', (tag,))  # 重复标签只保留一份。
+                    if plan.get('defer_cleanup'):
+                        target_keys = {os.path.normcase(path) for path in plan['targets']}
+                        retired = [old for old in plan['old'] if os.path.normcase(old['path']) not in target_keys]
+                        if anchor.exists():
+                            stat = anchor.stat()
+                            retired.append(dict(path=str(anchor),identity=plan['anchor_identity'],size=stat.st_size,mtime=stat.st_mtime_ns))
+                        for index,old in enumerate(retired):
+                            self.store.db.execute('INSERT OR IGNORE INTO cleanup_jobs VALUES(?,?,?,?,?,?,?,?,?)',
+                                (f'{job}:{index}',plan['video'],old['path'],old['identity'],old.get('size',plan['size']),old.get('mtime',plan['mtime']),'pending',None,time.time()))
+                            self.store.db.execute('DELETE FROM paths WHERE path=? AND id=?',(old['path'],plan['video']))
                 self.checkpoint(job, plan, 'committed')  # 数据库已指向有效新入口。
+                if plan.get('defer_cleanup'):
+                    self.checkpoint(job,plan,'done')
+                    return plan['video']
                 target_keys = {os.path.normcase(x) for x in plan['targets']}  # Windows 路径比较忽略大小写。
                 for old in plan['old']:  # 最后清理之前已登记的入口。
                     path = Path(old['path'])  # 转换可操作路径。
