@@ -2,7 +2,7 @@ import json  # 读取视频标签和诊断数据。
 import logging  # 记录可追踪的运行错误。
 import sys  # 区分源码和便携运行方式。
 from pathlib import Path  # 处理便携数据路径。
-if len(sys.argv) == 3 and sys.argv[1] in ('--ui-refresh-test', '--seek-notice-test', '--file-workflows-test', '--archive-settings-test', '--media-header-test', '--rename-test', '--continuous-classification-test'):
+if len(sys.argv) == 3 and sys.argv[1] in ('--ui-refresh-test', '--seek-notice-test', '--file-workflows-test', '--archive-settings-test', '--media-header-test', '--rename-test', '--continuous-classification-test', '--portable-layout-test', '--storage-test'):
     # A windowed EXE has no stderr; keep explicit test failures reviewable.
     _test_output = Path(sys.argv[2]).absolute()
     _test_output.mkdir(parents=True, exist_ok=True)
@@ -40,7 +40,7 @@ from application.archive_configuration import ArchiveConfiguration
 from infrastructure.archive_configuration import ArchiveConfiguration as ArchiveConfigurationService
 from storage_settings import StorageSettings  # 加载每位用户独立的存储路径与设置窗口。
 
-from runtime import BASE, BUNDLE, create_player
+from runtime import BASE, BUNDLE, configure_portable, create_player
 
 
 from window_chrome import ChromeWindow
@@ -50,7 +50,7 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
         super().__init__()  # 创建主窗口。
         self.store = Store(data_dir or BASE / 'data')  # 元数据不依赖开发环境路径。
         self.catalog = LibraryRepository(self.store)
-        self.storage = StorageSettings(self.store.directory)  # 首次运行没有默认归档目录。
+        self.storage = StorageSettings(self.store.directory)  # 未配置时使用程序旁 video。
         self.legacy_storage_recovery = self.storage.root is None and self.has_pending_file_tasks()  # 旧版本未完成任务先沿用其原路径恢复。
         from core import ARCHIVE_ROOT  # 旧固定路径只供旧版本已提交任务兼容恢复。
         self.archiver = Archiver(self.store, ARCHIVE_ROOT if self.legacy_storage_recovery else self.storage.root, folders=self.storage.folders)  # 正常新安装不再依赖 E 盘。
@@ -166,7 +166,7 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
         return ArchiveSettingsDialog(self, root=self.storage.root, folders=self.storage.folders,
             error=self.storage.error, apply=self.archive_configuration.apply, first_run=first_run).exec() == QDialog.Accepted  # 取消不保存路径。
 
-    def initialize_storage(self):  # 正常启动时只在未配置情况下弹出首次设置。
+    def initialize_storage(self):  # 默认位置无需引导；损坏配置仍提示修复。
         if self.storage.root is not None:  # 已配置用户不被重复打扰。
             return  # 不扫描或移动任何视频。
         if self.busy:  # 旧版已提交任务的恢复先完成。
@@ -615,7 +615,7 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
         dialog = QMessageBox(self)  # 启用前说明系统关联与便携运行的区别。
         dialog.setWindowTitle('资源管理器 · 视频缩略图支持')  # 明确该设置影响文件夹中的缩略图。
         dialog.setText('启用后，资源管理器会为新旧视频按需生成缩略图，并兼容 MoPlayer 默认打开方式。')  # 说明按文件类型长期生效。
-        dialog.setInformativeText('使用 Icaros 3.3.6 官方便携组件，支持常见 H.264、HEVC、VP9、AV1 等编码。\n组件保存在 E:\\tools\\videoplayerenv\\plugins，首次配置可能弹出 Windows UAC。\n此功能需要单独注册系统组件；移动播放器仍可运行，但请保留上述组件目录。损坏、加密或组件不支持的文件仍可能只显示图标。')  # 给出用户需要了解的部署约束。
+        dialog.setInformativeText('使用 Icaros 3.3.6 官方便携组件，支持常见 H.264、HEVC、VP9、AV1 等编码。\n组件、下载与备份保存在程序旁 data/integrations/explorer-thumbnails，首次配置可能弹出 Windows UAC。\n此功能会注册 Windows 系统组件；移动程序文件夹后，需要重新启用以更新注册路径。损坏、加密或组件不支持的文件仍可能只显示图标。')
         enable = dialog.addButton('启用 / 修复', QMessageBox.AcceptRole)  # 用户明确选择才进行注册与下载。
         dialog.addButton('取消', QMessageBox.RejectRole)  # 取消不更改系统配置。
         dialog.exec()  # 保持对话框输入优先规则。
@@ -667,7 +667,12 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
 def main():  # 程序统一启动入口。
     import ctypes  # 为 Windows 任务栏设置独立的应用身份。
     ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('MoPlayer.Desktop')  # 让任务栏使用云璃应用图标。
-    app = QApplication(sys.argv)  # 初始化 Windows GUI 应用。
+    try:
+        configure_portable()
+    except OSError as error:
+        ctypes.windll.user32.MessageBoxW(None, f'程序文件夹无法写入，请解压到可写目录后运行。\n{error}', 'MoPlayer 启动失败', 0x10)
+        return 1
+    app = QApplication(sys.argv)  # 路径确定后再初始化 GUI。
     app.setWindowIcon(QIcon(str(BUNDLE / 'assets/yunli.ico')))  # 为主窗口与弹窗提供统一图标。
     directory = BASE / 'data'  # 便携数据与程序保持同目录。
     try:  # 数据目录不可写时明确说明原因。
@@ -698,6 +703,9 @@ def main():  # 程序统一启动入口。
         return 1  # 报告失败退出码。
 
 if __name__ == '__main__':  # 仅直接运行时启动应用。
+    if len(sys.argv) == 3 and sys.argv[1] == '--portable-layout-test':
+        from verify_portable_layout import run
+        sys.exit(run(sys.argv[2]))
     if len(sys.argv) == 3 and sys.argv[1] == '--continuous-classification-test':
         from verify_continuous_classification import run
         sys.exit(run(sys.argv[2]))

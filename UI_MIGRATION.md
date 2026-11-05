@@ -1,5 +1,7 @@
 # UI 迁入说明
 
+便携目录调整（2026-11-05）：新安装默认归档到程序旁 video，正常启动不再强制首次设置；损坏配置仍提示修复。已有自选根继续保留，归档设置仍通过应用流程整理已归档视频。runtime 在创建 Qt/VLC 前配置包内临时文件和应用默认 Qt 设置，VLC 3 使用 portable，禁用无法重定向的 Qt OpenGL 磁盘缓存。资源管理器缩略图功能改用 data/integrations/explorer-thumbnails，仍由用户主动启用，界面说明移动后需要重新注册。运行目录、自选位置兼容和真实默认归档通过独立桌面 --portable-layout-test 与更新后的 --storage-test 验证。
+
 后续开发先阅读 `AGENTS.md` 和 `ARCHITECTURE.md`，其中的职责、状态所有权和依赖检查同样适用于新增功能与修复。
 
 基于远端 `main` 的 `66dfc67c1d5857beaeb8df495f30c43063befc16`，在 `feature/ui-refresh` 分支适配本地界面。

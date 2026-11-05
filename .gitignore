@@ -6,6 +6,8 @@ build/
 
 # 排除用户数据库、历史、收藏和缓存。
 data/
+/portable/
+/video/
 *.sqlite3
 *.sqlite3-*
 __pycache__/

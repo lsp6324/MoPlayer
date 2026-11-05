@@ -19,21 +19,25 @@ def validate_storage_path(value):  # 只接受用户明确选择的本地绝对�
 
 class StorageSettings:  # 本地偏好不写入源码或公共仓库。
     def __init__(self, directory):  # 配置与便携数据放在一起。
-        self.file = Path(directory) / 'storage.json'  # 不更改历史视频数据库位置。
+        self.file = Path(directory).absolute() / 'storage.json'  # 不更改历史视频数据库位置。
         self.folders = ArchiveFolders()
-        self.root, self.error = None, ''  # 未配置时没有默认归档盘符。
+        self.root, self.error = None, ''
         try:  # 不把损坏配置当作可用路径。
             settings = json.loads(self.file.read_text(encoding='utf-8'))  # 读取上次明确保存的位置。
             value = settings['archive_root']  # 保持配置格式简单明确。
-            if not isinstance(value, str) or not Path(value).is_absolute():  # 拒绝错误类型或相对位置。
+            if not isinstance(value, str) or (value != 'video' and not Path(value).is_absolute()):
                 raise ValueError('保存的存储路径无效，请重新选择。')  # 启动时提示重新配置。
             folders = ArchiveFolders.from_dict(settings['archive_folders']) if 'archive_folders' in settings else ArchiveFolders()
             self.folders = folders
-            self.root = Path(value)  # 启动不扫描、移动或创建视频文件夹。
+            self.root = self.default_root if value == 'video' else Path(value)
         except FileNotFoundError:  # 首次启动不存在配置是正常情况。
-            pass  # 等用户选择，不自动使用旧固定路径。
+            self.root = self.default_root  # 新安装直接使用程序旁 video；首次归档再验证并创建。
         except (OSError, ValueError, KeyError, TypeError):  # 损坏或无法读取时保留旧文件供诊断。
             self.error = '存储设置无法读取，请重新选择存储路径。'  # 首次设置窗口中显示原因。
+
+    @property
+    def default_root(self):
+        return self.file.parent.parent / 'video'
 
     def save(self, root, folders=None):  # 只在后台能力检查成功后保存。
         root = Path(root)  # 统一调用方传入的路径对象。
@@ -44,7 +48,8 @@ class StorageSettings:  # 本地偏好不写入源码或公共仓库。
         temporary = self.file.with_name(f'.storage-{uuid.uuid4().hex}.tmp')  # 不覆盖半成品配置。
         try:  # 写入失败保留上次设置和内存状态。
             with temporary.open('x', encoding='utf-8') as stream:  # 独占创建本次配置草稿。
-                json.dump({'archive_root': str(root), 'archive_folders': folders.to_dict()}, stream, ensure_ascii=False, indent=2)  # 中文路径按原文保存。
+                value = 'video' if root == self.default_root else str(root)
+                json.dump({'archive_root': value, 'archive_folders': folders.to_dict()}, stream, ensure_ascii=False, indent=2)
                 stream.flush()  # 刷新 Python 缓冲。
                 os.fsync(stream.fileno())  # 在原子提交前确保内容落盘。
             os.replace(temporary, self.file)  # 完整替换，不留下半个 JSON。

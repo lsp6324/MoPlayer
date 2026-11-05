@@ -20,22 +20,14 @@ def run(destination):  # 不运行播放或完整回归测试。
     def check(name, passed):  # 只记录实际完成的相关验证。
         checks.append({'name': name, 'passed': bool(passed)})  # 逐项保存结果。
         assert passed, name  # 失败必须停止而非误报通过。
-    def cancel_first():  # 首次选择可以明确推迟。
-        dialog = app.activeModalWidget()  # 获取真正的首次设置窗口。
-        assert isinstance(dialog, StorageDialog)  # 不用测试替身代替界面。
-        dialog.reject()  # 不写配置或归档任何内容。
-    check('首次没有默认盘符或归档目录', window.storage.root is None and window.archiver.root is None)  # 不默认使用开发者的文件夹。
-    QTimer.singleShot(0, cancel_first)  # 在模态循环中取消首次设置。
+    check('首次默认使用程序旁video', window.storage.root == output/'video' and window.archiver.root == output/'video')
     window.initialize_storage()  # 使用正常启动调用的同一入口。
-    check('首次取消不保存配置且不自动播放', not window.storage.file.exists() and window.current is None and window.library_controller.browsing is None)  # 可以先正常浏览。
+    check('首次无强制弹窗不自动播放', app.activeModalWidget() is None and not window.storage.file.exists() and window.current is None and window.library_controller.browsing is None)
     sample = output / 'sample.mp4'  # 创建无需解码的归档样例。
     sample.write_bytes(b'isolated storage settings fixture')  # 不读取真实视频。
     vid = window.store.register(sample)  # 记录稳定身份。
-    try:  # 未配置时底层同样禁止归档。
-        window.archiver.submit(vid, 8, ['样例'])  # 不能静默退回旧固定位置。
-        raise AssertionError('未配置却允许归档')  # 正常实现必须拒绝。
-    except RuntimeError:  # 预期失败不产生文件任务。
-        check('未配置拒绝归档且来源保留', sample.exists() and not window.store.query('SELECT id FROM jobs'))  # 无半完成任务。
+    window.archiver.submit(vid, 8, ['样例'])
+    check('默认归档创建video并保留原名', window.store.resolve(vid) == output/'video'/'8分'/'样例'/'sample.mp4')
     root_a, root_b = output / '存储A', output / '存储B'  # 模拟用户自定义的两个目录。
     def submit(root, screenshot=None):  # 操作真实模态表单并等待后台检查。
         def fill():  # 窗口显示后输入新路径。
@@ -60,7 +52,7 @@ def run(destination):  # 不运行播放或完整回归测试。
                 app.activeModalWidget().reject()  # 避免模态循环挂起。
         QTimer.singleShot(0, fill)  # 调用方随后打开正式设置窗口。
     submit(root_a, 'first-storage.png')  # 首次设置新路径。
-    window.initialize_storage()  # 必须等待实际保存完成。
+    window.storage_dialog()  # 默认可用后，通过设置修改。
     check('首次保存通过NTFS硬链接检查并持久化', not failures and window.archiver.root == root_a and StorageSettings(window.store.directory).root == root_a)  # 不只检查输入框。
     window.archiver.submit(vid, 8, ['样例'])  # 后续归档写入已选择目录。
     archived = window.store.resolve(vid)  # 保存原归档有效路径。

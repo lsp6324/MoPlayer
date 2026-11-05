@@ -1,9 +1,9 @@
 ﻿$ErrorActionPreference = 'Stop' # 任意注册失败立即停止，避免伪报成功。
-$componentRoot = 'E:\tools\videoplayerenv\plugins\Icaros-3.3.6' # 所有组件文件留在指定目录。
+$componentRoot = Join-Path $PSScriptRoot 'plugins\Icaros-3.3.6'
 $componentDll = Join-Path $componentRoot '64-bit\IcarosThumbnailProvider.dll' # 系统隔离宿主使用 x64 处理程序。
 $componentClass = '{c5aec3ec-e812-4677-a9a7-4fee1f9aa000}' # 仅注册 Icaros 缩略图类。
 $registryPath = 'HKLM:\SOFTWARE\Classes\CLSID\' + $componentClass # 不改系统默认应用和其他 Shell 扩展。
-$statusDirectory = 'E:\tools\videoplayerenv\verification\global-video-thumbnails' # 日志和状态留在工具目录。
+$statusDirectory = Join-Path $PSScriptRoot 'verification\global-video-thumbnails'
 New-Item -ItemType Directory -Force $statusDirectory | Out-Null # 确保回执位置存在。
 try { # 由 Windows UAC 授权后运行一次系统级类注册。
     if (-not (Test-Path -LiteralPath $componentDll -PathType Leaf)) { throw 'Icaros DLL 不存在' } # 不注册无效路径。

@@ -39,7 +39,7 @@
 | layout.py / playback_controls.py / playback_options.py / tag_popover.py | 窗口组合、响应式控制行和功能浮层；音量、静音、倍速和评分通过信号请求，倍率成功后才更新展示。 |
 | video_fullscreen.py / video_cursor.py / window_chrome.py | 全屏展示与 Windows 原生窗口、光标适配。 |
 | app.py | 程序装配、Qt 事件入口、资料库/播放意图与文件任务的连接，以及 VLC 状态和命令的适配；不持有播放区子控件。 |
-| runtime.py | 资源路径与显式 VLC 装配；导入 app 不加载原生运行库，创建播放器时才加载。 |
+| runtime.py | 资源路径、进程内便携运行目录与显式 VLC 装配；configure_portable 在 QApplication/VLC 前指定临时文件与应用默认 Qt 设置，禁用不可重定向的 Qt OpenGL 磁盘缓存，创建 VLC 3 识别的 EXE 旁 portable。导入 app 不加载运行库或创建目录。 |
 | core.py / tag_migration.py / video_delete.py | 既有文件身份、SQLite、扫描、归档、标签批次与回收恢复实现。 |
 
 ## 状态与完成协议
@@ -63,6 +63,14 @@
 - 结束后的进度统一为零；连续相对跳转基于尚未确认的目标累加。窗口关闭、换片与周期保存使用同一进度策略。
 
 ## 后续修改检查
+
+便携运行时，业务数据库、设置、日志、背景和列表缩略图在 data；Python/Qt/子进程临时文件使用 data/temp，应用默认 QSettings 使用 data/qt-settings，VLC 3 配置、数据和缓存使用 EXE 旁 portable。不会改用户 APPDATA、LOCALAPPDATA 或 USERPROFILE；应用目录不可写时明确失败，不回退到用户目录。Windows 自身的对话框历史、回收站、系统缩略图和驱动缓存由系统管理，不属于应用资料库。Qt 的显式 NativeFormat 设置不受默认 IniFormat 重定向影响，不能宣称改默认格式就重定向了所有 Qt 内部设置。
+
+StorageSettings 在缺少 storage.json 时返回 data 同级 video，不在读取设置时创建视频目录或移动文件。默认根保存为唯一相对标记 video，其他自选根沿用绝对路径；损坏或不支持的相对配置报错，不用默认根覆盖。现有归档批次仍按原冻结目标恢复，配置修改继续由 ArchiveConfiguration 整理已归档视频。解压到非 NTFS 盘仍可播放，归档继续要求 NTFS，不隐式降级为多份复制。
+
+可选资源管理器缩略图组件的下载、DLL、回执及注册备份由 setup_explorer_thumbnails 放在 BASE/data/integrations/explorer-thumbnails；提权脚本从 BUNDLE 取得，复制后以自身位置定位组件，不能依赖开发机盘符。只有用户主动启用才写系统注册；移动后需重新启用以更新路径。验证不能实际注册或替换用户现有系统组件。
+
+package_release 只接收已验证的目录部署包，排除 data、video、portable 中已有内容，仅为 video/portable 写空目录；源码包包含 application、infrastructure 和测试，不打包本机证据或数据库。纯测试覆盖新安装默认、默认标记迁移、自选根保留、配置损坏与保存失败，以及发布包排除用户内容；原生 --portable-layout-test 在独立桌面检查真实临时文件、VLC 目录查询、播放、缩略图和默认归档。
 
 1. 指明业务责任模块、状态所有者、外部依赖和错误结果。
 2. 先复现用户问题，再在所有权边界内改实现，移除被取代的路径。

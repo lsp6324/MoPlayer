@@ -1,4 +1,5 @@
 import argparse  # 提供明确的启用、检查和回滚入口。
+import base64
 import ctypes  # 通知资源管理器刷新关联。
 import hashlib  # 验证官方组件包完整性。
 import json  # 保存逐值备份和运行状态。
@@ -10,8 +11,9 @@ import urllib.request  # 从官方 GitHub 下载原始便携包。
 import winreg  # 注册当前用户的视频缩略图处理程序。
 import zipfile  # 解压官方采用 LZMA 压缩的 ZIP。
 from pathlib import Path  # 强制组件和可配置缓存使用指定工具目录。
+from runtime import BASE, BUNDLE
 
-ENVIRONMENT = Path(r'E:\tools\videoplayerenv')  # 所有新增组件、下载和备份遵守指定路径。
+ENVIRONMENT = BASE / 'data' / 'integrations' / 'explorer-thumbnails'
 VERSION = '3.3.6'  # 固定本次已验证的官方版本。
 URL = f'https://github.com/Xanashi/Icaros/releases/download/v{VERSION}/Icaros_v{VERSION}.zip'  # 只下载作者发布的便携包。
 SHA256 = '18854b445420e7167b5f54696009c9ffbc0e7917da9d9a686eac71ea3c81d47a'  # 官方 GitHub Release 给出的摘要。
@@ -43,18 +45,31 @@ def ensure_machine(provider):  # 保持 Windows 缩略图隔离宿主可加载�
                 return  # 无需重复提升权限。
     except FileNotFoundError:  # 尚未进行系统级类注册。
         pass  # 准备清晰的一次性注册操作。
-    script = Path(__file__).with_name('register_thumbnail_component.ps1')  # 源码与便携包都携带可审阅的注册脚本。
+    script = BUNDLE / 'register_thumbnail_component.ps1'
     target = ENVIRONMENT / 'register_thumbnail_component.ps1'  # UAC 只执行指定工具目录内的脚本。
     shutil.copyfile(script, target)  # 避免注册依赖源码或便携包位置。
     status = ENVIRONMENT / 'verification/global-video-thumbnails/machine-registration-result.json'  # 等待系统注册的明确回执。
     status.parent.mkdir(parents=True, exist_ok=True)  # 首次启用时先创建状态目录。
     status.unlink(missing_ok=True)  # 不把上一次回执误认为本次操作成功。
     powershell = Path(os.environ['SystemRoot']) / 'System32/WindowsPowerShell/v1.0/powershell.exe'  # 使用 Windows 自带的系统脚本宿主。
-    command = "$registrationTask=Start-Process -FilePath '" + str(powershell) + "' -ArgumentList '-NoProfile -ExecutionPolicy Bypass -File \"" + str(target) + "\"' -Verb RunAs -WindowStyle Hidden -Wait -PassThru; exit $registrationTask.ExitCode"  # 只包含固定路径，通过 Windows 提升而不绕过 UAC。
-    result = subprocess.run([str(powershell), '-NoProfile', '-Command', command], capture_output=True, timeout=180, creationflags=subprocess.CREATE_NO_WINDOW)  # 等待用户确认，GUI 调用在后台线程中运行。
+    command = registration_command(powershell, target)
+    result = subprocess.run(command, capture_output=True, timeout=180, creationflags=subprocess.CREATE_NO_WINDOW)
     reply = json.loads(status.read_text(encoding='utf-8-sig')) if status.is_file() else {}  # 缺失回执同样属于失败。
     if result.returncode or not reply.get('Success'):  # 用户取消或系统写入失败都不显示成功。
         raise OSError(reply.get('Error', 'Windows 未完成组件注册；请在 UAC 提示中允许这次注册后重试。'))  # 给出明确可重试状态。
+
+
+def registration_command(powershell, script):
+    """Quote arbitrary portable paths without treating their text as shell code."""
+    def literal(value):
+        return "'" + str(value).replace("'", "''") + "'"
+    inner = '& ' + literal(script)
+    encoded_inner = base64.b64encode(inner.encode('utf-16le')).decode('ascii')
+    command = ('$registrationTask=Start-Process -FilePath ' + literal(powershell) +
+               " -ArgumentList '-NoProfile -ExecutionPolicy Bypass -EncodedCommand " + encoded_inner +
+               "' -Verb RunAs -WindowStyle Hidden -Wait -PassThru; exit $registrationTask.ExitCode")
+    encoded = base64.b64encode(command.encode('utf-16le')).decode('ascii')
+    return [str(powershell), '-NoProfile', '-EncodedCommand', encoded]
 
 def prepare():  # 获取原样发布的官方便携组件，无需运行安装器。
     archive = ENVIRONMENT / 'downloads' / f'Icaros_v{VERSION}.zip'  # 下载文件留在指定工具目录。
@@ -135,7 +150,7 @@ def restore(backup):  # 精确回滚而不覆盖用户后来做的新选择。
     notify()  # 请求 Shell 重新读取回滚后的关联。
 
 if __name__ == '__main__':  # 源码工具可独立启用或回滚。
-    parser = argparse.ArgumentParser(description='启用当前用户的全局视频缩略图支持；组件仅存放在 E:\\tools\\videoplayerenv。')  # 明确配置范围与路径。
+    parser = argparse.ArgumentParser(description='启用全局视频缩略图支持；组件与维护记录存放在程序旁 data/integrations/explorer-thumbnails。')
     parser.add_argument('--restore', metavar='BACKUP_JSON')  # 回滚需要用户明确提供某次备份。
     arguments = parser.parse_args()  # 不接受隐含路径或未定义操作。
     print(json.dumps(restore(arguments.restore) if arguments.restore else install(), ensure_ascii=False, indent=2))  # 输出实际配置结果。

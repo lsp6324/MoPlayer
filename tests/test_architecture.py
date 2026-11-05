@@ -116,6 +116,18 @@ def test_native_runtime_only_loads_at_explicit_bootstrap():
             assert 'core' not in imports(tree, name) or name == 'application.tag_drafts', f'{name}: add a port for legacy services'
 
 
+def test_portable_paths_are_configured_before_qapplication_without_machine_paths():
+    main = next(node for node in production_modules()['app'].body
+                if isinstance(node, ast.FunctionDef) and node.name == 'main')
+    calls = [node for node in ast.walk(main) if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)]
+    configure = next(node for node in calls if node.func.id == 'configure_portable')
+    application = next(node for node in calls if node.func.id == 'QApplication')
+    assert configure.lineno < application.lineno, 'Configure portable runtime before initializing Qt'
+    for name in ('runtime.py', 'storage_settings.py', 'setup_explorer_thumbnails.py', 'register_thumbnail_component.ps1'):
+        text = (ROOT / name).read_text(encoding='utf-8-sig')
+        assert not re.search(r'(?i)[a-z]:[\\/]+(?:tools|users|codex)[\\/]+', text), f'{name}: remove machine-specific runtime paths'
+
+
 def test_window_does_not_reclaim_application_or_thumbnail_owned_state():
     owned = {'resume', 'resume_paused', '_pending_seek', 'ended', 'last_save',
              'thumbnail_guard', 'thumbnail_processes', 'file_task_thumbnail_pause',
