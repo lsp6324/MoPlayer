@@ -17,3 +17,17 @@ def test_metadata_snapshot_handles_large_requested_sets_and_excludes_unrelated_v
         assert catalog.video_details([]) == {}
     finally:
         store.db.close()
+
+
+def test_archive_settings_batch_appears_in_pending_and_history(tmp_path):
+    store = Store(tmp_path / 'data')
+    try:
+        store.execute('INSERT INTO archive_setting_jobs VALUES(?,?,?,?,?)', ('settings', 'migrating', '{}', 'interrupted', 1))
+        catalog = LibraryRepository(store)
+        assert catalog.pending_tasks()[0]['kind'] == 'archive_setting_jobs'
+        assert catalog.task_history()[0]['kind'] == 'archive_setting_jobs'
+        store.execute('UPDATE archive_setting_jobs SET state="done" WHERE id="settings"')
+        assert catalog.pending_tasks() == []
+        assert catalog.task_history()[0]['state'] == 'done'
+    finally:
+        store.db.close()

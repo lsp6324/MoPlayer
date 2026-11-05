@@ -8,6 +8,7 @@ import sqlite3  # 持久保存视频元数据与任务。
 import threading  # 串行化数据库写入。
 import time  # 记录历史时间。
 import uuid  # 生成不依赖路径的视频标识。
+from application.archive_folders import ArchiveFolders
 from pathlib import Path  # 统一处理 Windows 路径。
 
 ARCHIVE_ROOT = Path('E:/我觉得是学习资料')  # 固定用户指定的归档根目录。
@@ -117,6 +118,7 @@ class Store:  # 管理持久视频身份和元数据。
         self.execute('CREATE TABLE IF NOT EXISTS tag_layout(name TEXT PRIMARY KEY COLLATE NOCASE,kind TEXT,parent TEXT)')  # 全局保存大类、小类与父级关系。
         self.execute('CREATE TABLE IF NOT EXISTS tag_parents(name TEXT PRIMARY KEY COLLATE NOCASE)')  # 记住右键指定的空父标签。
         self.execute('CREATE TABLE IF NOT EXISTS hierarchy_jobs(id TEXT PRIMARY KEY,state TEXT,plan TEXT,error TEXT,updated REAL)')  # 跨多个视频迁移分类时保留可恢复批次。
+        self.execute('CREATE TABLE IF NOT EXISTS archive_setting_jobs(id TEXT PRIMARY KEY,state TEXT,plan TEXT,error TEXT,updated REAL)')
         if 'original_name' not in {row['name'] for row in self.query('PRAGMA table_info(videos)')}:  # 兼容已有便携数据库并保留历史身份。
             self.execute('ALTER TABLE videos ADD COLUMN original_name TEXT')  # 独立保存原文件名，旧记录首次归档时补全。
 
@@ -299,8 +301,9 @@ def require_ntfs(root):  # 在归档前检查目标卷及硬链接能力。
         probe.unlink(missing_ok=True)  # 移除测试内容。
 
 class Archiver:  # 使用可重放任务协调数据库和文件系统。
-    def __init__(self, store, root=ARCHIVE_ROOT, fault=None):  # 测试可注入独立归档根目录和故障点。
+    def __init__(self, store, root=ARCHIVE_ROOT, fault=None, *, folders=ArchiveFolders()):  # 测试可注入独立归档根目录和故障点。
         self.store, self.root, self.fault = store, Path(root) if root is not None else None, fault  # 未配置时不默认创建开发机器上的目录。
+        self.folders = folders
         self.lock = threading.RLock()  # 归档任务串行运行。
 
     def checkpoint(self, job, plan, state):  # 持久记录每个可恢复阶段。
@@ -308,10 +311,12 @@ class Archiver:  # 使用可重放任务协调数据库和文件系统。
         if self.fault:  # 测试覆盖断电式中断位置。
             self.fault(state)  # 故障注入不参与正式运行。
 
-    def submit(self, vid, score, tags, layout=None, hierarchy_job=None):  # 创建单视频归档或全局结构迁移的子任务。
+    def submit(self, vid, score, tags, layout=None, hierarchy_job=None, *, folders=None, favorite=None, settings_job=None):  # 创建单视频归档或全局结构迁移的子任务。
         with self.lock, self.store.file_lock:  # 文件操作与目录扫描的身份登记共用串行边界。
+            if any(row['id'] != settings_job for row in self.store.query('SELECT id FROM archive_setting_jobs WHERE state<>"done"')):
+                raise RuntimeError('有未完成的归档设置整理，请先在文件任务中恢复。')
             if self.root is None:  # 新安装必须先明确选择存储路径。
-                raise RuntimeError('请先在右上角“设置 → 存储路径”选择视频存储文件夹。')  # 禁止静默归档到旧固定位置。
+                raise RuntimeError('请先在右上角“设置 → 归档设置”选择视频存储文件夹。')  # 禁止静默归档到旧固定位置。
             if any(row['id'] != hierarchy_job for row in self.store.query('SELECT id FROM hierarchy_jobs WHERE state<>"done"')):  # 全局迁移未完成时禁止独立归档覆盖目标。
                 raise RuntimeError('有未完成的标签结构迁移，请先在文件任务中恢复。')  # 不让新操作破坏恢复计划。
             if self.store.query('SELECT id FROM deletion_jobs WHERE video=? AND state<>"done"', (vid,)):  # 不在待重试删除期间重新创建归档入口。
@@ -342,11 +347,13 @@ class Archiver:  # 使用可重放任务协调数据库和文件系统。
                 except OSError:  # 不把失效记录当成有效来源。
                     pass  # 后续 resolve 已确保至少存在一个可用来源。
             targets = []  # 保存提前确定的目标名字。
-            folders, tokens = tag_parts(tags, layout)  # 从同一结构生成目录和名称，避免两者含义不一致。
-            for segments in folders:  # 每个叶子分类创建一个硬链接入口。
-                folder = self.root / ('未评分' if score is None else f'{score}分')  # 评分仍为固定的第一层目录。
-                components = [self.root, folder]  # 校验从归档根到目标的每一层。
-                for segment in segments:  # 小类入口依次加入大类和小类名称。
+            tag_paths, _ = tag_parts(tags, layout)
+            folder_policy = self.folders if folders is None else folders
+            star = record['star'] if favorite is None else int(bool(favorite))
+            for segments in folder_policy.directories(score, star, tag_paths):
+                folder = self.root
+                components = [self.root]
+                for segment in segments:  # 依次加入启用的评分、收藏和标签层级。
                     folder = folder / segment  # 不拼接未经验证的路径片段。
                     components.append(folder)  # 父级大类目录也需要防重解析校验。
                 for component in components:  # 检查所有层级没有符号链接或目录联接。
@@ -362,6 +369,8 @@ class Archiver:  # 使用可重放任务协调数据库和文件系统。
                         raise ValueError('增加同名冲突后缀后文件名过长，请缩短标签后重试。')  # 来源文件和原有入口继续保留。
                 targets.append(str(target))  # 固化任务目标路径。
             plan = dict(video=vid, source=str(source), source_identity=identity(source), size=source.stat().st_size, mtime=source.stat().st_mtime_ns, anchor=str(stage / original_name), targets=targets, old=old, score=score, tags=tags, name=name, original_name=original_name)  # 恢复日志同时固化新文件名与永久原名。
+            if favorite is not None:
+                plan['favorite'] = star
             self.store.execute('INSERT INTO jobs VALUES(?,?,?,?,?,?)', (job, vid, 'planned', json.dumps(plan, ensure_ascii=False), None, time.time()))  # 先持久化计划再修改视频文件。
             return self.run(job)  # 执行幂等归档流程。
 
@@ -419,6 +428,8 @@ class Archiver:  # 使用可重放任务协调数据库和文件系统。
                 self.checkpoint(job, plan, 'linked')  # 所有新入口已建立。
                 with self.store.lock, self.store.db:  # 分类和路径映射在同一数据库事务内提交。
                     self.store.db.execute('UPDATE videos SET score=?,tags=?,archived=1,name=COALESCE(?,name),original_name=COALESCE(original_name,?,name) WHERE id=?', (plan['score'], json.dumps(plan['tags'], ensure_ascii=False), plan.get('name'), plan.get('original_name'), plan['video']))  # 名称、评分、标签和路径同事务提交，也兼容旧版本未完成任务。
+                    if 'favorite' in plan:
+                        self.store.db.execute('UPDATE videos SET star=? WHERE id=?', (plan['favorite'], plan['video']))
                     for target in plan['targets']:  # 登记归档卷实际文件身份。
                         self.store.db.execute('INSERT OR REPLACE INTO paths VALUES(?,?,?)', (target, plan['video'], plan['anchor_identity']))  # 复用原视频 ID。
                     for tag in plan['tags']:  # 成功确认的标签进入公共标签库。

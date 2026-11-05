@@ -193,7 +193,8 @@ def test_lists_reconcile_only_changed_id_and_favorite_membership():
     library.refresh(['c'])
     assert [row['id'] for row in library.list_rows('videos')] == ['c', 'a', 'b']
     assert [row['id'] for row in library.list_rows('stars')] == ['c', 'b']
-    library.remove_favorite('b')
+    repo.set_favorite('b', False)
+    library.refresh(('b',))
     assert [row['id'] for row in library.list_rows('stars')] == ['c']
     assert repo.rows['b']['star'] == 0
 

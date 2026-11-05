@@ -217,7 +217,3 @@ class LibraryController:
                 snapshot.excluded.update(ids)
                 snapshot.visible_cache.clear()
         self.refresh(ids, playback_context)
-
-    def remove_favorite(self, video_id):
-        self.repository.set_favorite(video_id, False)
-        self.refresh((video_id,))

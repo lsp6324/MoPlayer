@@ -5,7 +5,8 @@ from pathlib import Path  # 所有样例都位于隔离目录。
 from unittest.mock import patch  # 仅注入配置提交失败，不修改用户文件。
 from PySide6.QtCore import QTimer, QThreadPool  # 等待真实后台验证回调。
 from PySide6.QtWidgets import QApplication, QDialog, QPushButton  # 检查首次弹窗与右上角菜单。
-from storage_settings import StorageSettings, StorageDialog, validate_storage_path  # 使用正式设置实现。
+from archive_settings_dialog import ArchiveSettingsDialog as StorageDialog
+from storage_settings import StorageSettings, validate_storage_path  # 使用正式设置实现。
 from core import identity  # 确认移动后保留正确的文件实体。
 
 def run(destination):  # 不运行播放或完整回归测试。
@@ -68,10 +69,10 @@ def run(destination):  # 不运行播放或完整回归测试。
     check('归档实际使用自定义目录', root_a in archived.parents and archived.exists() and not sample.exists())  # 首次来源按原安全逻辑移出。
     submit(root_b, 'change-storage.png')  # 准备通过右上角菜单修改。
     settings = window.findChild(QPushButton, 'settingsButton')  # 定位真实设置入口。
-    next(action for action in settings.menu().actions() if action.text() == '存储路径').trigger()  # 菜单必须能打开修改窗口。
+    next(action for action in settings.menu().actions() if action.text() == '归档设置').trigger()  # 菜单必须能打开修改窗口。
     check('右上角设置可修改并保存路径', not failures and window.archiver.root == root_b and StorageSettings(window.store.directory).root == root_b)  # 配置和归档器一致。
-    check('修改路径不立即迁移旧视频且历史有效', archived.exists() and window.store.resolve(vid) == archived and window.store.video(vid)['position'] == 12345)  # 不擅自搬动整库。
-    window.archiver.submit(vid, 9, ['样例'])  # 后续对该视频修改评分才归档到新位置。
+    check('保存路径立即整理全部已归档视频且历史有效', not archived.exists() and root_b in window.store.resolve(vid).parents and window.store.video(vid)['position'] == 12345)  # 保存设置会立即整理已归档视频。
+    window.archiver.submit(vid, 9, ['样例'])  # 后续修改继续沿用已保存的新路径。
     current = window.store.resolve(vid)  # 使用同一视频 UUID 找到新入口。
     check('后续归档使用新路径并保留身份进度', root_b in current.parents and identity(current) == entity and not archived.exists() and window.store.video(vid)['position'] == 12345)  # 同卷不复制内容。
     before = window.storage.file.read_bytes()  # 保存原子写入失败前配置。

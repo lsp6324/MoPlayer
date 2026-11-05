@@ -5,6 +5,8 @@ from application.operations import Operation, Outcome, Status
 
 
 class FileAction(Enum):
+    FAVORITE = 'favorite'
+    SETTINGS = 'settings'
     TAGS = 'tags'
     ARCHIVE = 'archive'
     DELETE = 'delete'

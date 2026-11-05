@@ -49,7 +49,7 @@ def build_interface(window, bundle):
     more.setObjectName('settingsButton')
     menu = QMenu(more)
     for text, action in [('历史文件夹', window.folder_history),
-                         ('存储路径', window.storage_dialog),
+                         ('归档设置', window.storage_dialog),
                          ('系统缩略图', window.explorer_thumbnail_dialog),
                          ('文件任务', window.task_dialog), ('帮助', window.help_dialog)]:
         menu.addAction(text, action)

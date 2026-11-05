@@ -6,7 +6,7 @@ import re
 
 ROOT = Path(__file__).resolve().parents[1]
 UI = {
-    'appearance', 'background_work', 'file_open', 'floating_surface', 'heart_rating',
+    'archive_settings_dialog', 'appearance', 'background_work', 'file_open', 'floating_surface', 'heart_rating',
     'hover_panel', 'layout', 'library_view', 'library_views', 'player_view', 'playback_controls', 'playback_options',
     'score_editor', 'seek_notice', 'seek_slider', 'tag_editor', 'tag_popover',
     'theme', 'thumbnail_cache', 'ui', 'video_cursor', 'video_fullscreen', 'window_chrome',
@@ -197,3 +197,12 @@ def test_file_workflow_decisions_are_not_reintroduced_into_window_callbacks():
                     assert node.func.attr != 'run', f'app:{node.lineno}: file task admission belongs to the workflow'
                 if method.name == '_file_notice':
                     assert node.func.attr not in {'video', 'videos', 'pending_tasks', 'reconcile', 'refresh_deleted', 'start'}, f'app:{node.lineno}: render the workflow result without deciding recovery or playback'
+
+
+def test_archive_settings_view_uses_only_explicit_application_ports():
+    tree = production_modules()['archive_settings_dialog']
+    dependencies = imports(tree, 'archive_settings_dialog')
+    assert not any(dep.split('.')[0] in {'app', 'core', 'storage_settings', 'infrastructure', 'vlc', 'sqlite3'} for dep in dependencies)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute):
+            assert node.attr not in {'storage', 'archiver', 'store', 'catalog', 'work', 'file_tasks'}, 'Settings view submits values; the workflow owns migration and persistence'

@@ -13,7 +13,7 @@ from application.operations import Operation, Outcome, Status
 class Repository:
     def __init__(self):
         self.rows = {vid: dict(id=vid, name=vid, score=7, archived=1) for vid in ('a', 'b', 'c')}
-        self.pending = {kind: [] for kind in ('jobs', 'hierarchy_jobs', 'deletion_jobs')}
+        self.pending = {kind: [] for kind in ('jobs', 'hierarchy_jobs', 'deletion_jobs', 'archive_setting_jobs')}
 
     def video(self, vid):
         return self.rows.get(vid)
@@ -264,3 +264,21 @@ def test_recovery_acknowledges_existing_tag_drafts_and_continues_only_if_active_
     assert operation.outcome.succeeded and h.baselines == {'b'}
     assert 'a' not in h.visible and h.played == [(original.context, ('original', 1))]
     assert h.notices[-1].continuing and not h.marked
+
+
+def test_settings_recovery_refreshes_frozen_batch_ids_before_deletion_recovery():
+    h = Harness()
+    h.repo.pending['archive_setting_jobs'] = [{'plan': json.dumps({'videos': [{'video': 'b'}]})}]
+    def settings():
+        h.order.append('settings-recovered')
+        h.repo.rows['b']['name'] = 'new settings folder'
+        h.repo.pending['archive_setting_jobs'].clear()
+        return []
+    h.recovery.recover_settings = settings
+    h.recovery.recover_deletions = lambda: h.order.append('delete-recovered') or []
+    operation = h.recovery.retry()
+    h.finish()
+    assert operation.outcome.succeeded
+    assert h.visible['b'] == 'new settings folder'
+    assert h.order.index('settings-recovered') < h.order.index('delete-recovered')
+    assert 'storage-ready' in h.order

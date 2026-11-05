@@ -2,7 +2,7 @@ import json  # 读取视频标签和诊断数据。
 import logging  # 记录可追踪的运行错误。
 import sys  # 区分源码和便携运行方式。
 from pathlib import Path  # 处理便携数据路径。
-if len(sys.argv) == 3 and sys.argv[1] in ('--ui-refresh-test', '--seek-notice-test', '--file-workflows-test'):
+if len(sys.argv) == 3 and sys.argv[1] in ('--ui-refresh-test', '--seek-notice-test', '--file-workflows-test', '--archive-settings-test'):
     # A windowed EXE has no stderr; keep explicit test failures reviewable.
     _test_output = Path(sys.argv[2]).absolute()
     _test_output.mkdir(parents=True, exist_ok=True)
@@ -31,7 +31,10 @@ from infrastructure.library_repository import LibraryRepository
 from core import Store, Archiver
 from video_delete import DeletionManager  # 以可恢复任务回收全部登记入口。
 from tag_migration import TagMigration  # 以可恢复批次同步全局标签层级。
-from storage_settings import StorageSettings, StorageDialog  # 加载每位用户独立的存储路径与设置窗口。
+from archive_settings_dialog import ArchiveSettingsDialog
+from application.archive_configuration import ArchiveConfiguration
+from infrastructure.archive_configuration import ArchiveConfiguration as ArchiveConfigurationService
+from storage_settings import StorageSettings  # 加载每位用户独立的存储路径与设置窗口。
 
 from runtime import BASE, BUNDLE, create_player
 
@@ -46,7 +49,8 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
         self.storage = StorageSettings(self.store.directory)  # 首次运行没有默认归档目录。
         self.legacy_storage_recovery = self.storage.root is None and self.has_pending_file_tasks()  # 旧版本未完成任务先沿用其原路径恢复。
         from core import ARCHIVE_ROOT  # 旧固定路径只供旧版本已提交任务兼容恢复。
-        self.archiver = Archiver(self.store, ARCHIVE_ROOT if self.legacy_storage_recovery else self.storage.root)  # 正常新安装不再依赖 E 盘。
+        self.archiver = Archiver(self.store, ARCHIVE_ROOT if self.legacy_storage_recovery else self.storage.root, folders=self.storage.folders)  # 正常新安装不再依赖 E 盘。
+        self.archive_configuration_service = ArchiveConfigurationService(self.store, self.storage, self.archiver)
         self.deleter = DeletionManager(self.store)  # 将删除阶段与元数据提交持久记账。
         self.tag_migration = TagMigration(self.store, self.archiver)  # 全局分类复用逐视频硬链接归档和恢复日志。
         self.thumbnail_service = ThumbnailService(self.store.directory, self.catalog.resolve, BUNDLE)
@@ -63,11 +67,16 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
         self.file_tasks = FileTasks(lambda function, callback: self.work(function, callback),
                                     self._begin_file_task, self._end_file_task, self.has_pending_file_tasks,
                                     prepare=self.thumbnail_service.stop)
+        self.archive_configuration = ArchiveConfiguration(self.file_tasks, self.catalog,
+            lambda root, folders: self.archive_configuration_service.submit(root, folders),
+            available=lambda: not self.busy, refresh=self._refresh_file_records)
         self.classification = Classification(self.file_tasks, self.catalog,
             lambda vid, score, tags, schema: self.tag_migration.submit(vid, score, tags, schema),
             lambda vid, score, tags: self.archiver.submit(vid, score, tags),
             available=lambda: not self.busy, ensure_storage=self.ensure_storage,
-            current_video=lambda: self.current, refresh=self._refresh_file_records, notify=self._file_notice)
+            current_video=lambda: self.current, refresh=self._refresh_file_records, notify=self._file_notice,
+            favorite_folders=lambda: self.storage.folders.favorite,
+            submit_favorite=lambda vid, score, tags, value: self.archiver.submit(vid, score, tags, favorite=value))
         self.deletion = Deletion(self.file_tasks, self.library_controller, lambda vid: self.deleter.submit(vid),
             available=lambda: not self.busy, playback_target=self._playback_target,
             navigation_busy=self._navigation_busy, mark_deleting=self.thumbnail_service.mark_deleting,
@@ -79,7 +88,8 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
             playback_target=self._playback_target, mark_deleting=self.thumbnail_service.mark_deleting,
             refresh=self._refresh_file_records, refresh_deleted=self.refresh_deleted,
             continue_after_delete=self.deletion.continue_after_delete,
-            storage_ready=self._restore_storage_target, notify=self._file_notice)
+            storage_ready=self._restore_storage_target, notify=self._file_notice,
+            recover_settings=lambda: self.archive_configuration_service.recover())
         self.vlc, self.instance, self.player = create_player()
         self.setWindowTitle('MoPlayer · 本地视频与分类')  # 设置可识别的窗口标题。
         self.resize(1440, 920)  # 为品牌导航、双层控制和大缩略图保留舒适留白。
@@ -135,7 +145,8 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
         if self.busy or self.has_pending_file_tasks():  # 不在文件任务执行或等待恢复时更改目标根目录。
             self.message('请先等待文件任务完成，或通过“更多 → 文件任务”恢复，再设置存储路径。')  # 保留原任务位置。
             return False  # 不切换正在使用的归档器。
-        return StorageDialog(self, first_run).exec() == QDialog.Accepted  # 取消不保存路径。
+        return ArchiveSettingsDialog(self, root=self.storage.root, folders=self.storage.folders,
+            error=self.storage.error, apply=self.archive_configuration.apply, first_run=first_run).exec() == QDialog.Accepted  # 取消不保存路径。
 
     def initialize_storage(self):  # 正常启动时只在未配置情况下弹出首次设置。
         if self.storage.root is not None:  # 已配置用户不被重复打扰。
@@ -261,8 +272,7 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
 
 
     def remove_library_favorite(self, video_id):
-        self.library_controller.remove_favorite(video_id)
-        self.refresh_title()
+        self.classification.favorite(video_id, False)
 
     def toggle_sidebar(self):
         if self.player_view.fullscreen.active:
@@ -421,8 +431,7 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
         if self.current and not self.busy:
             star = self.catalog.video(self.current)['star']
             value = int(not star) if toggle else 1
-            self.catalog.set_favorite(self.current, value)
-            self.refresh_title()
+            self.classification.favorite(self.current, value)
 
 
     def rating_dialog(self, vid=None):
@@ -560,7 +569,7 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
         dialog.setLayout(layout)  # 安装任务布局。
         text = QPlainTextEdit()  # 以只读文本展示持久任务。
         text.setReadOnly(True)  # 防止用户直接改写日志。
-        kinds = {'hierarchy_jobs': '标签结构', 'jobs': '归档', 'deletion_jobs': '删除'}
+        kinds = {'hierarchy_jobs': '标签结构', 'jobs': '归档', 'deletion_jobs': '删除', 'archive_setting_jobs': '归档设置整理'}
         text.setPlainText('\n\n'.join(f'{kinds[row["kind"]]} {row["id"]}  [{row["state"]}]\n{row["error"] or "无错误"}' for row in self.catalog.task_history()) or '暂无文件任务。')
         layout.addWidget(text)  # 放置任务日志。
         retry = QPushButton('重试所有未完成任务')  # 明确执行恢复动作。
@@ -657,6 +666,9 @@ def main():  # 程序统一启动入口。
         return 1  # 报告失败退出码。
 
 if __name__ == '__main__':  # 仅直接运行时启动应用。
+    if len(sys.argv) == 3 and sys.argv[1] == '--archive-settings-test':
+        from verify_archive_settings import run
+        sys.exit(run(sys.argv[2]))
     if len(sys.argv) == 3 and sys.argv[1] == '--file-workflows-test':
         from verify_file_workflows import run
         sys.exit(run(sys.argv[2]))

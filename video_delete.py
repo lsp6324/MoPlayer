@@ -66,6 +66,8 @@ class DeletionManager:  # 用持久任务协调文件回收和元数据提交。
 
     def submit(self, vid):  # 删除一个视频在数据库中登记的全部入口。
         with self.lock, self.store.file_lock:  # 回收与扫描登记串行，避免扫描复活即将删除的身份。
+            if self.store.query('SELECT id FROM archive_setting_jobs WHERE state<>"done"'):
+                raise RuntimeError('有未完成的归档设置整理，请先恢复。')
             if self.store.query('SELECT id FROM hierarchy_jobs WHERE state<>"done"'):  # 全局分类迁移期间不能删除它仍保护的视频入口。
                 raise RuntimeError('有未完成的标签结构迁移，请先在文件任务中恢复。')  # 不破坏跨视频迁移的恢复计划。
             pending = self.store.query('SELECT id FROM deletion_jobs WHERE video=? AND state<>"done" ORDER BY updated LIMIT 1', (vid,))  # 同一视频失败后继续原计划。

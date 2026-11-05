@@ -11,7 +11,7 @@ from application.tag_drafts import TagValues
 
 
 class LibraryRepository:
-    TASK_TABLES = ('jobs', 'hierarchy_jobs', 'deletion_jobs')
+    TASK_TABLES = ('jobs', 'hierarchy_jobs', 'deletion_jobs', 'archive_setting_jobs')
 
     def __init__(self, store):
         self.store = store
@@ -71,5 +71,5 @@ class LibraryRepository:
                 self.store.query(f'SELECT * FROM {name} WHERE state<>"done" ORDER BY updated')]
 
     def task_history(self):
-        return [dict(row, kind=name) for name in ('hierarchy_jobs', 'jobs', 'deletion_jobs')
+        return [dict(row, kind=name) for name in self.TASK_TABLES
                 for row in self.store.query(f'SELECT * FROM {name} ORDER BY updated DESC')]

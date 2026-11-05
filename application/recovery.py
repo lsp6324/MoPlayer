@@ -7,7 +7,8 @@ from application.operations import Operation, Status
 class Recovery:
     def __init__(self, tasks, repository, drafts, *, recover_archive, recover_tags,
                  recover_deletions, available, playback_target, mark_deleting,
-                 refresh, refresh_deleted, continue_after_delete, storage_ready, notify):
+                 refresh, refresh_deleted, continue_after_delete, storage_ready, notify, recover_settings=lambda: []):
+        self.recover_settings = recover_settings
         self.tasks, self.repository, self.drafts = tasks, repository, drafts
         self.recover_archive, self.recover_tags, self.recover_deletions = recover_archive, recover_tags, recover_deletions
         self.available, self.playback_target, self.mark_deleting = available, playback_target, mark_deleting
@@ -21,12 +22,16 @@ class Recovery:
         plans = [json.loads(row['plan']) for row in self.repository.pending_tasks('hierarchy_jobs')]
         tag_ids = tuple(dict.fromkeys(entry['video'] for plan in plans for entry in plan['videos']))
         archive_ids = tuple(row['video'] for row in self.repository.pending_tasks('jobs'))
-        affected = tuple(dict.fromkeys((*tag_ids, *archive_ids)))
+        settings_plans = [json.loads(row['plan']) for row in self.repository.pending_tasks('archive_setting_jobs')]
+        settings_ids = tuple(entry['video'] for plan in settings_plans for entry in plan['videos'])
+        affected = tuple(dict.fromkeys((*tag_ids, *archive_ids, *settings_ids)))
         playback = self.playback_target()
         self.mark_deleting(pending, True)
         self.notify(FileNotice(FileAction.RECOVERY))
         def work():
             errors = self.recover_archive() + self.recover_tags()
+            if not errors:
+                errors += self.recover_settings()
             if not errors:
                 errors += self.recover_deletions()
             if errors:
