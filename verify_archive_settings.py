@@ -136,7 +136,7 @@ def run(destination):
         window.set_rating(a,6)
         check('关闭评分分类后评分仍有效且不增加目录',wait(lambda:not window.busy)
               and window.store.video(a)['score']==6 and window.store.resolve(a).parent==root
-              and window.store.resolve(a).name.startswith('6分 '))
+              and window.store.resolve(a).name=='收藏视频.mp4')
         check('关闭标签分类后原标签仍保留',set(json.loads(window.store.video(a)['tags']))=={'标签甲','标签乙'})
         old=window.store.resolve(a)
         window.favorite(toggle=True)

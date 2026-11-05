@@ -436,8 +436,8 @@ def test_fullscreen_title_and_cursor_share_visibility_without_resizing_video(win
     assert full.overlay.isVisible() and full.title.isVisible() and not full.cursor.hidden
     assert window.player_view.surface.cursor().shape() != Qt.BlankCursor
     assert abs(full.title.geometry().center().x() - center.x()) <= 1
-    full.set_title('Very long video filename ' * 40 + '.mp4')
-    assert '…' in full.title.label.text() and full.title.width() <= 900
+    full.present_video('Very long video filename ' * 40 + '.mp4', (), None, False)
+    assert full.title.header.toolTip().startswith('Very long video filename ') and full.title.width() <= 900
     assert window.player_view.surface.geometry() == original_geometry
     window.player_view.fullscreen.exit()
     QApplication.processEvents()
@@ -529,7 +529,7 @@ def _finish_file_task(tasks):
 def test_background_tag_preflight_failure_preserves_reopened_draft_and_has_no_recovery_task(window, tmp_path):
     window.storage.save(tmp_path / 'archive')
     window.archiver.root = tmp_path / 'archive'
-    window.store.execute('UPDATE videos SET original_name=? WHERE id=?', ('a' * 240 + '.mp4', window.current))
+    window.store.execute('UPDATE videos SET original_name=? WHERE id=?', ('a' * 260 + '.mp4', window.current))
     tasks = _capture_file_task(window)
     window.player_view.toggle_tags()
     panel = window.player_view.options.tags_popup
@@ -578,7 +578,7 @@ def test_failed_tag_save_does_not_navigate_and_retry_can_continue(window, tmp_pa
     second_id = window.store.register(second)
     context = Snapshot(str(tmp_path), {str(tmp_path): ([], [(original, 'sample.mp4'), (second_id, 'second.mp4')])})
     window.context, window.location = context, (str(tmp_path), 0)
-    window.store.execute('UPDATE videos SET original_name=? WHERE id=?', ('a' * 240 + '.mp4', original))
+    window.store.execute('UPDATE videos SET original_name=? WHERE id=?', ('a' * 260 + '.mp4', original))
     tasks = _capture_file_task(window)
     window.player_view.toggle_tags()
     window.player_view.options.tags_popup.editor.chips['existing'].click()
@@ -619,9 +619,10 @@ def test_recovering_tag_task_confirms_existing_draft_without_submitting_it_again
 def test_recovering_another_archived_video_updates_its_visible_tree_name(window, tmp_path):
     from core import Snapshot
     root = str(tmp_path)
-    second = tmp_path / 'B.mp4'
+    second = tmp_path / 'legacy B.mp4'
     second.write_bytes(b'independent archive recovery fixture')
     vid = window.catalog.register(second)
+    window.store.execute('UPDATE videos SET original_name=? WHERE id=?', ('B.mp4',vid))
     window.storage.save(tmp_path / 'archive')
     window.archiver.root = tmp_path / 'archive'
     window.library_controller.adopt_snapshot(Snapshot(root, {root: ([], [(vid, second.name)])}))
@@ -638,7 +639,7 @@ def test_recovering_another_archived_video_updates_its_visible_tree_name(window,
     model = window.library_view.tree.model()
     index = model.index(0, 0, model.index(0, 0))
     assert not window.catalog.pending_tasks('jobs')
-    assert index.data(Qt.DisplayRole) == window.catalog.video(vid)['name'] != second.name
+    assert index.data(Qt.DisplayRole) == window.catalog.video(vid)['name'] == 'B.mp4' != second.name
 
 
 def test_close_waits_for_tag_commit_then_closes_its_own_window(window, tmp_path):

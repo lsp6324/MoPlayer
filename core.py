@@ -94,13 +94,16 @@ def tag_parts(tags, layout):  # 同时生成真实目录片段和文件名前缀
     tokens.extend(sorted(independent, key=natural))  # 独立标签保留自然排序。
     return folders or [('未分类',)], tokens or ['未分类']  # 清空标签仍保留一个可恢复的真实视频入口。
 
-def archive_name(original, score, tags, layout=None):  # 按实际评分、两级分类与永久原名生成名称。
-    source = Path(original)  # 原名独立保存，不从已加前缀的文件名反向猜测。
-    folders, tokens = tag_parts(tags, layout or {})  # 父子分类在文件名中合并，不重复显示父标签。
-    result = ' '.join(['未评分' if score is None else f'{score}分', *tokens, source.stem]) + source.suffix  # 保留原扩展名和所有分类语义。
-    if len(result.encode('utf-16-le')) // 2 > 255:  # Windows 文件名限制按 UTF-16 单元计算。
-        raise ValueError('评分、全部标签和原名组合后超过 Windows 文件名长度限制，请缩短标签后重试。')  # 不截掉标签或原名，也不移动来源文件。
-    return result  # 所有标签入口统一使用相同命名规则。
+def archive_name(original):
+    # Metadata determines directories and UI only. Never strip apparent prefixes.
+    if (not isinstance(original, str) or not original or original in {'.', '..'}
+            or original[-1:] in {'.', ' '} or re.search(r'[<>:"/\\|?*\x00-\x1f]', original)
+            or re.match(r'^(CON|PRN|AUX|NUL|COM[1-9¹²³]|LPT[1-9¹²³])(?:\.|$)', original, re.I)):
+        raise ValueError('记录的原文件名无效，未更改文件。')
+    result = original
+    if len(result.encode('utf-16-le')) // 2 > 255:
+        raise ValueError('原文件名超过 Windows 文件名长度限制。')
+    return result
 
 class Store:  # 管理持久视频身份和元数据。
     def __init__(self, directory):  # 在便携程序旁创建数据目录。
@@ -311,7 +314,7 @@ class Archiver:  # 使用可重放任务协调数据库和文件系统。
         if self.fault:  # 测试覆盖断电式中断位置。
             self.fault(state)  # 故障注入不参与正式运行。
 
-    def submit(self, vid, score, tags, layout=None, hierarchy_job=None, *, folders=None, favorite=None, settings_job=None):  # 创建单视频归档或全局结构迁移的子任务。
+    def submit(self, vid, score, tags, layout=None, hierarchy_job=None, *, folders=None, favorite=None, settings_job=None, preserve_directories=False):  # 创建单视频归档或全局结构迁移的子任务。
         with self.lock, self.store.file_lock:  # 文件操作与目录扫描的身份登记共用串行边界。
             if any(row['id'] != settings_job for row in self.store.query('SELECT id FROM archive_setting_jobs WHERE state<>"done"')):
                 raise RuntimeError('有未完成的归档设置整理，请先在文件任务中恢复。')
@@ -335,7 +338,7 @@ class Archiver:  # 使用可重放任务协调数据库和文件系统。
             source = self.store.resolve(vid)  # 只使用已验证视频位置。
             record = self.store.video(vid)  # 保存原始状态和名称。
             original_name = record['original_name'] or record['name']  # 老版本数据使用原显示名初始化，之后始终复用该原名。
-            name = archive_name(original_name, score, tags, layout)  # 文件操作之前校验带父子分组的新名称。
+            name = archive_name(original_name)  # 文件操作之前校验记录的原名。
             job = uuid.uuid4().hex  # 为归档分配稳定任务标识。
             stage = self.root / '.moplayer-staging' / job  # 独立暂存目录保证中断可定位。
             stage.mkdir(parents=True, exist_ok=True)  # 不与用户视频目录重名。
@@ -350,21 +353,18 @@ class Archiver:  # 使用可重放任务协调数据库和文件系统。
             tag_paths, _ = tag_parts(tags, layout)
             folder_policy = self.folders if folders is None else folders
             star = record['star'] if favorite is None else int(bool(favorite))
-            for segments in folder_policy.directories(score, star, tag_paths):
-                folder = self.root
-                components = [self.root]
-                for segment in segments:  # 依次加入启用的评分、收藏和标签层级。
-                    folder = folder / segment  # 不拼接未经验证的路径片段。
-                    components.append(folder)  # 父级大类目录也需要防重解析校验。
-                for component in components:  # 检查所有层级没有符号链接或目录联接。
-                    if component.exists() and getattr(component.lstat(), 'st_file_attributes', 0) & 0x400:  # Windows junction 也不可作为归档目标。
-                        raise OSError(f'归档目录含重解析点，拒绝写入：{component}')  # 防止标签目录被重定向到意外位置。
+            directories = ([Path(row['path']).parent for row in old] if preserve_directories else
+                           [self.root.joinpath(*segments) for segments in folder_policy.directories(score, star, tag_paths)])
+            for folder in dict.fromkeys(directories):
+                for component in (folder, *folder.parents):
+                    if component.exists() and getattr(component.lstat(), 'st_file_attributes', 0) & 0x400:
+                        raise OSError(f'归档目录含重解析点，拒绝写入：{component}')
                 folder.mkdir(parents=True, exist_ok=True)  # 确保目标标签目录存在。
-                target = folder / name  # 每个标签入口都包含实际评分与全部标签。
+                target = folder / name  # 每个分类入口都保留同一原文件名。
                 counter = 0  # 冲突时追加稳定标识和序号。
                 while target.exists() and identity(target) != identity(source):  # 不覆盖同名不同视频。
                     counter += 1  # 防止重复后缀仍然碰撞。
-                    target = folder / f'{Path(name).stem} [{vid[:8]}-{counter}]{Path(name).suffix}'  # 同名不同身份保留分类前缀和扩展名，不覆盖其他文件。
+                    target = folder / f'{Path(name).stem} [{vid[:8]}-{counter}]{Path(name).suffix}'  # 同名不同身份追加稳定标识，保留扩展名且不覆盖其他文件。
                     if len(target.name.encode('utf-16-le')) // 2 > 255:  # 冲突后缀也不能超出 Windows 文件名上限。
                         raise ValueError('增加同名冲突后缀后文件名过长，请缩短标签后重试。')  # 来源文件和原有入口继续保留。
                 targets.append(str(target))  # 固化任务目标路径。

@@ -1,8 +1,9 @@
 import time  # 根据真实鼠标活动控制浮层自动隐藏。
 from PySide6.QtCore import QObject, QTimer, QPoint, QRect, Qt, QEvent
 from PySide6.QtGui import QCursor, QColor
-from PySide6.QtWidgets import QApplication, QVBoxLayout, QSlider, QWidget, QLabel, QSizePolicy
+from PySide6.QtWidgets import QApplication, QVBoxLayout, QSlider, QWidget
 from floating_surface import FloatingSurface, owned_by, player_is_active, raise_surface
+from media_header import MediaHeader
 from video_cursor import VideoCursor
 
 
@@ -37,33 +38,25 @@ class FullscreenTitle(FloatingSurface):
         self.setWindowFlag(Qt.WindowTransparentForInput)
         self.setWindowFlag(Qt.WindowDoesNotAcceptFocus)
         self.setAttribute(Qt.WA_TransparentForMouseEvents)
-        self.setStyleSheet('''QFrame#fullscreenTitle { background:transparent; border:none; }
-            QLabel { background:transparent; border:none; color:#f2f4f8;
-                     font-family:"Microsoft YaHei UI"; font-size:16px; font-weight:600; }''')
+        self.setStyleSheet('QFrame#fullscreenTitle { background:transparent; border:none; }')
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 12, 20, 12)
-        self.label = QLabel()
-        self.label.setTextFormat(Qt.PlainText)
-        self.label.setAlignment(Qt.AlignCenter)
-        self.label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
-        layout.addWidget(self.label)
-        self.filename = ''
+        self.header = MediaHeader()
+        self.header.apply_colors(dict(text_strong='#f2f4f8',text_mid='#c4cee0',accent='#9fc0ff',
+                                      selected='#34445b',line='#8392a8'))
+        layout.addWidget(self.header)
 
-    def set_title(self, text):
-        self.filename = text
-        self.label.setAccessibleName(text)
-        self.elide()
+    @property
+    def filename(self):
+        return self.header.filename
 
-    def elide(self):
-        self.label.setText(self.label.fontMetrics().elidedText(
-            self.filename, Qt.ElideRight, max(1, self.width() - 40)))
+    def present_video(self, filename, tags, score, starred):
+        self.header.present(filename,tags,score,starred)
 
     def reposition(self, bounds):
-        width = min(900, max(1, bounds.width() - 64),
-                    max(180, self.label.fontMetrics().horizontalAdvance(self.filename) + 40))
-        self.setGeometry(bounds.x() + (bounds.width() - width) // 2,
-                         bounds.y() + 24, width, self.sizeHint().height())
-        self.elide()
+        width = min(900, max(1, bounds.width()-64))
+        self.setGeometry(bounds.x()+(bounds.width()-width)//2,
+                         bounds.y()+24,width,self.sizeHint().height())
 
 class VideoFullscreen(QObject):  # 保持视频句柄不变的全屏布局协调器。
     def __init__(self, window, view, canvas, splitter):  # 只接收明确的 UI 展示接口。
@@ -101,15 +94,15 @@ class VideoFullscreen(QObject):  # 保持视频句柄不变的全屏布局协调
                 QTimer.singleShot(0, self, self.poll)
         return False
 
-    def set_title(self, text):
-        self.title.set_title(text)
+    def present_video(self, filename, tags, score, starred):
+        self.title.present_video(filename,tags,score,starred)
         if self.active:
             bounds = QRect(self.canvas.mapToGlobal(QPoint()), self.canvas.size())
             self.title.reposition(bounds)
-            if self.presentation_visible and text:
+            if self.presentation_visible and filename:
                 self.title.show()
                 raise_surface(self.title)
-            elif not text:
+            elif not filename:
                 self.title.hide()
 
     def set_presentation(self, visible, hide_cursor=False):
@@ -162,7 +155,7 @@ class VideoFullscreen(QObject):  # 保持视频句柄不变的全屏布局协调
         self.view.sidebar_toggle.hide()
         self.view.fullscreen_button.setToolTip('退出全屏 · Esc')  # 全屏浮层提供明确退出入口。
         self.active = True  # 在窗口改变前发布全屏状态。
-        self.set_title(self.view.title_text)
+        self.title.reposition(QRect(self.canvas.mapToGlobal(QPoint()), self.canvas.size()))
         self.was_interacting = False
         self.style_popovers()
         self.last_cursor, self.last_activity = QCursor.pos(), time.monotonic()  # 首次进入暂时显示控制栏。

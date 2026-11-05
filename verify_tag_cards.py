@@ -66,7 +66,7 @@ def run(destination):  # 不运行播放、删除或完整回归。
     layout = store.tag_layout()  # 重新读取数据库而非草稿。
     check('父子与空父标签持久保存', layout['爱丽丝']['parent'] == '绝区零' and layout['空父类']['is_parent'])  # 空父标签重开仍可接收拖动。
     paths = [Path(row['path']) for row in store.query('SELECT path FROM paths WHERE id=?', (vid,))]  # 获取真实归档入口。
-    check('标签目录和九分文件名同步且共用实体', len(paths) == 2 and all(path.exists() and path.name.startswith('9分 绝区零（爱丽丝）') and identity(path) == identity(paths[0]) for path in paths))  # 不按标签复制内容。
+    check('标签目录和九分文件名同步且共用实体', len(paths) == 2 and all(path.exists() and path.name == store.video(vid)['original_name'] and identity(path) == identity(paths[0]) for path in paths))  # 不按标签复制内容。
     score = ScoreEditor(store.video(vid))  # 从真实九分记录绘制。
     score.show()  # 显示真实评分卡。
     application.processEvents()  # 绘制四颗半心形。
@@ -86,7 +86,7 @@ def run(destination):  # 不运行播放、删除或完整回归。
         QTest.mouseClick(card.findChild(QPushButton, target), Qt.LeftButton)  # 点击零分或清除。
         check('独立状态 ' + target, card.value == value and card.result() == QDialog.Accepted)  # 未评分不能等于零。
     archiver.submit(vid, 8, editor.chosen())  # 真实评分变化同步全部标签入口。
-    check('评分变化同步标签路径和原视频身份', store.video(vid)['score'] == 8 and store.resolve(vid).name.startswith('8分 绝区零（爱丽丝）') and all(not path.exists() for path in paths))  # 新评分生效且旧入口清理。
+    check('评分变化同步标签路径和原视频身份', store.video(vid)['score'] == 8 and store.resolve(vid).name == store.video(vid)['original_name'] and all(not path.exists() for path in paths))  # 新评分生效且旧入口清理。
     preview = ScoreEditor(store.video(vid))  # 单独检查预览和取消不会保存。
     preview.show()  # 保证鼠标能够进入心形。
     hover = QMouseEvent(QEvent.MouseMove, QPointF(12, 24), QPointF(preview.hearts[4].mapToGlobal(QPoint(12, 24))), Qt.NoButton, Qt.NoButton, Qt.NoModifier)  # 固定悬停事件避免原生鼠标恰好位于同一点不发移动。

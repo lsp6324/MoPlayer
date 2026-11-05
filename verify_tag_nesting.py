@@ -59,7 +59,7 @@ def run(destination):  # 只验证本次标签需求，不运行完整回归。
     validate_layout(editor.schema.values())  # 后端也必须接受合法多层关系。
     editor.grab().save(str(output / 'nested-parent.png'))  # 保存实际子父标签界面。
     migration.submit(ids[0], 8, editor.chosen(), list(editor.schema.values()))  # 真正同步两个已归档视频。
-    check('多层目录与嵌套名称同步', (output / 'archive/8分/游戏/3D/角色/8分 游戏（3D（角色）） 待删除 0.mp4').exists() and store.resolve(ids[1]).name.startswith('9分 游戏（3D（角色））'))  # 校验真实路径和其他评分。
+    check('多层目录与嵌套名称同步', (output / 'archive/8分/游戏/3D/角色/0.mp4').exists() and store.resolve(ids[1]).name=='1.mp4')  # 校验真实路径和其他评分。
     paths = store.query('SELECT path FROM paths WHERE id=?', (ids[0],))  # 读取所有真实入口。
     check('嵌套后仍共用硬链接实体', len(paths) == 2 and len({identity(row['path']) for row in paths}) == 1)  # 没有复制视频内容。
     def delete_menu():  # 从用户可见的右键菜单触发删除。
@@ -75,7 +75,7 @@ def run(destination):  # 只验证本次标签需求，不运行完整回归。
     check('删除标签保留视频及未归档状态', all(store.resolve(vid).exists() for vid in ids) and store.video(ids[2])['archived'] == 0)  # 不借全局删除移动未归档来源。
     editor.delete_tag('3D')  # 删除有子节点的父标签。
     migration.submit(ids[0], 8, editor.chosen(), list(editor.schema.values()))  # 同步子标签提升后的真实目录。
-    check('删除父标签提升子节点并同步路径', store.tag_layout()['角色']['parent'] == '游戏' and store.resolve(ids[0]).name == '8分 游戏（角色） 0.mp4' and store.resolve(ids[1]).name == '9分 游戏（角色） 1.mp4')  # 不删除角色或其他视频。
+    check('删除父标签提升子节点并同步路径', store.tag_layout()['角色']['parent'] == '游戏' and store.resolve(ids[0]).name == '0.mp4' and store.resolve(ids[1]).name == '1.mp4')  # 不删除角色或其他视频。
     editor.delete_tag('角色')  # 清除最后一个实际选择的标签。
     migration.submit(ids[0], 8, editor.chosen(), list(editor.schema.values()))  # 应用后进入未分类保护目录。
     check('删除最后标签仍保留视频在未分类', store.resolve(ids[0]).parent.name == '未分类' and store.resolve(ids[1]).parent.name == '未分类')  # 不删除最后一个有效入口。

@@ -9,6 +9,7 @@ from PySide6.QtCore import Qt, Signal, QSize
 from PySide6.QtWidgets import QWidget, QFrame, QLabel, QVBoxLayout, QHBoxLayout, QAbstractButton
 from PySide6.QtGui import QColor
 from application.playback import PlaybackStatus
+from media_header import MediaHeader
 from playback_controls import PlaybackControls
 from playback_options import PlaybackOptions
 from seek_slider import PlaybackTimeline
@@ -16,7 +17,7 @@ from seek_notice import SeekNotice
 from video_fullscreen import VideoFullscreen
 from floating_surface import owned_by
 from theme import STYLE_TEMPLATE, TOKENS
-from ui import PathLabel, icon, label, button, format_time
+from ui import icon, label, button, format_time
 
 
 @dataclass(frozen=True)
@@ -59,16 +60,7 @@ class PlayerView(QFrame):
         player = QVBoxLayout(self)
         player.setContentsMargins(0, 0, 0, 0)
         player.setSpacing(0)
-        self.header = QWidget()
-        info = QVBoxLayout(self.header)
-        info.setContentsMargins(16, 8, 16, 12)
-        info.setSpacing(5)
-        self.now = PathLabel('')
-        self.now.setObjectName('nowPlaying')
-        self.metadata = PathLabel('')
-        self.metadata.setObjectName('mediaMetadata')
-        info.addWidget(self.now)
-        info.addWidget(self.metadata)
+        self.header = MediaHeader()
         self.header.hide()
         player.addWidget(self.header)
         self.media_badge = label('', 'badge')
@@ -178,10 +170,6 @@ class PlayerView(QFrame):
     def has_video(self):
         return self._info is not None
 
-    @property
-    def title_text(self):
-        return self._info.name if self._info is not None else ''
-
     def video_handle(self):
         return int(self.surface.winId())
 
@@ -210,14 +198,12 @@ class PlayerView(QFrame):
     def present_video(self, info):
         self._info = info
         self.header.setVisible(info is not None and not self.fullscreen.active)
-        self.fullscreen.set_title(self.title_text)
+        values = (info.name, info.tags, info.score, info.starred) if info else ('', (), None, False)
+        self.header.present(*values)
+        self.fullscreen.present_video(*values)
         self.classify_bar.setVisible(info is not None)
         self.favorite_button.setChecked(bool(info and info.starred))
         self.favorite_button.setProperty('iconName', 'starFilled' if info and info.starred else 'star')
-        self.now.setText(info.name if info else '播放器')
-        details = (([f'{info.score} 分'] if info.score is not None else []) + list(info.tags)) if info else []
-        self.metadata.setText(' · '.join(details))
-        self.metadata.setVisible(bool(details))
         self._favorite_icon()
 
     def _favorite_icon(self):
@@ -291,6 +277,7 @@ class PlayerView(QFrame):
 
     def apply_theme(self, colors):
         self.normal_colors = colors
+        self.header.apply_colors(colors)
         self.transportRefreshRequested.emit()
         effective = TOKENS if self.fullscreen.active else colors
         roots = (self, self.playback_panel, *self.options.panels)

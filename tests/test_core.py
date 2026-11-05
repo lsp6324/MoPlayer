@@ -44,16 +44,16 @@ def test_hardlink_identity_and_archive(tmp_path, library):  # 验证多标签共
     store.progress(vid, 12345)  # 保存可验证播放进度。
     store.execute('UPDATE videos SET star=1 WHERE id=?', (vid,))  # 添加收藏。
     archive.submit(vid, 0, ['标签甲', '标签乙'])  # 零分与多标签首次归档。
-    a, b = archive.root / '0分/标签甲/0分 标签乙 标签甲 movie.mp4', archive.root / '0分/标签乙/0分 标签乙 标签甲 movie.mp4'  # 两个入口都包含自然排序后的全部标签。
+    a, b = archive.root / '0分/标签甲/movie.mp4', archive.root / '0分/标签乙/movie.mp4'  # 两个入口都包含自然排序后的全部标签。
     assert not source.exists() and a.exists() and b.exists()  # 成功后来源移出。
     assert identity(a) == identity(b) and a.stat().st_nlink == 2  # 内容只有一个实体并且没有遗留锚点。
     assert store.register(b) == vid and len(store.query('SELECT * FROM videos')) == 1  # 扫描第二硬链接不产生重复身份。
     assert store.video(vid)['position'] == 12345 and store.video(vid)['star'] == 1  # 进度收藏随视频身份保留。
     archive.submit(vid, 8, ['标签乙', '标签丙'])  # 同时改变评分和标签。
     assert not a.exists() and not b.exists()  # 旧评分入口被移除。
-    assert (archive.root / '8分/标签丙/8分 标签丙 标签乙 movie.mp4').exists()  # 新评分与全部标签替换原前缀。
+    assert (archive.root / '8分/标签丙/movie.mp4').exists()  # 新评分与全部标签替换原前缀。
     archive.submit(vid, None, [])  # 清除评分并取消全部标签。
-    assert store.resolve(vid) == archive.root / '未评分/未分类/未评分 未分类 movie.mp4'  # 清空标签和评分后替换命名前缀。
+    assert store.resolve(vid) == archive.root / '未评分/未分类/movie.mp4'  # 清空标签和评分后替换命名前缀。
     assert store.video(vid)['score'] is None and json.loads(store.video(vid)['tags']) == []  # 数据库与目录一致。
 
 @pytest.mark.parametrize('stage', ['planned', 'prepared', 'linked', 'committed', 'done'])  # 覆盖关键事务边界中断。
@@ -70,7 +70,7 @@ def test_recovery_after_failure(tmp_path, library, stage):  # 验证失败后数
         archive.run = lambda job: (_ for _ in ()).throw(RuntimeError('simulated crash'))  # 直接中断执行。
     with pytest.raises(RuntimeError):  # 首次调用必须报告失败。
         archive.submit(vid, 8, ['测试'])  # 运行真正的归档逻辑。
-    assert source.exists() or (archive.root / '8分/测试/8分 测试 movie.mp4').exists()  # 任何边界至少保留一份原始数据。
+    assert source.exists() or (archive.root / '8分/测试/movie.mp4').exists()  # 任何边界至少保留一份原始数据。
     recovering = Archiver(store, archive.root)  # 模拟重新启动后的新对象。
     assert recovering.recover() == []  # 持久计划自动恢复成功。
     assert not source.exists() and store.resolve(vid).exists()  # 最终完成移出且身份仍可定位。
@@ -78,7 +78,7 @@ def test_recovery_after_failure(tmp_path, library, stage):  # 验证失败后数
 
 def test_collision_never_overwrites(tmp_path, library):  # 验证同名不同视频绝不覆盖。
     store, archive = library  # 使用隔离归档器。
-    old = video(archive.root / '8分/测试/8分 测试 movie.mp4')  # 与新规则生成的完整文件名发生实际冲突。
+    old = video(archive.root / '8分/测试/movie.mp4')  # 与新规则生成的完整文件名发生实际冲突。
     old.write_bytes(b'unrelated')  # 使用不同内容以便检查。
     source = video(tmp_path / 'source/movie.mp4')  # 创建同名来源。
     vid = store.register(source)  # 登记新视频身份。

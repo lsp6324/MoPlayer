@@ -56,8 +56,6 @@ QPushButton[role="rateOption"]:checked,QPushButton[role="action"]:checked { colo
 QLabel[role="brand"] { font-family:"Segoe UI"; font-size:$font_brand; font-weight:600; color:$text_strong; }
 QLabel[role="sectionTitle"] { font-size:15px; font-weight:600; color:$text_strong; }
 QLabel[role="muted"],QLabel[role="badge"] { color:$text_dim; font-size:$font_small; }
-QLabel#nowPlaying { font-size:16px; font-weight:600; color:$text_strong; }
-QLabel#mediaMetadata { font-size:$font_small; color:$text_dim; }
 QLabel#directoryPath { color:$text_dim; font-size:$font_small; }
 QLabel[role="timecode"] { font-family:"Segoe UI"; font-size:$font_small; color:$text_dim; }
 QPushButton { border:1px solid $line; border-radius:$radius_sm; background:$surface_plain; padding:7px 12px; color:$text; }

@@ -112,12 +112,12 @@ def run(destination):  # 源码和便携 EXE 使用相同验收入口。
         window.player_view.toggle_tags()  # 运行用户通过 Q 调用的完整正式流程。
         check('标签全部应用后自动评分', wait(lambda: bool(automatic) and not window.busy) and all(automatic) and not errors)  # 不接受部分迁移就弹窗。
         check('主评分区五颗心且无下拉框', len(automatic) == 2 and automatic[1])  # 与用户明确交互一致。
-        name = '8分 绝区零（爱丽丝） ASMR cosplay 足交 黑丝 1.mp4'  # 父子分组优先，其他标签沿用自然排序。
+        name = '1.mp4'  # 父子分组优先，其他标签沿用自然排序。
         primary = output / 'archive' / '8分' / '绝区零' / '爱丽丝' / name  # 小类归档使用实际两层路径。
         check('小类路径与大类括号文件名正确', primary.exists() and window.store.video(vids[0])['name'] == name)  # 验证真实文件系统及数据库。
         first_paths = [Path(row['path']) for row in window.store.query('SELECT path FROM paths WHERE id=?', (vids[0],))]  # 第一条六标签合并父子后有五入口。
         check('父子不重复入口且所有入口硬链接同一实体', len(first_paths) == 5 and all(path.name == name and identity(path) == entities[vids[0]] for path in first_paths) and primary.stat().st_nlink == 5)  # 不增加重复视频内容。
-        check('另一评分的视频同步全局角色归属', window.store.video(vids[1])['score'] == 9 and window.store.resolve(vids[1]).name == '9分 绝区零（爱丽丝） cosplay 2.mp4')  # 迁移全局关系但不改其他视频评分。
+        check('另一评分的视频同步全局角色归属', window.store.video(vids[1])['score'] == 9 and window.store.resolve(vids[1]).name == '2.mp4')  # 迁移全局关系但不改其他视频评分。
         check('原平级入口全部清理', all(not path.exists() for path in old))  # 新入口安全后移除旧路径。
         check('历史收藏进度保持原身份', all(window.store.video(vid)['star'] == 1 and window.store.video(vid)['position'] >= 1000 for vid in vids))  # 两个 UUID 不发生替换。
         check('归档和评分保持原播放顺序及暂停', wait(lambda: window.player.get_state() == vlc.State.Paused) and window.context is context and window.location == (str(samples), 0))  # 层级修改不改连播上下文。

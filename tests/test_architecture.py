@@ -7,7 +7,7 @@ import re
 ROOT = Path(__file__).resolve().parents[1]
 UI = {
     'archive_settings_dialog', 'appearance', 'background_work', 'file_open', 'floating_surface', 'heart_rating',
-    'hover_panel', 'layout', 'library_view', 'library_views', 'player_view', 'playback_controls', 'playback_options',
+    'hover_panel', 'layout', 'library_view', 'library_views', 'media_header', 'player_view', 'playback_controls', 'playback_options',
     'score_editor', 'seek_notice', 'seek_slider', 'tag_editor', 'tag_popover',
     'theme', 'thumbnail_cache', 'ui', 'video_cursor', 'video_fullscreen', 'window_chrome',
 }
@@ -22,6 +22,7 @@ FOUNDATION_IMPORTS = {
     'floating_surface': set(),
     'hover_panel': {'floating_surface'},
     'heart_rating': set(),
+    'media_header': {'heart_rating', 'ui'},
     'background_work': set(),
     'thumbnail_cache': {'background_work'},
 }
@@ -160,7 +161,7 @@ def test_player_widgets_and_rendering_are_not_owned_by_window_or_layout():
 
 def test_player_presentation_has_no_backend_or_repository_access():
     modules = production_modules()
-    for name in ('player_view', 'playback_options', 'video_fullscreen', 'seek_notice'):
+    for name in ('media_header', 'player_view', 'playback_options', 'video_fullscreen', 'seek_notice'):
         dependencies = imports(modules[name], name)
         assert not any(dep.split('.')[0] in {'app', 'core', 'infrastructure', 'runtime', 'vlc', 'sqlite3'} for dep in dependencies), name
         for node in ast.walk(modules[name]):

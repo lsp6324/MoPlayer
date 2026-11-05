@@ -282,3 +282,19 @@ def test_settings_recovery_refreshes_frozen_batch_ids_before_deletion_recovery()
     assert h.visible['b'] == 'new settings folder'
     assert h.order.index('settings-recovered') < h.order.index('delete-recovered')
     assert 'storage-ready' in h.order
+
+
+def test_recovery_restores_names_inside_the_same_media_release_cycle():
+    h=Harness()
+    h.repo.rows['b'].update(name='old prefix b',original_name='b')
+    h.recovery.recover_deletions=lambda:h.order.append('delete-recovered') or []
+    def restore():
+        assert h.busy
+        h.order.append('names-restored')
+        h.repo.rows['b']['name']='b'
+        return ['b']
+    h.recovery.restore_names=restore
+    operation=h.recovery.retry()
+    h.finish()
+    assert operation.outcome.succeeded and h.visible['b']=='b'
+    assert h.order.index('delete-recovered')<h.order.index('names-restored') and not h.busy

@@ -92,3 +92,18 @@ def test_pending_batch_blocks_favorite_metadata_changes():
     result=classification(repo,tasks,events,folders=False).favorite('a',True)
     assert result.outcome.status is Status.CANCELLED
     assert repo.video('a')['star']==0
+
+
+def test_startup_original_name_restore_uses_file_task_and_refreshes_actual_rows():
+    repo,tasks,finish,events,_=setup()
+    repo.video('a').update(name='8分 tag movie.mp4',original_name='movie.mp4')
+    def restore():
+        repo.video('a')['name']='movie.mp4'
+        return ['a']
+    workflow=ArchiveConfiguration(tasks,repo,lambda *args:None,available=lambda:True,
+                                  refresh=lambda ids:events.append(('refresh',ids)),restore_names=restore)
+    result=workflow.restore_original_names()
+    assert result.pending
+    finish()
+    assert result.outcome.succeeded and ('refresh',('a',)) in events
+    assert workflow.restore_original_names().outcome.succeeded

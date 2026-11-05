@@ -20,6 +20,26 @@ class ArchiveConfiguration:
         if self.fault:
             self.fault(state)
 
+    def restore_original_names(self):
+        with self.archiver.lock, self.store.file_lock:
+            for table in ('jobs','hierarchy_jobs','deletion_jobs','archive_setting_jobs'):
+                if self.store.query(f'SELECT id FROM {table} WHERE state<>"done"'):
+                    raise RuntimeError('请先恢复未完成文件任务，再恢复原文件名。')
+            videos=[]
+            for video in self.store.query('SELECT * FROM videos WHERE archived=1 AND original_name IS NOT NULL'):
+                if not video['original_name'] or video['name']==video['original_name']:
+                    continue
+                videos.append(dict(video=video['id'],score=video['score'],tags=json.loads(video['tags']),
+                                   favorite=video['star'],root=str(self.store.resolve(video['id']).parent),done=False))
+            if not videos:
+                return []
+            plan=dict(restore_original_names=True,archive_folders=self.archiver.folders.to_dict(),
+                      layout=list(self.store.tag_layout().values()),videos=videos)
+            job=uuid.uuid4().hex
+            self.store.execute('INSERT INTO archive_setting_jobs VALUES(?,?,?,?,?)',
+                               (job,'planned',json.dumps(plan,ensure_ascii=False),None,time.time()))
+            return self.run(job)
+
     def submit(self, root, folders):
         folders = ArchiveFolders.from_dict(folders.to_dict())
         with self.archiver.lock, self.store.file_lock:
@@ -31,7 +51,7 @@ class ArchiveConfiguration:
             videos = []
             for video in self.store.query('SELECT * FROM videos WHERE archived=1 ORDER BY id'):
                 tags = json.loads(video['tags'])
-                archive_name(video['original_name'] or video['name'], video['score'], tags, layout)
+                archive_name(video['original_name'] or video['name'])
                 self.store.resolve(video['id'])
                 videos.append(dict(video=video['id'], score=video['score'], tags=tags,
                                    favorite=video['star'], done=False))
@@ -49,24 +69,28 @@ class ArchiveConfiguration:
             if row['state'] == 'done':
                 return [entry['video'] for entry in plan['videos']]
             try:
-                root = validate_storage_path(plan['archive_root'])
+                restoring = plan.get('restore_original_names',False)
+                root = None if restoring else validate_storage_path(plan['archive_root'])
                 folders = ArchiveFolders.from_dict(plan['archive_folders'])
                 layout = validate_layout(plan['layout'])
                 errors = self.archiver.recover()
                 if errors:
                     raise RuntimeError('\n'.join(errors))
-                target = Archiver(self.store, root, self.archiver.fault, folders=folders)
                 for entry in plan['videos']:
                     if entry['done']:
                         continue
+                    target_root=validate_storage_path(entry['root']) if restoring else root
+                    target = Archiver(self.store, target_root, self.archiver.fault, folders=folders)
                     target.submit(entry['video'], entry['score'], entry['tags'], layout=layout,
-                                  folders=folders, favorite=entry['favorite'], settings_job=job)
+                                  folders=folders, favorite=entry['favorite'], settings_job=job,
+                                  preserve_directories=restoring)
                     entry['done'] = True
                     self.checkpoint(job, plan, 'migrating')
                 # Configuration becomes effective only once every video is organized.
                 # If the JSON write fails, completed entries remain replayable in this job.
-                self.settings.save(root, folders)
-                self.archiver.root, self.archiver.folders = Path(root), folders
+                if not restoring:
+                    self.settings.save(root, folders)
+                    self.archiver.root, self.archiver.folders = Path(root), folders
                 self.checkpoint(job, plan, 'done')
                 return [entry['video'] for entry in plan['videos']]
             except Exception as error:

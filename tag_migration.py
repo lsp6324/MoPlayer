@@ -39,7 +39,7 @@ class TagMigration:  # 在现有逐视频归档日志之上协调全局分类迁
                     if name not in layout:  # 确认草稿必须包含相关视频使用的全局标签。
                         raise ValueError('全局标签结构缺少：' + name)  # 不猜测用户希望删除或保留的分类。
                 chosen = canonical_tags(chosen, layout)  # 子类的父级从全局关系隐含获取。
-                archive_name(video['original_name'] or video['name'], target_score, chosen, layout)  # 在任何文件变动前检查所有目标名称长度。
+                archive_name(video['original_name'] or video['name'])  # 在任何文件变动前检查所有目标名称长度。
                 if self.store.query('SELECT id FROM deletion_jobs WHERE video=? AND state<>"done"', (video['id'],)):  # 删除与全局迁移不能争夺同一视频。
                     raise RuntimeError('受影响视频有未完成删除，请先在文件任务中恢复。')  # 不提交不完整的结构迁移。
                 entries.append({'video': video['id'], 'score': target_score, 'tags': chosen, 'done': False, 'metadata_only': metadata_only})  # 冻结归档或纯元数据更新意图。

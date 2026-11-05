@@ -7,7 +7,8 @@ from application.operations import Operation, Status
 class Recovery:
     def __init__(self, tasks, repository, drafts, *, recover_archive, recover_tags,
                  recover_deletions, available, playback_target, mark_deleting,
-                 refresh, refresh_deleted, continue_after_delete, storage_ready, notify, recover_settings=lambda: []):
+                 refresh, refresh_deleted, continue_after_delete, storage_ready, notify, recover_settings=lambda: [], restore_names=lambda: ()):
+        self.restore_names = restore_names
         self.recover_settings = recover_settings
         self.tasks, self.repository, self.drafts = tasks, repository, drafts
         self.recover_archive, self.recover_tags, self.recover_deletions = recover_archive, recover_tags, recover_deletions
@@ -25,6 +26,9 @@ class Recovery:
         settings_plans = [json.loads(row['plan']) for row in self.repository.pending_tasks('archive_setting_jobs')]
         settings_ids = tuple(entry['video'] for plan in settings_plans for entry in plan['videos'])
         affected = tuple(dict.fromkeys((*tag_ids, *archive_ids, *settings_ids)))
+        legacy_ids = tuple(row['id'] for row in self.repository.videos('archived')
+                           if row.get('original_name') and row['name'] != row['original_name'])
+        affected = tuple(dict.fromkeys((*affected, *legacy_ids)))
         playback = self.playback_target()
         self.mark_deleting(pending, True)
         self.notify(FileNotice(FileAction.RECOVERY))
@@ -36,6 +40,7 @@ class Recovery:
                 errors += self.recover_deletions()
             if errors:
                 raise RuntimeError('\n'.join(errors))
+            return tuple(self.restore_names())
         source = self.tasks.run(work)
         def reconcile(outcome):
             self.mark_deleting(pending, False)
@@ -45,7 +50,7 @@ class Recovery:
                 self.drafts.reconcile(vid for vid in tag_ids if self.repository.video(vid) is not None)
             if not self.repository.pending_tasks():
                 self.storage_ready()
-            self.refresh(affected)
+            self.refresh(tuple(dict.fromkeys((*affected, *(outcome.value or ())))))
             deleted = {vid for vid in pending if self.repository.video(vid) is None}
             self.refresh_deleted(deleted)
             continuing = playback.video_id in deleted

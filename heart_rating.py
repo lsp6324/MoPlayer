@@ -22,6 +22,23 @@ def heart_path(rect):
     return transform.map(path)
 
 
+def paint_hearts(painter, score, rectangles, fill_color, outline_color, stroke=1.4):
+    """Shared whole/half-heart drawing for editable and read-only ratings."""
+    for index, rect in enumerate(rectangles):
+        path = heart_path(rect)
+        painter.setBrush(Qt.NoBrush)
+        painter.setPen(QPen(QColor(outline_color), stroke, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        painter.drawPath(path)
+        fraction = max(0, min(1, ((score or 0) - index * 2) / 2))
+        if fraction:
+            painter.save()
+            painter.setClipRect(QRectF(rect.left(), rect.top(), rect.width() * fraction, rect.height()))
+            painter.setBrush(QColor(fill_color))
+            painter.setPen(QPen(QColor(fill_color), stroke, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+            painter.drawPath(path)
+            painter.restore()
+
+
 class HeartRating(QWidget):
     chosen = Signal(object)
     previewed = Signal(object)
@@ -79,18 +96,6 @@ class HeartRating(QWidget):
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
-        score = self.display_score() or 0
-        for index in range(5):
-            rect = QRectF(index * 40 + 2, 3, 30, 30)
-            path = heart_path(rect)
-            painter.setBrush(Qt.NoBrush)
-            painter.setPen(QPen(self.outline_color, 1.4, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-            painter.drawPath(path)
-            fraction = max(0, min(1, (score - index * 2) / 2))
-            if fraction:
-                painter.save()
-                painter.setClipRect(QRectF(rect.left(), rect.top(), rect.width() * fraction, rect.height()))
-                painter.setBrush(self.fill_color)
-                painter.setPen(QPen(self.fill_color, 1.4, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-                painter.drawPath(path)
-                painter.restore()
+        paint_hearts(painter, self.display_score(),
+                     (QRectF(index * 40 + 2, 3, 30, 30) for index in range(5)),
+                     self.fill_color, self.outline_color)

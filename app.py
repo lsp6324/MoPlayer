@@ -2,7 +2,7 @@ import json  # 读取视频标签和诊断数据。
 import logging  # 记录可追踪的运行错误。
 import sys  # 区分源码和便携运行方式。
 from pathlib import Path  # 处理便携数据路径。
-if len(sys.argv) == 3 and sys.argv[1] in ('--ui-refresh-test', '--seek-notice-test', '--file-workflows-test', '--archive-settings-test'):
+if len(sys.argv) == 3 and sys.argv[1] in ('--ui-refresh-test', '--seek-notice-test', '--file-workflows-test', '--archive-settings-test', '--media-header-test'):
     # A windowed EXE has no stderr; keep explicit test failures reviewable.
     _test_output = Path(sys.argv[2]).absolute()
     _test_output.mkdir(parents=True, exist_ok=True)
@@ -69,7 +69,8 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
                                     prepare=self.thumbnail_service.stop)
         self.archive_configuration = ArchiveConfiguration(self.file_tasks, self.catalog,
             lambda root, folders: self.archive_configuration_service.submit(root, folders),
-            available=lambda: not self.busy, refresh=self._refresh_file_records)
+            available=lambda: not self.busy, refresh=self._refresh_file_records,
+            restore_names=lambda: self.archive_configuration_service.restore_original_names(), notify=self._file_notice)
         self.classification = Classification(self.file_tasks, self.catalog,
             lambda vid, score, tags, schema: self.tag_migration.submit(vid, score, tags, schema),
             lambda vid, score, tags: self.archiver.submit(vid, score, tags),
@@ -89,7 +90,8 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
             refresh=self._refresh_file_records, refresh_deleted=self.refresh_deleted,
             continue_after_delete=self.deletion.continue_after_delete,
             storage_ready=self._restore_storage_target, notify=self._file_notice,
-            recover_settings=lambda: self.archive_configuration_service.recover())
+            recover_settings=lambda: self.archive_configuration_service.recover(),
+            restore_names=lambda: self.archive_configuration_service.restore_original_names())
         self.vlc, self.instance, self.player = create_player()
         self.setWindowTitle('MoPlayer · 本地视频与分类')  # 设置可识别的窗口标题。
         self.resize(1440, 920)  # 为品牌导航、双层控制和大缩略图保留舒适留白。
@@ -119,6 +121,8 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
         QApplication.instance().installEventFilter(self)  # 保留弹窗与文本输入优先的快捷键处理。
         if self.has_pending_file_tasks():
             QTimer.singleShot(0, self.recovery.retry)  # 等界面启动后异步恢复未完成归档。
+        else:
+            QTimer.singleShot(0, self.archive_configuration.restore_original_names)
 
     def work(self, function, callback):  # 启动后台任务并保持信号对象存活。
         job = Work(function)  # 封装工作函数。
@@ -478,7 +482,8 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
 
     def _file_notice(self, notice):
         if notice.outcome is None:
-            self.message({FileAction.TAGS: '正在应用标签并同步相关视频……',
+            self.message({FileAction.NAMES: '正在恢复已归档视频的原文件名……',
+                          FileAction.TAGS: '正在应用标签并同步相关视频……',
                           FileAction.ARCHIVE: '正在归档，完成后恢复原进度和播放状态。',
                           FileAction.DELETE: '正在移入回收站……',
                           FileAction.RECOVERY: '正在恢复未完成文件任务……'}[notice.action])
@@ -569,7 +574,7 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
         dialog.setLayout(layout)  # 安装任务布局。
         text = QPlainTextEdit()  # 以只读文本展示持久任务。
         text.setReadOnly(True)  # 防止用户直接改写日志。
-        kinds = {'hierarchy_jobs': '标签结构', 'jobs': '归档', 'deletion_jobs': '删除', 'archive_setting_jobs': '归档设置整理'}
+        kinds = {'hierarchy_jobs': '标签结构', 'jobs': '归档', 'deletion_jobs': '删除', 'archive_setting_jobs': '归档整理'}
         text.setPlainText('\n\n'.join(f'{kinds[row["kind"]]} {row["id"]}  [{row["state"]}]\n{row["error"] or "无错误"}' for row in self.catalog.task_history()) or '暂无文件任务。')
         layout.addWidget(text)  # 放置任务日志。
         retry = QPushButton('重试所有未完成任务')  # 明确执行恢复动作。
@@ -666,6 +671,9 @@ def main():  # 程序统一启动入口。
         return 1  # 报告失败退出码。
 
 if __name__ == '__main__':  # 仅直接运行时启动应用。
+    if len(sys.argv) == 3 and sys.argv[1] == '--media-header-test':
+        from verify_media_header import run
+        sys.exit(run(sys.argv[2]))
     if len(sys.argv) == 3 and sys.argv[1] == '--archive-settings-test':
         from verify_archive_settings import run
         sys.exit(run(sys.argv[2]))

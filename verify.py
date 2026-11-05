@@ -222,7 +222,7 @@ def run(destination):  # 执行源码与便携版共用的实际验收。
         check('归档保留上下文及暂停状态', wait_until(lambda: window.player.get_state() == vlc.State.Paused) and window.context is context and window.current == original)  # 验证安全重载保持原顺序和暂停。
         entries = list((output / 'archive/8分').glob('*/*.mp4'))  # 获取真实多标签文件入口。
         check('多标签只有一个内容实体', len(entries) == 2 and identity(entries[0]) == identity(entries[1]))  # 检查文件身份相等。
-        expected_name = '8分 测试乙 测试甲 第2集.mp4'  # 全部标签沿用自然排序，评分使用实际值。
+        expected_name = '第2集.mp4'  # 全部标签沿用自然排序，评分使用实际值。
         check('归档全部入口同步分类文件名', all(entry.name == expected_name for entry in entries))  # 检查真实磁盘名称而不是界面文案。
         check('数据库保留永久原名', window.store.video(original)['original_name'] == '第2集.mp4' and window.store.video(original)['name'] == expected_name)  # 原名与显示名各自持久保存。
         check('原播放快照名称更新且序号不变', context.folders[folder][1][0] == (original, expected_name))  # 改名不能重排正在使用的播放顺序。
@@ -231,7 +231,7 @@ def run(destination):  # 执行源码与便携版共用的实际验收。
             QTest.mouseClick(dialog.hearts[4], Qt.LeftButton, pos=QPoint(12, 24))  # 第五颗左半直接确认九分。
         QTimer.singleShot(100, rate_nine)  # 弹窗创建后再操作评分控件。
         QTest.keyClick(window.player_view.surface, Qt.Key_R)  # 测试 GUI 评分确认路径。
-        check('修改评分同步改名且保留原身份', wait_until(lambda: not window.busy, 30) and window.store.resolve(original).name == '9分 测试乙 测试甲 第2集.mp4' and all(not entry.exists() for entry in entries))  # 新入口先存在，再清理旧评分入口。
+        check('修改评分同步改名且保留原身份', wait_until(lambda: not window.busy, 30) and window.store.resolve(original).name == '第2集.mp4' and all(not entry.exists() for entry in entries))  # 新入口先存在，再清理旧评分入口。
         check('改名重载保持暂停与上下文', wait_until(lambda: window.player.get_state() == vlc.State.Paused) and window.context is context)  # 命名变更不强制播放或改顺序。
         def remove_tag():  # 模拟 Q 界面取消其中一个标签。
             dialog = QApplication.activeModalWidget()  # 找到当前标签弹窗。
@@ -242,7 +242,7 @@ def run(destination):  # 执行源码与便携版共用的实际验收。
         QTimer.singleShot(100, remove_tag)  # 保持与实际用户确认路径一致。
         second_rating = auto_rating(9)  # 每次标签完全应用后再次明确评分。
         QTest.keyClick(window.player_view.surface, Qt.Key_Q)  # 使用真实分类快捷键。
-        check('取消标签同步替换前缀并自动评分', wait_until(lambda: bool(second_rating) and not window.busy, 30) and window.store.resolve(original).name == '9分 测试乙 第2集.mp4')  # 标签和评分流程完整结束后验证实际文件名。
+        check('取消标签同步替换前缀并自动评分', wait_until(lambda: bool(second_rating) and not window.busy, 30) and window.store.resolve(original).name == '第2集.mp4')  # 标签和评分流程完整结束后验证实际文件名。
         window.classification.archive(original, 8, ['测试甲', '测试乙'])  # 恢复后续原有回归使用的评分及两个标签。
         check('反复修改不叠加旧前缀', wait_until(lambda: not window.busy, 30) and window.store.resolve(original).name == expected_name)  # 始终由永久原名重建完整名称。
         check('恢复分类后暂停状态保留', wait_until(lambda: window.player.get_state() == vlc.State.Paused))  # 避免短样例在后续导航断言前自然结束。

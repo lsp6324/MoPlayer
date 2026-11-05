@@ -49,7 +49,7 @@ def test_player_emits_intents_and_renders_without_application_window(view):
     view.empty_import.click()
     assert play.count() == favorite.count() == imports.count() == 1
     assert step.count() == 2 and step.at(0) == [-1] and step.at(1) == [1]
-    assert view.now.text() == '示例.mp4' and view.metadata.text() == '7 分 · 标签'
+    assert view.header.accessibleName() == '示例.mp4' and view.header.accessibleDescription() == '标签，已收藏，7 分'
     assert view.play_button.accessibleName() == '暂停'
 
 
@@ -117,6 +117,6 @@ def test_clear_and_busy_presentation_reset_or_disable_controls(view):
     view.hold_position(12000, 60000)
     view.clear_media()
     assert view.player_empty.isVisible() and not view.header.isVisible()
-    assert not view.classify_bar.isVisible() and not view.metadata.isVisible()
-    assert view.now.text() == '播放器' and view.time_label.text() == '00:00 / 00:00'
+    assert not view.classify_bar.isVisible()
+    assert view.header.accessibleName() == '播放器' and view.time_label.text() == '00:00 / 00:00'
     assert view.seekbar.value() == 0 and not view.favorite_button.isChecked()
