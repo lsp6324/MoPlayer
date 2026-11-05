@@ -185,6 +185,7 @@ def test_short_folder_breadcrumb_remains_readable_after_layout(window, tmp_path)
 
 def test_folder_return_restores_selection_scroll_and_metadata_refresh_preserves_rows(window, tmp_path):
     from core import Snapshot
+    from library_views import LOCATION_ROLE
     from PySide6.QtTest import QSignalSpy
     from PySide6.QtWidgets import QAbstractItemView
     window.thumbnails.request = lambda vid: None
@@ -199,6 +200,7 @@ def test_folder_return_restores_selection_scroll_and_metadata_refresh_preserves_
     panel, view = window.library_view, window.library_view.files
     QApplication.processEvents()
     selected_key = view.model().key(view.model().index(30, 0))
+    selected_location = view.model().index(30, 0).data(LOCATION_ROLE)
     view.setCurrentIndex(view.model().index(30, 0))
     view.scrollTo(view.currentIndex(), QAbstractItemView.PositionAtTop)
     view.verticalScrollBar().setValue(view.verticalScrollBar().value() + 21)
@@ -218,7 +220,7 @@ def test_folder_return_restores_selection_scroll_and_metadata_refresh_preserves_
     assert view.currentIndex().data(Qt.UserRole) == vid and resets.count() == 0
     window.library_controller.exclude([vid])
     assert panel.file_count.text() == '49 部' and not view.selectionModel().hasSelection()
-    assert snapshot.folders[root][1][selected_key[1][1]][0] == vid
+    assert snapshot.folders[root][1][selected_location[1]][0] == vid
 
 
 def test_deep_breadcrumbs_fold_and_allow_ancestor_navigation(window, tmp_path):
@@ -259,6 +261,83 @@ def test_requested_nested_video_opens_its_directory_in_flat_browser(window, tmp_
     assert operation.outcome.succeeded and window.current == vid
     assert window.library_view.current_folder == str(child)
     assert window.library_view.files.currentIndex().data(Qt.UserRole) == vid
+
+
+def test_external_directory_changes_refresh_automatically_and_keep_stable_selection(window, tmp_path):
+    from PySide6.QtCore import QPersistentModelIndex
+    from PySide6.QtTest import QSignalSpy
+    from library_views import FOLDER_ROLE, LOCATION_ROLE
+    window.thumbnails.request = lambda vid: None
+    root = tmp_path / 'watched'
+    root.mkdir()
+    a, b = root / 'A.mp4', root / 'B.mp4'
+    a.write_bytes(b'A')
+    b.write_bytes(b'B')
+    previous = window.current
+    def wait(predicate):
+        deadline = time.monotonic() + 6
+        while time.monotonic() < deadline:
+            QApplication.processEvents()
+            if predicate():
+                return True
+            time.sleep(.02)
+        return False
+    loaded = window.load_folder(str(root))
+    assert wait(lambda: not loaded.pending) and loaded.outcome.succeeded
+    panel, view = window.library_view, window.library_view.files
+    model = view.model()
+    view.setCurrentIndex(model.index(1, 0))
+    selected = QPersistentModelIndex(view.currentIndex())
+    selected_id = selected.data(Qt.UserRole)
+    resets = QSignalSpy(model.modelReset)
+    added = root / '00.mp4'
+    added.write_bytes(b'added')
+    assert wait(lambda: model.rowCount() == 3)
+    assert view.currentIndex().data(Qt.UserRole) == selected_id and selected.row() == 2
+    assert selected.data(LOCATION_ROLE) == (str(root), 2)
+    aid = model.index(1, 0).data(Qt.UserRole)
+    a.rename(root / 'Z renamed.mp4')
+    assert wait(lambda: model.index(2, 0).data(Qt.DisplayRole) == 'Z renamed.mp4')
+    assert model.index(2, 0).data(Qt.UserRole) == aid
+    added.unlink()
+    assert wait(lambda: model.rowCount() == 2)
+    assert selected.data(Qt.UserRole) == selected_id and selected.row() == 0
+    child = root / 'child'
+    child.mkdir()
+    assert wait(lambda: model.index(0, 0).data(FOLDER_ROLE) == str(child))
+    nested = child / 'nested.mp4'
+    nested.write_bytes(b'nested')
+    assert wait(lambda: bool(window.library_controller.browsing.folders[str(child)][1]))
+    panel.browse_folder(str(child))
+    nested.unlink()
+    child.rmdir()
+    assert wait(lambda: panel.current_folder == str(root))
+    assert panel.file_count.text() == '2 部' and resets.count() == 0 and window.current == previous
+
+
+def test_missing_import_root_clears_and_recovers_automatically(window, tmp_path):
+    window.thumbnails.request = lambda vid: None
+    root = tmp_path / 'disappearing'
+    root.mkdir()
+    clip = root / 'clip.mp4'
+    clip.write_bytes(b'clip')
+    def wait(predicate):
+        deadline = time.monotonic() + 6
+        while time.monotonic() < deadline:
+            QApplication.processEvents()
+            if predicate():
+                return True
+            time.sleep(.02)
+        return False
+    loaded = window.load_folder(str(root))
+    assert wait(lambda: not loaded.pending)
+    clip.unlink()
+    root.rmdir()
+    assert wait(lambda: window.library_view.files.model().rowCount() == 0)
+    root.mkdir()
+    clip.write_bytes(b'restored')
+    assert wait(lambda: window.library_view.files.model().rowCount() == 1)
+    assert window.library_view.current_folder == str(root)
 
 
 def test_library_refresh_preserves_selection_and_visible_scroll_anchor(window, tmp_path):

@@ -48,6 +48,9 @@ class Scanner:
         # Intentionally ignore cancellation, as an already-finished worker can.
         return self.snapshots[str(folder)], []
 
+    def refresh(self, folder, cancel):
+        return self.scan(folder, cancel)[0]
+
     def can_import(self, path):
         return path in ('A', 'B', 'C', '/library/b.mp4', '/library/c.mp4')
 
@@ -138,6 +141,79 @@ def test_failed_video_import_preserves_previous_browse_and_history():
     tasks[0][1](None, FileNotFoundError('removed after drop'))
     assert operation.outcome.status is Status.FAILED
     assert library.browsing.root == 'A' and not repo.history
+
+
+def test_background_contents_refresh_does_not_mutate_playback_or_write_history():
+    library, repo, scanner, tasks = controller()
+    original = scanner.snapshots['A']
+    library.adopt_snapshot(original)
+    scanner.snapshots['A'] = snapshot('A', 'b', 'a')
+    changes = []
+    library.subscribe(changes.append)
+    operation = library.refresh_browsing()
+    assert not library.scanning and library.refresh_pending
+    assert library.refresh_browsing() is operation and len(tasks) == 1
+    finish(tasks[0])
+    assert operation.outcome.succeeded and library.browsing is not original
+    assert original.folders['A'][1] == [('a', 'a.mp4')]
+    assert library.browsing.folders['A'][1][0][0] == 'b' and not repo.history
+    assert [change.kind for change in changes].count('contents') == 1
+
+
+def test_new_import_cancels_old_background_refresh_without_late_publication():
+    library, repo, scanner, tasks = controller()
+    library.adopt_snapshot(scanner.snapshots['A'])
+    refresh = library.refresh_browsing()
+    browse = library.load_folder('B')
+    finish(tasks[1])
+    finish(tasks[0])
+    assert refresh.outcome.status is Status.CANCELLED and browse.outcome.succeeded
+    assert library.browsing.root == 'B' and repo.history == ['B']
+
+
+def test_background_refresh_failure_keeps_visible_contents_and_can_retry():
+    library, repo, scanner, tasks = controller()
+    library.adopt_snapshot(scanner.snapshots['A'])
+    operation = library.refresh_browsing()
+    tasks[0][1](None, PermissionError('temporary'))
+    assert operation.outcome.status is Status.FAILED and library.browsing is scanner.snapshots['A']
+    operation = library.refresh_browsing()
+    finish(tasks[1])
+    assert operation.outcome.succeeded and not repo.history
+
+
+def test_background_refresh_waits_for_file_work_and_rejects_completion_during_busy():
+    library, _, scanner, tasks = controller()
+    library.adopt_snapshot(scanner.snapshots['A'])
+    library.refresh_allowed = lambda: False
+    assert library.refresh_browsing().outcome.status is Status.CANCELLED and not tasks
+    library.refresh_allowed = lambda: True
+    operation = library.refresh_browsing()
+    library.refresh_allowed = lambda: False
+    finish(tasks[0])
+    assert operation.outcome.status is Status.CANCELLED and library.browsing is scanner.snapshots['A']
+
+
+def test_progress_refresh_does_not_overwrite_actual_external_entry_names():
+    library, repo, _, _ = controller()
+    original = snapshot('A', 'a')
+    library.adopt_snapshot(original)
+    original.folders['A'][1][0] = ('a', 'external-name.mp4')
+    repo.rows['a']['position'] = 12000
+    library.refresh(['a'], original)
+    assert original.folders['A'][1][0][1] == 'external-name.mp4'
+
+
+def test_background_delivery_does_not_overwrite_newer_metadata_updates():
+    library, repo, scanner, tasks = controller()
+    library.adopt_snapshot(scanner.snapshots['A'])
+    operation = library.refresh_browsing()
+    work, ready = tasks[0]
+    scanned = work()
+    repo.rows['a']['position'] = 15000
+    library.refresh(['a'])
+    ready(scanned, None)
+    assert operation.outcome.succeeded and library.details['a']['position'] == 15000
 
 
 def test_cancel_preserves_visible_folder_and_prevents_requested_playback():

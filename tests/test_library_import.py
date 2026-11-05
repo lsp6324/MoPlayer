@@ -66,3 +66,13 @@ def test_folder_import_keeps_recursive_browse_without_selected_video(scanner, tm
     snapshot, errors, selected = scanner.scan_import(nested.parent, Event())
     assert not errors and selected is None
     assert snapshot.folders[str(nested)][1][0][1] == 'clip.webm'
+
+
+def test_refresh_missing_root_is_empty_and_recreated_root_can_be_read(scanner, tmp_path):
+    root = tmp_path / 'watched'
+    missing = scanner.refresh(root, Event())
+    assert missing.root == str(root) and missing.folders == {str(root): ([], [])}
+    root.mkdir()
+    (root / 'new.mp4').write_bytes(b'new')
+    restored = scanner.refresh(root, Event())
+    assert restored.folders[str(root)][1][0][1] == 'new.mp4'

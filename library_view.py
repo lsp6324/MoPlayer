@@ -1,5 +1,6 @@
 """Left library panel: widgets, selection and scroll positions live here."""
 from dataclasses import dataclass
+from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal, QPoint, QModelIndex, QPersistentModelIndex
 from PySide6.QtWidgets import (QFrame, QVBoxLayout, QHBoxLayout, QStackedWidget,
@@ -108,14 +109,18 @@ class LibraryView(QFrame):
     @staticmethod
     def _sync_view(view, sync):
         model = view.model()
-        selected = model.key(view.currentIndex())
+        selected = model.key(view.currentIndex()) if view.selectionModel().hasSelection() else None
         anchor = QPersistentModelIndex(view.indexAt(QPoint(1, 1)))
         offset = view.visualRect(anchor).top() if anchor.isValid() else 0
         scroll = view.verticalScrollBar().value()
         sync()
-        if selected is not None and not model.index_for_key(selected).isValid():
-            view.clearSelection()
-            view.setCurrentIndex(QModelIndex())
+        if selected is not None:
+            restored = model.index_for_key(selected)
+            if not restored.isValid():
+                view.clearSelection()
+                view.setCurrentIndex(QModelIndex())
+            elif model.key(view.currentIndex()) != model.key(restored):
+                view.setCurrentIndex(restored)
         if anchor.isValid():
             view.scrollTo(QModelIndex(anchor), QAbstractItemView.PositionAtTop)
             view.verticalScrollBar().setValue(view.verticalScrollBar().value() - offset)
@@ -132,9 +137,19 @@ class LibraryView(QFrame):
             self.current_folder = None
             self.browse_folder(change.location[0] if change.location else snapshot.root)
             if change.location:
-                index = self.files.model().index_for_key(('video', change.location))
+                index = self.files.model().index_for_location(change.location)
                 self.files.setCurrentIndex(index)
                 self.files.scrollTo(index)
+        elif change.kind == 'contents':
+            folder = self.current_folder or snapshot.root
+            while folder not in snapshot.folders and folder != snapshot.root:
+                folder = str(Path(folder).parent)
+            if folder != self.current_folder:
+                self.browse_folder(folder)
+            else:
+                self._sync_view(self.files, lambda: self.files.model().sync(snapshot, self.controller.details, ()))
+            self._update_count()
+            self._folder_positions = {path: position for path, position in self._folder_positions.items() if path in snapshot.folders}
         elif snapshot is not None and change.video_ids:
             self._sync_view(self.files, lambda: self.files.model().sync(snapshot, self.controller.details, change.video_ids))
             self._update_count()

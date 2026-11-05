@@ -44,8 +44,9 @@ class _LibraryTask:
 
 
 class LibraryController:
-    def __init__(self, repository, scanner, dispatch):
+    def __init__(self, repository, scanner, dispatch, *, refresh_allowed=lambda: True):
         self.repository, self.scanner, self.dispatch = repository, scanner, dispatch
+        self.refresh_allowed = refresh_allowed
         self.browsing = None
         self.details = {}
         self._lists = {}
@@ -62,7 +63,11 @@ class LibraryController:
 
     @property
     def scanning(self):
-        return bool(self._tasks)
+        return any(slot != 'refresh' for slot in self._tasks)
+
+    @property
+    def refresh_pending(self):
+        return 'refresh' in self._tasks
 
     @property
     def navigation_pending(self):
@@ -111,6 +116,8 @@ class LibraryController:
                 if error is not None:
                     raise error
                 value = publish(value)
+            except InterruptedError:
+                operation.finish(Outcome(Status.CANCELLED))
             except Exception as failure:
                 operation.finish(Outcome(Status.FAILED, error=failure))
             else:
@@ -142,6 +149,7 @@ class LibraryController:
         return self._browse(lambda cancel: self.scanner.scan_import(path, cancel), playback_request=True)
 
     def _browse(self, scan, *, playback_request):
+        self.cancel('refresh')
         def work(cancel):
             snapshot, errors, play_id = scan(cancel)
             ids = (vid for _, files in snapshot.folders.values() for vid, _ in files)
@@ -157,6 +165,32 @@ class LibraryController:
             return BrowseResult(snapshot, errors, location)
 
         return self._run('browse', work, publish, playback_request=playback_request)
+
+    def refresh_browsing(self):
+        """Replace only the browse snapshot; never change a playback context."""
+        if self.refresh_pending:
+            return self._tasks['refresh'].operation
+        if self.browsing is None or 'browse' in self._tasks or not self.refresh_allowed():
+            return Operation.cancelled()
+        baseline = self.browsing
+        baseline_details = dict(self.details)
+
+        def work(cancel):
+            snapshot = self.scanner.refresh(baseline.root, cancel)
+            ids = (vid for _, files in snapshot.folders.values() for vid, _ in files)
+            return snapshot, self.repository.video_details(ids)
+
+        def publish(value):
+            if self.browsing is not baseline or not self.refresh_allowed() or 'browse' in self._tasks:
+                raise InterruptedError('浏览刷新已过期。')
+            snapshot, details = value
+            self.details.update((vid, row) for vid, row in details.items()
+                                if self.details.get(vid) == baseline_details.get(vid))
+            self.browsing = snapshot
+            self._changed('contents')
+            return snapshot
+
+        return self._run('refresh', work, publish)
 
     def adopt_snapshot(self, snapshot, details=None, *, location=None):
         """Publish a prepared browse snapshot; playback remains caller-owned."""
@@ -202,6 +236,7 @@ class LibraryController:
     def refresh(self, video_ids, playback_context=None):
         ids = tuple(dict.fromkeys(video_ids))
         rows = self.repository.video_details(ids)
+        renamed = {vid for vid, row in rows.items() if self.details.get(vid, {}).get('name') != row['name']}
         self.details.update(rows)
         for vid in set(ids) - rows.keys():
             self.details.pop(vid, None)
@@ -210,7 +245,7 @@ class LibraryController:
                 continue
             for _, files in snapshot.folders.values():
                 for number, (vid, name) in enumerate(files):
-                    if vid in rows:
+                    if vid in renamed:
                         files[number] = (vid, rows[vid]['name'])
             snapshot.visible_cache.clear()
         for mode, listing in self._lists.items():

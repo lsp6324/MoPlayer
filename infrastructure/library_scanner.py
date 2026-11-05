@@ -1,9 +1,10 @@
 """Adapter for the existing scan and playback-order rules; no UI ownership."""
 from pathlib import Path
+import os
 import stat
 
 from application.library import NavigationStep
-from core import EXTENSIONS, ScanRequired, scan
+from core import EXTENSIONS, ScanRequired, Snapshot, scan
 
 
 class LibraryScanner:
@@ -12,6 +13,21 @@ class LibraryScanner:
 
     def scan(self, folder, cancel):
         return scan(folder, self.store, cancel)
+
+    def refresh(self, folder, cancel):
+        root = Path(folder)
+        if cancel.is_set():
+            raise InterruptedError('刷新已取消')
+        try:
+            # Missing roots become empty views; permission errors retain the old view.
+            with os.scandir(root) as entries:
+                next(entries, None)
+        except FileNotFoundError:
+            return Snapshot(str(root), {str(root): ([], [])})
+        snapshot, errors = self.scan(root, cancel)
+        if errors:
+            raise OSError('目录暂时无法完整读取：' + errors[0])
+        return snapshot
 
     @staticmethod
     def _import_target(path):

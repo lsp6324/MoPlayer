@@ -1,5 +1,6 @@
 """Library widgets and item rendering consume prepared presentation data."""
 from pathlib import Path
+from collections import Counter, defaultdict, deque
 import time
 from PySide6.QtCore import Qt, Signal, QAbstractListModel, QModelIndex, QSize, QRect, QRectF, QPointF
 from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QTextLayout, QTextOption
@@ -112,6 +113,37 @@ class VideoDelegate(QStyledItemDelegate):
             painter.drawText(QRect(text_area.left(), area.bottom() - 22, text_area.width(), 20), Qt.AlignLeft | Qt.AlignVCenter, ' · '.join(details))
         painter.restore()
 
+def _sync_rows(model, rows, key):
+    """Reconcile keyed presentation rows without resetting Qt selection."""
+    wanted = {key(row) for row in rows}
+    for number in range(len(model.rows) - 1, -1, -1):
+        if key(model.rows[number]) not in wanted:
+            model.beginRemoveRows(QModelIndex(), number, number)
+            model.rows.pop(number)
+            model.endRemoveRows()
+    positions = {key(row): n for n, row in enumerate(model.rows)}
+    changed = set()
+    for number, row in enumerate(rows):
+        identity = key(row)
+        source = positions.get(identity)
+        if source is None:
+            model.beginInsertRows(QModelIndex(), number, number)
+            model.rows.insert(number, dict(row))
+            model.endInsertRows()
+        elif source != number:
+            model.beginMoveRows(QModelIndex(), source, source, QModelIndex(), number)
+            model.rows.insert(number, model.rows.pop(source))
+            model.endMoveRows()
+        if source is None or source != number:
+            positions.update((key(model.rows[n]), n) for n in range(number, len(model.rows)))
+        if model.rows[number] != row:
+            model.rows[number] = dict(row)
+            index = model.index(number, 0)
+            model.dataChanged.emit(index, index)
+            changed.add(identity)
+    return changed
+
+
 class VideoListModel(QAbstractListModel):
     """Stable identities survive insertions, removals and recent-list moves."""
     def __init__(self, parent=None):
@@ -144,29 +176,7 @@ class VideoListModel(QAbstractListModel):
         return self.index_for_id(key)
 
     def sync(self, rows):
-        wanted = {row['id'] for row in rows}
-        for number in range(len(self.rows) - 1, -1, -1):
-            if self.rows[number]['id'] not in wanted:
-                self.beginRemoveRows(QModelIndex(), number, number)
-                self.rows.pop(number)
-                self.endRemoveRows()
-        positions = {row['id']: n for n, row in enumerate(self.rows)}
-        for number, row in enumerate(rows):
-            source = positions.get(row['id'])
-            if source is None:
-                self.beginInsertRows(QModelIndex(), number, number)
-                self.rows.insert(number, dict(row))
-                self.endInsertRows()
-            elif source != number:
-                self.beginMoveRows(QModelIndex(), source, source, QModelIndex(), number)
-                self.rows.insert(number, self.rows.pop(source))
-                self.endMoveRows()
-            if source is None or source != number:
-                positions.update((self.rows[n]['id'], n) for n in range(number, len(self.rows)))
-            if self.rows[number] != row:
-                self.rows[number] = dict(row)
-                index = self.index(number, 0)
-                self.dataChanged.emit(index, index)
+        _sync_rows(self, rows, lambda row: row['id'])
 
     def notify(self, video_ids):
         ids = set(video_ids)
@@ -177,69 +187,104 @@ class VideoListModel(QAbstractListModel):
 
 
 class FolderModel(QAbstractListModel):
-    """One directory's rows; retain the snapshot's original playback indices."""
+    """Stable entry keys and snapshot locations have separate lifetimes."""
     def __init__(self, snapshot, folder, details=None, parent=None):
         super().__init__(parent)
         self.folder = folder
-        self.children = tuple(snapshot.folders[folder][0])
-        self.files = list(snapshot.visible_files(folder))
         self.details = dict(details or {})
+        self.rows = []
+        self._snapshot = None
+        self.rows = self._project(snapshot)
+        self._snapshot = snapshot
 
     def rowCount(self, parent=QModelIndex()):
-        return 0 if parent.isValid() else len(self.children) + len(self.files)
-
-    def _entry(self, index):
-        return self.files[index.row() - len(self.children)]
+        return 0 if parent.isValid() else len(self.rows)
 
     def data(self, index, role=Qt.DisplayRole):
         if not index.isValid() or not 0 <= index.row() < self.rowCount():
             return None
-        folder = self.children[index.row()] if index.row() < len(self.children) else None
+        row = self.rows[index.row()]
         if role == Qt.UserRole:
-            return None if folder else self._entry(index)[1][0]
+            return row['id']
         if role == FOLDER_ROLE:
-            return folder
+            return row['folder']
         if role == LOCATION_ROLE:
-            return None if folder else (self.folder, self._entry(index)[0])
+            return row['location']
         if role == DETAILS_ROLE:
-            return None if folder else self.details.get(self._entry(index)[1][0], {})
+            return self.details.get(row['id'], {}) if row['id'] else None
         if role == Qt.DisplayRole:
-            return (Path(folder).name or folder) if folder else self._entry(index)[1][1]
+            return row['name']
         if role == Qt.ToolTipRole:
-            return folder or str(Path(self.folder) / self._entry(index)[1][1])
+            return row['folder'] or str(Path(self.folder) / row['name'])
         return None
 
     def key(self, index):
         if not index.isValid():
             return None
-        return ('folder', index.data(FOLDER_ROLE)) if index.row() < len(self.children) else ('video', index.data(LOCATION_ROLE))
+        return self.rows[index.row()]['key']
 
     def index_for_key(self, key):
-        return next((self.index(row, 0) for row in range(self.rowCount()) if self.key(self.index(row, 0)) == key), QModelIndex())
+        exact = next((n for n, row in enumerate(self.rows) if row['key'] == key), None)
+        if exact is not None:
+            return self.index(exact, 0)
+        if key and key[0] == 'video':
+            matches = [(n, row) for n, row in enumerate(self.rows) if row['id'] == key[1]]
+            named = [n for n, row in matches if row['name'] == key[2]]
+            if len(named) == 1:
+                return self.index(named[0], 0)
+        return QModelIndex()
+
+    def index_for_location(self, location):
+        return next((self.index(n, 0) for n, row in enumerate(self.rows) if row['location'] == location), QModelIndex())
+
+    def _project(self, snapshot):
+        children, _ = snapshot.folders[self.folder]
+        rows = [dict(key=('folder', child), id=None, name=Path(child).name or child,
+                     folder=child, location=None) for child in children]
+        videos = [dict(key=('video', vid, name, number), id=vid, name=name,
+                       folder=None, location=(self.folder, number))
+                  for number, (vid, name) in snapshot.visible_files(self.folder)]
+        unused = {row['key']: row for row in self.rows if row['id']}
+        existing = defaultdict(deque)
+        same_snapshot = snapshot is self._snapshot
+        for row in unused.values():
+            existing[(row['id'], row['location'] if same_snapshot else row['name'])].append(row)
+        unmatched = []
+        for row in videos:
+            candidates = existing[(row['id'], row['location'] if same_snapshot else row['name'])]
+            match = candidates.popleft() if candidates else None
+            if match is None:
+                unmatched.append(row)
+            else:
+                row['key'] = match['key']
+                del unused[match['key']]
+        remaining = defaultdict(list)
+        for row in unused.values():
+            remaining[row['id']].append(row)
+        counts = Counter(row['id'] for row in unmatched)
+        for row in unmatched:
+            old = remaining[row['id']]
+            # A unique identity can survive an external rename. Ambiguous hard
+            # link aliases are matched by name above, never by shifted row number.
+            if len(old) == counts[row['id']] == 1:
+                row['key'] = old[0]['key']
+        return rows + videos
 
     def sync(self, snapshot, details, video_ids):
         self.details = dict(details)
+        changed = _sync_rows(self, self._project(snapshot), lambda row: row['key'])
+        self._snapshot = snapshot
         ids = set(video_ids)
-        offset = len(self.children)
-        visible = dict(snapshot.visible_files(self.folder))
-        for number in range(len(self.files) - 1, -1, -1):
-            original, _ = self.files[number]
-            if original not in visible:
-                self.beginRemoveRows(QModelIndex(), offset + number, offset + number)
-                self.files.pop(number)
-                self.endRemoveRows()
-        for number, (original, entry) in enumerate(self.files):
-            updated = visible[original]
-            self.files[number] = (original, updated)
-            if entry != updated or updated[0] in ids:
-                index = self.index(offset + number, 0)
+        for number, row in enumerate(self.rows):
+            if row['id'] in ids and row['key'] not in changed:
+                index = self.index(number, 0)
                 self.dataChanged.emit(index, index)
 
     def notify(self, video_ids):
         ids = set(video_ids)
-        for number, (_, (vid, _)) in enumerate(self.files):
-            if vid in ids:
-                index = self.index(len(self.children) + number, 0)
+        for number, row in enumerate(self.rows):
+            if row['id'] in ids:
+                index = self.index(number, 0)
                 self.dataChanged.emit(index, index)
 
 class DropList(QListView):

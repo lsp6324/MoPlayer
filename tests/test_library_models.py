@@ -81,5 +81,42 @@ def test_folder_model_shows_only_immediate_children_and_preserves_alias_keys(app
     assert model.index(1, 0).data(Qt.DisplayRole) == 'A.mp4'
     nested_model = FolderModel(snapshot, child)
     keys = [nested_model.key(nested_model.index(row, 0)) for row in (1, 2)]
-    assert keys == [('video', (child, 0)), ('video', (child, 1))]
+    assert keys[0] != keys[1]
     assert [nested_model.index_for_key(key).row() for key in keys] == [1, 2]
+
+
+def test_contents_insert_remove_and_reorder_preserve_selected_identity_and_new_location(application, tmp_path):
+    root, child, new_child = str(tmp_path), str(tmp_path / 'child'), str(tmp_path / 'added')
+    before = Snapshot(root, {root: ([child], [('a', 'A.mp4'), ('b', 'B.mp4'), ('c', 'C.mp4')])})
+    model = FolderModel(before, root)
+    tester = QAbstractItemModelTester(model, QAbstractItemModelTester.FailureReportingMode.Warning)
+    selected = QPersistentModelIndex(model.index(2, 0))
+    key = model.key(model.index(2, 0))
+    after = Snapshot(root, {root: ([new_child, child], [('x', '00.mp4'), ('c', 'C.mp4'), ('b', 'B.mp4')])})
+    resets = QSignalSpy(model.modelReset)
+    model.sync(after, {}, ())
+    assert selected.data(Qt.UserRole) == 'b' and selected.row() == 4
+    assert selected.data(LOCATION_ROLE) == (root, 2)
+    assert model.key(model.index(4, 0)) == key and resets.count() == 0
+    assert [model.index(n, 0).data(Qt.DisplayRole) for n in range(model.rowCount())] == ['added', 'child', '00.mp4', 'C.mp4', 'B.mp4']
+
+
+def test_external_rename_preserves_unique_video_and_aliases_remain_distinct(application, tmp_path):
+    root = str(tmp_path)
+    model = FolderModel(Snapshot(root, {root: ([], [('a', 'A.mp4'), ('b', 'B.mp4'), ('b', 'alias.mp4')])}), root)
+    unique = QPersistentModelIndex(model.index(0, 0))
+    alias = QPersistentModelIndex(model.index(2, 0))
+    model.sync(Snapshot(root, {root: ([], [('b', 'alias.mp4'), ('a', 'renamed.mp4'), ('b', 'B.mp4')])}), {}, ())
+    assert unique.isValid() and unique.data(Qt.DisplayRole) == 'renamed.mp4' and unique.row() == 1
+    assert alias.isValid() and alias.data(Qt.DisplayRole) == 'alias.mp4' and alias.row() == 0
+    assert alias.data(LOCATION_ROLE) == (root, 0)
+
+
+def test_removed_hard_link_entry_does_not_select_another_alias(application, tmp_path):
+    root = str(tmp_path)
+    before = Snapshot(root, {root: ([], [('a', 'A.mp4'), ('a', 'alias.mp4')])})
+    model = FolderModel(before, root)
+    key = model.key(model.index(0, 0))
+    model.sync(Snapshot(root, {root: ([], [('a', 'alias.mp4')])}), {}, ())
+    assert not model.index_for_key(key).isValid()
+    assert model.rowCount() == 1 and model.index(0, 0).data(Qt.DisplayRole) == 'alias.mp4'

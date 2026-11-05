@@ -32,6 +32,7 @@ from application.deletion import Deletion
 from application.recovery import Recovery
 from application.file_results import FileAction, PlaybackTarget
 from infrastructure.library_repository import LibraryRepository
+from infrastructure.library_watch import LibraryWatch
 from core import Store, Archiver
 from video_delete import DeletionManager  # 以可恢复任务回收全部登记入口。
 from tag_migration import TagMigration  # 以可恢复批次同步全局标签层级。
@@ -62,7 +63,9 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
         self.context, self.location, self.current = None, None, None
         self.jobs, self.busy = [], False
         self.library_controller = LibraryController(self.catalog, LibraryScanner(self.store),
-            lambda function, callback: self.work(function, callback))
+            lambda function, callback: self.work(function, callback),
+            refresh_allowed=lambda: not self.busy and not self.has_pending_file_tasks())
+        self.library_watch = LibraryWatch(self.library_controller, self)
         self.playback = PlaybackSession()
         self.user_actions = UserActions(before_action=lambda:self.file_tasks.completion or Operation.success())
         self.tag_drafts = TagDrafts(self.catalog,
@@ -662,6 +665,7 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
         if not operation.outcome.succeeded:
             event.ignore()
             return
+        self.library_watch.stop()
         self.library_controller.cancel()
         self.thumbnails.closing = True
         self.save()
@@ -712,6 +716,9 @@ def main():  # 程序统一启动入口。
         return 1  # 报告失败退出码。
 
 if __name__ == '__main__':  # 仅直接运行时启动应用。
+    if len(sys.argv) == 3 and sys.argv[1] == '--live-library-test':
+        from verify_live_library import run
+        sys.exit(run(sys.argv[2]))
     if len(sys.argv) == 3 and sys.argv[1] == '--folder-navigation-test':
         from verify_folder_navigation import run
         sys.exit(run(sys.argv[2]))
