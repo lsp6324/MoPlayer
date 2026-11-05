@@ -9,6 +9,7 @@ from ui import PathLabel, label, button
 
 class LibraryView(QFrame):
     folderRequested = Signal(str)
+    pathDropped = Signal(str)
     videoRequested = Signal(object)
     unfavoriteRequested = Signal(str)
 
@@ -44,11 +45,12 @@ class LibraryView(QFrame):
         folder_row.addWidget(self.import_button)
         layout.addLayout(folder_row)
         self.stack = QStackedWidget()
-        self.tree = DropTree()
+        self.tree = DropTree(controller.can_import)
+        self.tree.setToolTip('拖入一个文件夹，或拖入单个视频以打开播放')
         self.tree.setObjectName('libraryTree')
         self.tree.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.tree.setIndentation(16)
-        self.tree.dropped.connect(self.folderRequested)
+        self.tree.dropped.connect(self.pathDropped)
         self.tree.doubleClicked.connect(self._open_tree)
         self.stack.addWidget(self.tree)
         self.lists = {}

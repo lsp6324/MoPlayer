@@ -128,21 +128,34 @@ class LibraryController:
                      if vid == video_id and vid not in snapshot.excluded), None)
 
     def load_folder(self, folder, play_id=None):
-        def work(cancel):
+        def scan(cancel):
             snapshot, errors = self.scanner.scan(folder, cancel)
+            return snapshot, errors, play_id
+        return self._browse(scan, playback_request=play_id is not None)
+
+    def can_import(self, path):
+        return self.scanner.can_import(path)
+
+    def import_path(self, path):
+        """An explicit drop may select a video; superseded imports cannot play."""
+        return self._browse(lambda cancel: self.scanner.scan_import(path, cancel), playback_request=True)
+
+    def _browse(self, scan, *, playback_request):
+        def work(cancel):
+            snapshot, errors, play_id = scan(cancel)
             ids = (vid for _, files in snapshot.folders.values() for vid, _ in files)
-            return snapshot, tuple(errors), self.repository.video_details(ids)
+            return snapshot, tuple(errors), self.repository.video_details(ids), play_id
 
         def publish(value):
-            snapshot, errors, details = value
+            snapshot, errors, details, play_id = value
             location = self.locate(snapshot, play_id) if play_id else None
             if play_id and location is None:
                 raise FileNotFoundError('扫描后未找到原视频身份；文件可能已被移动或替换。')
-            self.repository.remember_folder(folder)
+            self.repository.remember_folder(snapshot.root)
             self.adopt_snapshot(snapshot, details)
             return BrowseResult(snapshot, errors, location)
 
-        return self._run('browse', work, publish, playback_request=play_id is not None)
+        return self._run('browse', work, publish, playback_request=playback_request)
 
     def adopt_snapshot(self, snapshot, details=None):
         """Publish a prepared browse snapshot; playback remains caller-owned."""

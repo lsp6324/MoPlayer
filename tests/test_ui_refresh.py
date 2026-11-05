@@ -57,6 +57,85 @@ def test_integrated_layout_and_quiet_feedback(window):
     assert window.player_view.control_row.center.isVisible()
 
 
+def test_single_video_drop_loads_parent_and_plays_selected_identity_after_save(window, tmp_path):
+    from PySide6.QtCore import QMimeData, QUrl, QPointF
+    from PySide6.QtGui import QDragEnterEvent, QDropEvent
+    from application.operations import Outcome, Status
+    folder = tmp_path / '拖入 文件夹'
+    folder.mkdir()
+    a, b, c = [folder / name for name in ('A.mp4', 'B.MP4', 'C.mp4')]
+    for path in (a, b, c):
+        path.write_bytes(path.name.encode())
+    chosen = window.catalog.register(c)
+    window.catalog.progress(chosen, 9000)
+    played = []
+    window.play_path = lambda path, position, paused: played.append((path, position))
+    saving = Operation()
+    window.player_view.options.flush_pending = lambda: saving if saving.pending else Operation.success()
+    tree = window.library_view.tree
+    def drop(path):
+        mime = QMimeData()
+        mime.setUrls([QUrl.fromLocalFile(str(path))])
+        enter = QDragEnterEvent(QPoint(20, 20), Qt.CopyAction, mime, Qt.LeftButton, Qt.NoModifier)
+        QApplication.sendEvent(tree.viewport(), enter)
+        event = QDropEvent(QPointF(20, 20), Qt.CopyAction, mime, Qt.LeftButton, Qt.NoModifier)
+        QApplication.sendEvent(tree.viewport(), event)
+        assert enter.isAccepted() and event.isAccepted()
+    drop(b)
+    drop(c)
+    assert not played and not window.library_controller.scanning
+    saving.finish(Outcome(Status.SUCCEEDED))
+    deadline = time.monotonic() + 5
+    while not played and time.monotonic() < deadline:
+        QApplication.processEvents()
+        time.sleep(.01)
+    assert played == [(c, 9000)]
+    assert window.current == chosen and window.library_controller.browsing.root == str(folder)
+
+
+def test_drop_rejects_invalid_payloads_and_rechecks_removed_file(window, tmp_path):
+    from PySide6.QtCore import QMimeData, QUrl, QPointF
+    from PySide6.QtGui import QDragEnterEvent, QDropEvent
+    from PySide6.QtTest import QSignalSpy
+    tree = window.library_view.tree
+    signal = QSignalSpy(tree.dropped)
+    video = tmp_path / 'drop.mp4'
+    video.write_bytes(b'video')
+    text = tmp_path / 'notes.txt'
+    text.write_text('text')
+    for urls in ([], [QUrl('https://example.test/video.mp4')], [QUrl.fromLocalFile(str(text))],
+                 [QUrl.fromLocalFile(str(video))] * 2):
+        mime = QMimeData()
+        mime.setUrls(urls)
+        enter = QDragEnterEvent(QPoint(20, 20), Qt.CopyAction, mime, Qt.LeftButton, Qt.NoModifier)
+        tree.dragEnterEvent(enter)
+        event = QDropEvent(QPointF(20, 20), Qt.CopyAction, mime, Qt.LeftButton, Qt.NoModifier)
+        tree.dropEvent(event)
+        assert not enter.isAccepted() and not event.isAccepted()
+    mime = QMimeData()
+    mime.setUrls([QUrl.fromLocalFile(str(video))])
+    enter = QDragEnterEvent(QPoint(20, 20), Qt.CopyAction, mime, Qt.LeftButton, Qt.NoModifier)
+    tree.dragEnterEvent(enter)
+    assert enter.isAccepted()
+    video.unlink()
+    event = QDropEvent(QPointF(20, 20), Qt.CopyAction, mime, Qt.LeftButton, Qt.NoModifier)
+    tree.dropEvent(event)
+    assert not event.isAccepted() and signal.count() == 0
+
+
+def test_failed_draft_save_prevents_dropped_video_from_replacing_current(window, tmp_path):
+    from application.operations import Outcome, Status
+    path = tmp_path / 'next.mp4'
+    path.write_bytes(b'next')
+    previous = window.current
+    saving = Operation()
+    window.player_view.options.flush_pending = lambda: saving
+    window.import_library_path(str(path))
+    saving.finish(Outcome(Status.FAILED, error=OSError('save failed')))
+    QApplication.processEvents()
+    assert window.current == previous and window.library_controller.browsing is None
+
+
 def test_library_refresh_preserves_selection_and_visible_scroll_anchor(window, tmp_path):
     from PySide6.QtCore import QPoint
     from PySide6.QtTest import QSignalSpy

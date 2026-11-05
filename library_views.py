@@ -259,25 +259,39 @@ class TreeModel(QAbstractItemModel):
                     index = self.index(offset + number, 0, parent)
                     self.dataChanged.emit(index, index)
 
-class DropTree(QTreeView):  # 将文件夹拖放限制在左侧区域。
-    dropped = Signal(str)  # 向窗口发送导入路径。
+class DropTree(QTreeView):
+    dropped = Signal(str)
 
-    def __init__(self):  # 配置目录视图交互。
+    def __init__(self, can_import):
         super().__init__()  # 初始化目录控件。
-        self.setAcceptDrops(True)  # 启用文件夹拖入。
+        self.can_import = can_import
+        self.setAcceptDrops(True)
         self.setHeaderHidden(True)  # 简化目录区域。
         self.setUniformRowHeights(False)  # 视频行与文件夹分别使用委托提供的高度。
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)  # 左侧被拖窄或目录过深时允许横向查看完整图片。
         self.setEditTriggers(QTreeView.NoEditTriggers)  # 文件名不可直接编辑。
 
-    def dragEnterEvent(self, event):  # 检查拖入对象是否为本地文件夹。
-        urls = event.mimeData().urls()  # 获取系统文件拖放内容。
-        if len(urls) == 1 and urls[0].isLocalFile() and Path(urls[0].toLocalFile()).is_dir():  # 每次导入一个明确根目录。
-            event.acceptProposedAction()  # 接受有效目录。
+    def _drop_path(self, event):
+        urls = event.mimeData().urls()
+        if len(urls) == 1 and urls[0].isLocalFile():
+            path = urls[0].toLocalFile()
+            if self.can_import(path):
+                return path
+        return None
 
-    def dragMoveEvent(self, event):  # 保持拖放区域可接受状态。
-        self.dragEnterEvent(event)  # 复用同一目录验证。
+    def dragEnterEvent(self, event):
+        if self._drop_path(event) is not None:
+            event.acceptProposedAction()
+        else:
+            event.ignore()
 
-    def dropEvent(self, event):  # 完成文件夹导入。
-        self.dropped.emit(event.mimeData().urls()[0].toLocalFile())  # 异步扫描交给主窗口。
+    def dragMoveEvent(self, event):
+        self.dragEnterEvent(event)
+
+    def dropEvent(self, event):
+        path = self._drop_path(event)
+        if path is None:
+            event.ignore()
+            return
+        self.dropped.emit(path)
         event.acceptProposedAction()

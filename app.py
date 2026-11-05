@@ -113,6 +113,7 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
         build_interface(self, BUNDLE)
         self.player_view.set_rename_handler(self.renaming.rename)
         self.library_view.folderRequested.connect(self.load_folder)
+        self.library_view.pathDropped.connect(self.import_library_path)
         self.library_view.videoRequested.connect(self.open_library_video)
         self.library_view.unfavoriteRequested.connect(self.remove_library_favorite)
         self.setWindowIcon(QIcon(str(BUNDLE / 'assets/yunli.ico')))  # 窗口与任务栏使用同一云璃 Q 版图标。
@@ -184,18 +185,26 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
             self.message('文件任务正在处理，请稍候。')
             return Operation.cancelled()
         self.message(f'正在扫描：{folder}')
-        operation = self.library_controller.load_folder(folder, play_id)
-        def ready(outcome):
-            if outcome.error:
-                self.fail(outcome.error)
-            elif outcome.succeeded:
-                result = outcome.value
-                self.message(f'扫描完成，{len(result.snapshot.folders)} 个目录；跳过 {len(result.errors)} 个无法访问的条目。')
-                for error in result.errors:
-                    logging.warning(error)
-                if result.location is not None:
-                    self.start(result.snapshot, result.location)
-        return operation.on_finished(ready)
+        return self.library_controller.load_folder(folder, play_id).on_finished(self._library_loaded)
+
+    def import_library_path(self, path):
+        if self.busy and self.file_tasks.active is None:
+            self.message('文件任务正在处理，请稍候。')
+            return
+        self.user_actions.request(
+            lambda: self.library_controller.import_path(path).on_finished(self._library_loaded),
+            self.player_view.options.flush_pending)
+
+    def _library_loaded(self, outcome):
+        if outcome.error:
+            self.fail(outcome.error)
+        elif outcome.succeeded:
+            result = outcome.value
+            self.message(f'扫描完成，{len(result.snapshot.folders)} 个目录；跳过 {len(result.errors)} 个无法访问的条目。')
+            for error in result.errors:
+                logging.warning(error)
+            if result.location is not None:
+                self.start(result.snapshot, result.location)
 
     def open_library_video(self, selection):
         if self.busy and self.file_tasks.active is None:
@@ -703,6 +712,9 @@ def main():  # 程序统一启动入口。
         return 1  # 报告失败退出码。
 
 if __name__ == '__main__':  # 仅直接运行时启动应用。
+    if len(sys.argv) == 3 and sys.argv[1] == '--library-drop-test':
+        from verify_library_drop import run
+        sys.exit(run(sys.argv[2]))
     if len(sys.argv) == 3 and sys.argv[1] == '--background-test':
         from verify_background import run
         sys.exit(run(sys.argv[2]))

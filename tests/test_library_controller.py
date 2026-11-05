@@ -48,6 +48,15 @@ class Scanner:
         # Intentionally ignore cancellation, as an already-finished worker can.
         return self.snapshots[str(folder)], []
 
+    def can_import(self, path):
+        return path in ('A', 'B', 'C', '/library/b.mp4', '/library/c.mp4')
+
+    def scan_import(self, path, cancel):
+        if path.endswith('.mp4'):
+            return self.snapshots[str(Path('/library'))], [], Path(path).stem
+        context, errors = self.scan(path, cancel)
+        return context, errors, None
+
     def step(self, context, location, direction):
         return NavigationStep(needs_scan=True)
 
@@ -83,6 +92,49 @@ def test_latest_scan_wins_even_if_old_success_arrives_last():
     assert second.outcome.succeeded and published.root == 'B'
     assert library.browsing is published and repo.history == ['B']
     assert not library.scanning
+
+
+def test_import_selects_requested_identity_and_folder_import_does_not_autoplay():
+    library, repo, _, tasks = controller()
+    operation = library.import_path('/library/c.mp4')
+    finish(tasks.pop())
+    result = operation.outcome.value
+    assert operation.outcome.succeeded and result.location == ('/library', 2)
+    assert repo.history == ['/library']
+    operation = library.import_path('B')
+    finish(tasks.pop())
+    assert operation.outcome.succeeded and operation.outcome.value.location is None
+    assert library.browsing.root == 'B'
+
+
+def test_latest_video_import_wins_even_when_previous_scan_finishes_last():
+    library, repo, _, tasks = controller()
+    first = library.import_path('/library/b.mp4')
+    last = library.import_path('/library/c.mp4')
+    finish(tasks[1])
+    finish(tasks[0])
+    assert first.outcome.status is Status.CANCELLED
+    assert last.outcome.value.location == ('/library', 2)
+    assert repo.history == ['/library']
+
+
+def test_explicit_playback_cancels_pending_video_import():
+    library, repo, scanner, tasks = controller()
+    library.adopt_snapshot(scanner.snapshots['A'])
+    operation = library.import_path('/library/b.mp4')
+    library.cancel_playback_requests()
+    finish(tasks[0])
+    assert operation.outcome.status is Status.CANCELLED
+    assert library.browsing.root == 'A' and not repo.history
+
+
+def test_failed_video_import_preserves_previous_browse_and_history():
+    library, repo, scanner, tasks = controller()
+    library.adopt_snapshot(scanner.snapshots['A'])
+    operation = library.import_path('/library/b.mp4')
+    tasks[0][1](None, FileNotFoundError('removed after drop'))
+    assert operation.outcome.status is Status.FAILED
+    assert library.browsing.root == 'A' and not repo.history
 
 
 def test_cancel_preserves_visible_folder_and_prevents_requested_playback():
