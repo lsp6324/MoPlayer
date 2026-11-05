@@ -2,7 +2,7 @@
 from pathlib import Path
 from PySide6.QtCore import QEvent, QRect, QRectF, QSize, Qt
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter
-from PySide6.QtWidgets import QLabel, QLineEdit, QSizePolicy, QToolButton, QWidget
+from PySide6.QtWidgets import QApplication, QLabel, QLineEdit, QSizePolicy, QToolButton, QWidget
 from heart_rating import paint_hearts
 from ui import icon
 
@@ -81,6 +81,7 @@ class MediaHeader(QWidget):
         self._error('')
         self._layout_editor()
         self.editor.show()
+        QApplication.instance().installEventFilter(self)
         self.edit_button.hide()
         self.editor.setFocus(Qt.MouseFocusReason)
         stem = Path(self.filename).stem
@@ -88,6 +89,7 @@ class MediaHeader(QWidget):
         self.update()
 
     def cancel_edit(self):
+        QApplication.instance().removeEventFilter(self)
         self._edit_serial += 1
         self._saving = False
         self.editor.hide()
@@ -132,12 +134,15 @@ class MediaHeader(QWidget):
             self._error(str(error))
 
     def eventFilter(self, obj, event):
+        if (event.type() == QEvent.MouseButtonPress and self.editor.isVisible() and not self._saving
+                and isinstance(obj,QWidget) and obj is not self.editor and not self.editor.isAncestorOf(obj)):
+            self.cancel_edit()
         if obj is self.editor:
             if event.type() == QEvent.KeyPress and event.key() == Qt.Key_Escape:
                 if not self._saving:
                     self.cancel_edit()
                 return True
-            if event.type() == QEvent.FocusOut and not self._saving:
+            if event.type() == QEvent.FocusOut and self.editor.isVisible() and not self._saving:
                 self.cancel_edit()
         return super().eventFilter(obj,event)
 

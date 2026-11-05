@@ -94,7 +94,7 @@ def run(destination):
         check('Esc取消没有修改磁盘',not header.editor.isVisible() and original.exists())
         header.begin_edit()
         header.editor.setText('放弃.mp4')
-        window.player_view.play_button.setFocus()
+        QTest.mouseClick(header,Qt.LeftButton,pos=QPoint(20,65))
         application.processEvents()
         check('点击其他位置取消未提交输入',not header.editor.isVisible() and window.store.video(vid)['name']==original.name)
         media_releases=[]

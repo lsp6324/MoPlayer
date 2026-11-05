@@ -86,7 +86,7 @@ def test_inline_error_preserves_draft_and_allows_retry(header):
 def test_focus_loss_cancels_and_hidden_editor_ignores_late_result(header):
     operation=Operation()
     editable(header,lambda name:operation)
-    header.editor.clearFocus()
+    QTest.mouseClick(header,Qt.LeftButton,pos=header.rect().bottomLeft())
     QApplication.processEvents()
     assert not header.editor.isVisible() and operation.pending
     header.begin_edit()
