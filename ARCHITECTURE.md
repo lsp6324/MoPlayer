@@ -30,7 +30,7 @@
 | application/library.py | 浏览快照、视频元数据、最近/收藏记录，以及扫描、取消、延迟导航和按稳定 ID 准备删除上下文；不拥有当前播放。 |
 | application/catalog.py | 不依赖 Qt/SQL/磁盘的库筛选值、标签祖先匹配、自然及日期排序，以及固定 ID 顺序的集合播放上下文；进度与路径仍按现有资料库解析。 |
 | infrastructure/library_preferences.py | 原子保存 data/library.json 中的筛选排序、列表/网格视图与当前页面，校验损坏输入。启动只采用筛选与视图，页面字段不决定打开哪一页；恢复不播放、不扫描。 |
-| catalog_panel.py / catalog_filter_popup.py / catalog_delegate.py / media_badges.py | 第一者持有工具栏、结果数、排序、列表/网格切换、已选条件摘要和库行视图，搜索合并计时也在此；第二者是筛选浮窗，只发出筛选值、重置与关闭意图，不查询存储或读取媒体；第三者按当前排布绘制已准备的库行；第四者向库行及 MediaHeader 提供相同胶囊和收藏绘制，评分复用 heart_rating。 |
+| catalog_panel.py / catalog_filter_popup.py / catalog_delegate.py / media_badges.py | 第一者持有工具栏、结果数、排序、列表/网格切换、已选条件摘要和库行视图，搜索合并计时也在此；第二者是筛选浮窗，只发出筛选值、重置与关闭意图，不查询存储或读取媒体；第三者按当前排布绘制已准备的库行，列表尺寸复用 library_views 的 THUMB_ROW / THUMB_VIEW / THUMB_RADIUS，与文件、最近、收藏页保持相同卡片比例；第四者向库行及 MediaHeader 提供相同胶囊和收藏绘制，评分复用 heart_rating。 |
 | infrastructure/library_repository.py | 面向应用和 UI 的视频、收藏、进度、目录及任务查询/写入；集中使用 SQL。所有视频行经 presented() 统一带出派生展示字段 kind 与 tag_names，使任何一次列表加载都不能让另一个列表丢掉标签或类型。 |
 | infrastructure/library_scanner.py | 将既有扫描及 Snapshot 导航规则适配为资料库应用接口；统一拖放候选校验，执行前重新检查文件并固定视频身份，单视频扫描父目录。格式沿用 core.EXTENSIONS，不改变扫描、身份或播放顺序。 |
 | infrastructure/library_watch.py | Qt 目录监听、400ms 通知合并、失败/忙碌重试；监听扫描内目录及根的最近现存父级，2 秒探测根和未成功监听的目录以补偿遗漏。只请求控制器刷新，不读控件或拥有浏览/播放快照。关闭时停止监听和调度。 |

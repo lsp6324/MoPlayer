@@ -64,6 +64,49 @@ def test_reclicking_selected_condition_does_not_uncheck_it_or_requery(panel):
     assert panel.popup.favorite['all'].isChecked() and changes.count() == 0
 
 
+def test_catalog_list_card_matches_other_pages_row_and_visible_thumbnail(panel):
+    """Changing tabs keeps the media card scale, including the rendered image."""
+    from PySide6.QtCore import QRect
+    from PySide6.QtGui import QColor, QImage, QPainter, QPixmap
+    from PySide6.QtWidgets import QStyleOptionViewItem
+    from library_views import VideoDelegate
+
+    marker = QColor('#fd07d9')
+    pixmap = QPixmap(280, 158)
+    pixmap.fill(marker)
+
+    class SolidThumbnails:
+        def request(self, video_id):
+            return pixmap
+
+    catalog = panel.list.itemDelegate()
+    catalog.thumbnails = SolidThumbnails()
+    ordinary = VideoDelegate(SolidThumbnails(), panel.list, current_video=lambda: None,
+                             theme_owner=panel.window())
+    index = panel.list.model().index(0, 0)
+    option = QStyleOptionViewItem()
+    option.font = panel.font()
+    heights, bounds = [], []
+    for delegate in (ordinary, catalog):
+        height = delegate.sizeHint(option, index).height()
+        heights.append(height)
+        option.rect = QRect(0, 0, 320, height)
+        image = QImage(320, height, QImage.Format_ARGB32)
+        image.fill(Qt.transparent)
+        painter = QPainter(image)
+        try:
+            delegate.paint(painter, option, index)
+        finally:
+            painter.end()
+        pixels = [(x, y) for y in range(height) for x in range(160)
+                  if image.pixelColor(x, y) == marker]
+        assert pixels, 'the thumbnail must actually be drawn'
+        bounds.append((min(x for x, y in pixels), min(y for x, y in pixels),
+                       max(x for x, y in pixels), max(y for x, y in pixels)))
+    assert heights[0] == heights[1]
+    assert bounds[0] == bounds[1], 'the visible thumbnails must have the same size and position'
+
+
 def test_view_switch_keeps_order_selection_and_filter_without_query_or_play(panel):
     panel.change(score=7,score_mode='gte',tags=('摄影',),tag_mode='or')
     changes, opens, views = QSignalSpy(panel.filtersChanged), QSignalSpy(panel.openRequested), QSignalSpy(panel.viewChanged)

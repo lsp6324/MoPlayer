@@ -2,7 +2,7 @@
 from PySide6.QtCore import Qt, QRect, QRectF, QSize
 from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath
 from PySide6.QtWidgets import QStyledItemDelegate, QStyle
-from library_views import DETAILS_ROLE
+from library_views import DETAILS_ROLE, THUMB_VIEW, THUMB_ROW, THUMB_RADIUS
 from media_badges import paint_capsule, paint_favorite
 from heart_rating import paint_hearts
 from theme import theme_tokens
@@ -16,7 +16,7 @@ class CatalogDelegate(QStyledItemDelegate):
         self.presentation, self.tile_size = presentation, tile_size
 
     def sizeHint(self, option, index):
-        return self.tile_size() if self.presentation() == 'grid' else QSize(280, 86)
+        return self.tile_size() if self.presentation() == 'grid' else QSize(300, THUMB_ROW)
 
     def paint(self, painter, option, index):
         row = index.data(DETAILS_ROLE)
@@ -33,12 +33,12 @@ class CatalogDelegate(QStyledItemDelegate):
         painter.setPen(Qt.NoPen)
         painter.setBrush(QColor(colors['selected'] if selected else colors['hover'] if hovered else colors['row_bg']))
         painter.drawRoundedRect(rect.adjusted(1, 2, -2, -2), 6, 6)
-        thumb_width = max(1, rect.width() - 16) if grid else 96
-        thumb = QRect(rect.left() + (8 if grid else 10), rect.top() + (8 if grid else 16),
-                      thumb_width, thumb_width * 9 // 16 if grid else 54)
+        thumb_width = max(1, rect.width() - 16) if grid else THUMB_VIEW[0]
+        thumb = QRect(rect.left() + (8 if grid else 10), rect.top() + 8,
+                      thumb_width, thumb_width * 9 // 16 if grid else THUMB_VIEW[1])
         painter.save()
         clip = QPainterPath()
-        clip.addRoundedRect(thumb, 5, 5)
+        clip.addRoundedRect(thumb, THUMB_RADIUS, THUMB_RADIUS)
         painter.setClipPath(clip)
         painter.fillRect(thumb, QColor(colors['thumb']))
         image = self.thumbnails.request(row.get('id'))
@@ -68,9 +68,9 @@ class CatalogDelegate(QStyledItemDelegate):
         painter.setPen(QColor(colors['text_strong'] if playing or selected else colors['text']))
         left = rect.left() + 8 if grid else thumb.right() + 12
         width = max(0, rect.width() - 16 if grid else rect.right() - thumb.right() - 22)
-        title_y = thumb.bottom() + 4 if grid else rect.top() + 7
-        tags_y = title_y + 25 if grid else rect.top() + 32
-        favorite_y = title_y + 47 if grid else rect.top() + 54
+        title_y = thumb.bottom() + 4 if grid else thumb.top() + 5
+        tags_y = title_y + 25
+        favorite_y = title_y + (47 if grid else 49)
         name = str(row.get('name') or '')
         metrics = painter.fontMetrics()
         painter.drawText(QRect(left, title_y, width, 22), Qt.AlignLeft | Qt.AlignVCenter,
@@ -78,9 +78,9 @@ class CatalogDelegate(QStyledItemDelegate):
         font.setPixelSize(11)
         painter.setFont(font)
         paint_favorite(painter, left, favorite_y, bool(row.get('star')), colors)
-        hearts_x = left + (62 if grid else 74)
-        step = max(9, min(12, (width - 62) // 5)) if grid else 16
-        paint_hearts(painter, row.get('score'), (QRectF(hearts_x + n * step, favorite_y + 4, step - 1 if grid else 14, step - 1 if grid else 14) for n in range(5)),
+        hearts_x = left + 62
+        step = max(9, min(12 if grid else 16, (width - 62) // 5))
+        paint_hearts(painter, row.get('score'), (QRectF(hearts_x + n * step, favorite_y + 4, step - 1, step - 1) for n in range(5)),
                      colors['accent'], colors['line_strong'], 1)
         x, available = left, width
         tags = row.get('tag_names') or ()

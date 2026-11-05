@@ -92,6 +92,14 @@ def run(destination):
         controller, panel = window.library_controller, view.catalog_panel
         check('库异步显示全部归档项', wait(lambda: controller.catalog_loaded and not controller.catalog_pending) and panel.list.model().rowCount() == len(ids))
         QTest.qWait(100)
+        catalog_height = panel.list.visualRect(panel.list.model().index(0, 0)).height()
+        file_height = view.files.visualRect(file_selection).height()
+        from PySide6.QtWidgets import QStyleOptionViewItem
+        option = QStyleOptionViewItem()
+        other_heights = [view.lists[mode].itemDelegate().sizeHint(option, panel.list.model().index(0, 0)).height()
+                         for mode in ('videos', 'stars')]
+        check('库列表卡片与文件最近收藏等高', catalog_height == file_height == 96
+              and all(height == catalog_height for height in other_heights))
         check('筛选收进浮窗并让出列表高度', not panel.popup.isVisible() and panel.list.mapTo(panel, QPoint()).y() < 110)
         check('类型使用直接按钮', set(panel.popup.kind) == {'all', 'video', 'image'})
         apply_theme(window, 'dark')
