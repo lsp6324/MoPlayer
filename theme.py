@@ -95,6 +95,8 @@ QPushButton[role="breadcrumb"]:hover { background:$hover; }
 QPushButton[role="breadcrumb"]:focus { border-color:$accent_ring; }
 QListWidget { border:1px solid $line; background:$surface_plain; border-radius:$radius_sm; padding:4px; outline:none; }
 QListWidget::item:selected { background:$selected; color:$text_strong; }
+QTableView#takeoverPreview { background:$surface_plain; border:1px solid $line; selection-background-color:$selected; selection-color:$text_strong; outline:none; }
+QTableView#takeoverPreview QHeaderView::section { background:$surface_dim; color:$text_dim; border:none; padding:6px; }
 QLineEdit,QComboBox,QPlainTextEdit,QTextEdit,QSpinBox { background:$surface_plain; border:1px solid $line; border-radius:$radius_sm; padding:8px; selection-background-color:$button_fill; selection-color:$button_text; }
 QSpinBox { padding:4px; }
 QLineEdit:focus,QComboBox:focus { border-color:$accent_ring; }

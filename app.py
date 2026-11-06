@@ -2,7 +2,7 @@ import json  # 读取视频标签和诊断数据。
 import logging  # 记录可追踪的运行错误。
 import sys  # 区分源码和便携运行方式。
 from pathlib import Path  # 处理便携数据路径。
-if len(sys.argv) == 3 and sys.argv[1] in ('--ui-refresh-test', '--seek-notice-test', '--file-workflows-test', '--archive-settings-test', '--media-header-test', '--rename-test', '--continuous-classification-test', '--portable-layout-test', '--storage-test', '--accent-test', '--background-test', '--image-test', '--action-notice-test', '--catalog-test', '--media-menu-test', '--batch-selection-test'):
+if len(sys.argv) == 3 and sys.argv[1] in ('--ui-refresh-test', '--seek-notice-test', '--file-workflows-test', '--archive-settings-test', '--media-header-test', '--rename-test', '--continuous-classification-test', '--portable-layout-test', '--storage-test', '--accent-test', '--background-test', '--image-test', '--action-notice-test', '--catalog-test', '--media-menu-test', '--batch-selection-test', '--takeover-test'):
     # A windowed EXE has no stderr; keep explicit test failures reviewable.
     _test_output = Path(sys.argv[2]).absolute()
     _test_output.mkdir(parents=True, exist_ok=True)
@@ -17,6 +17,9 @@ from background_work import Work
 from thumbnail_cache import ThumbnailCache
 from application.library import LibraryController, LibrarySelection, LibrarySelectionGroup
 from application.batch_actions import BatchActions
+from application.takeover import Takeover
+from infrastructure.takeover import TakeoverService
+from takeover_dialog import TakeoverDialog
 from infrastructure.library_scanner import LibraryScanner
 from infrastructure.thumbnails import ThumbnailService
 from infrastructure.image_loader import ImageLoader
@@ -112,6 +115,10 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
             video_exists=lambda vid: self.catalog.video(vid) is not None)
         self.batch_actions = BatchActions(self.catalog, self.tag_drafts, self.classification, self.deletion,
             schedule=lambda action: QTimer.singleShot(0, action), activity_changed=self.refresh_transport)
+        self.takeover = Takeover(TakeoverService(self.store), self.file_tasks,
+            lambda function, callback: self.work(function, callback),
+            available=lambda: not self.busy and self.batch_actions.active is None and not self.has_pending_file_tasks(),
+            refresh=self._refresh_file_records, drafts=self.tag_drafts)
         self.recovery = Recovery(self.file_tasks, self.catalog, self.tag_drafts,
             recover_archive=lambda: self.archiver.recover(), recover_tags=lambda: self.tag_migration.recover(),
             tags_renamed=self.library_controller.rename_catalog_tags,
@@ -192,6 +199,13 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
         return ArchiveSettingsDialog(self, root=self.storage.root, folders=self.storage.folders,
             error=self.storage.error, apply=self.archive_configuration.apply, first_run=first_run,
             enabled=self.storage.enabled).exec() == QDialog.Accepted  # 取消不保存路径。
+
+    def takeover_dialog(self):
+        def opened():
+            dialog = TakeoverDialog(self, workflow=self.takeover, folders=self.storage.folders,
+                show_library=lambda: self.library_view.show_mode('catalog'))
+            dialog.open()
+        self.user_actions.request(opened, self.player_view.options.flush_pending)
 
     def initialize_storage(self):  # 默认位置无需引导；损坏配置仍提示修复。
         if not self.storage.enabled:
@@ -751,6 +765,11 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
         self.work(install, completed)  # 网络、解压和 UAC 等待均不阻塞播放界面。
 
     def closeEvent(self, event):
+        if self.takeover.scanning is not None:
+            self.takeover.cancel()
+            self.takeover.scanning.on_finished(lambda outcome: QTimer.singleShot(0, self.close))
+            event.ignore()
+            return
         if self.batch_actions.active is not None:
             self.user_actions.request(lambda:QTimer.singleShot(0,self.close),self.player_view.options.flush_pending,closing=True)
             event.ignore()
@@ -828,6 +847,9 @@ def main():  # 程序统一启动入口。
         return 1  # 报告失败退出码。
 
 if __name__ == '__main__':  # 仅直接运行时启动应用。
+    if len(sys.argv) == 3 and sys.argv[1] == '--takeover-test':
+        from verify_takeover import run
+        sys.exit(run(sys.argv[2]))
     if len(sys.argv) == 3 and sys.argv[1] == '--batch-selection-test':
         from verify_batch_selection import run
         sys.exit(run(sys.argv[2]))

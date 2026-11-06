@@ -7,7 +7,7 @@ import re
 ROOT = Path(__file__).resolve().parents[1]
 UI = {
     'catalog_panel', 'catalog_filter_popup', 'catalog_delegate', 'media_badges',
-    'action_notice', 'media_context_menu', 'batch_context_menu', 'batch_tag_editor',
+    'action_notice', 'media_context_menu', 'batch_context_menu', 'batch_tag_editor', 'takeover_dialog',
     'accent_colors', 'color_picker', 'appearance_dialog', 'archive_settings_dialog', 'appearance', 'background_region', 'background_work', 'file_open', 'floating_surface', 'heart_rating',
     'hover_panel', 'folder_navigation', 'image_view', 'layout', 'library_view', 'library_views', 'media_header', 'player_view', 'playback_controls', 'playback_options',
     'rating_editor', 'score_editor', 'seek_notice', 'seek_slider', 'tag_editor', 'tag_popover', 'tag_flow',
@@ -232,6 +232,15 @@ def test_archive_settings_view_uses_only_explicit_application_ports():
     for node in ast.walk(tree):
         if isinstance(node, ast.Attribute):
             assert node.attr not in {'storage', 'archiver', 'store', 'catalog', 'work', 'file_tasks'}, 'Settings view submits values; the workflow owns migration and persistence'
+
+
+def test_takeover_view_uses_only_immutable_plans_and_explicit_workflow_ports():
+    tree = production_modules()['takeover_dialog']
+    dependencies = imports(tree, 'takeover_dialog')
+    assert not any(dep.split('.')[0] in {'app', 'core', 'storage_settings', 'infrastructure', 'vlc', 'sqlite3'} for dep in dependencies)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute):
+            assert node.attr not in {'storage', 'archiver', 'store', 'catalog', 'work', 'file_tasks'}, 'Takeover view submits a frozen plan; the workflow owns registration and persistence'
 
 
 def test_filename_editor_cannot_rename_files_or_reach_storage_directly():

@@ -45,6 +45,10 @@ class TagDrafts:
     def saving(self):
         return any(draft.operation is not None for draft in self._drafts.values())
 
+    @property
+    def dirty_ids(self):
+        return tuple(video_id for video_id, draft in self._drafts.items() if draft.dirty or draft.operation is not None)
+
     def open_current(self):
         return self.open_for(self.current_video())
 
