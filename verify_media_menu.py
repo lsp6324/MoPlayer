@@ -10,10 +10,12 @@ import traceback
 def run(destination):
     from verify_ui_refresh import require_private_desktop
     require_private_desktop()
-    from PySide6.QtCore import Qt, QPoint, QTimer, QThreadPool
-    from PySide6.QtGui import QImage, QColor, QContextMenuEvent
+    from PySide6.QtCore import Qt, QPoint, QTimer, QThreadPool, QEvent
+    from PySide6.QtGui import QImage, QColor, QContextMenuEvent, QPainter, QMouseEvent
     from PySide6.QtTest import QTest
-    from PySide6.QtWidgets import QApplication, QPushButton, QDialogButtonBox, QCheckBox, QLineEdit
+    from PySide6.QtWidgets import QApplication, QPushButton, QDialogButtonBox, QCheckBox, QLineEdit, QInputDialog
+    from tag_editor import TagEditor
+    from rating_editor import RatingEditor
     from app import Window
     from runtime import BUNDLE
     from theme import apply_theme
@@ -42,9 +44,10 @@ def run(destination):
         report['checks'].append({'name': name, 'ok': bool(condition)})
         assert condition, name
 
-    def popup_action(mode, video_id, caption=None):
+    def popup_action(mode, video_id, caption=None, interact=None):
         view = window.library_view
         view.show_mode(mode)
+        assert wait(lambda: not window.busy and window.file_tasks.completion is None and not window.library_controller.catalog_pending)
         listing = view.files if mode == 'files' else view.lists[mode]
         assert wait(lambda: any(listing.model().index(n, 0).data(Qt.UserRole) == video_id for n in range(listing.model().rowCount())))
         model = listing.model()
@@ -52,8 +55,10 @@ def run(destination):
         listing.scrollTo(index)
         app.processEvents()
         point = listing.visualRect(index).center()
-        captured = []
-        def choose():
+        assert wait(lambda: listing.indexAt(listing.visualRect(index).center()).data(Qt.UserRole) == video_id)
+        point = listing.visualRect(index).center()
+        captured, failures = [], []
+        def choose_action():
             menu = window.media_menu.active_menu
             if menu is None:
                 return
@@ -62,12 +67,41 @@ def run(destination):
             if caption is None:
                 menu.grab().save(str(output / ('menu-' + mode + '.png')))
             else:
-                next(action for action in actions if action.text() == caption).trigger()
+                action = next(action for action in actions if action.text() == caption)
+                if action.menu() is not None:
+                    submenu = action.menu()
+                    hover_point = menu.actionGeometry(action).center()
+                    QApplication.sendEvent(menu, QMouseEvent(QEvent.MouseMove, hover_point, menu.mapToGlobal(hover_point),
+                                                            Qt.NoButton, Qt.NoButton, Qt.NoModifier))
+                    assert wait(submenu.isVisible), 'Hover did not open the side editor'
+                    report.setdefault('submenu_geometry', []).append(dict(caption=caption,menu=[menu.x(),menu.y(),menu.width(),menu.height()],submenu=[submenu.x(),submenu.y(),submenu.width(),submenu.height()]))
+                    check(caption + '悬停直接展开侧边面板', submenu.x() >= menu.geometry().right() - 12
+                          and window.media_menu.active_dialog is None)
+                    area = menu.geometry().united(submenu.geometry())
+                    image = QImage(area.size(), QImage.Format_ARGB32)
+                    image.fill(Qt.transparent)
+                    painter = QPainter(image)
+                    painter.drawPixmap(menu.pos() - area.topLeft(), menu.grab())
+                    painter.drawPixmap(submenu.pos() - area.topLeft(), submenu.grab())
+                    painter.end()
+                    image.save(str(output / ('submenu-tags.png' if caption == '编辑标签' else 'submenu-rating.png')))
+                    if interact is not None:
+                        interact(submenu)
+                else:
+                    action.trigger()
             menu.close()
+        def choose():
+            try:
+                choose_action()
+            except Exception:
+                failures.append(traceback.format_exc())
+                if window.media_menu.active_menu is not None:
+                    window.media_menu.active_menu.close()
         QTimer.singleShot(30, choose)
         event = QContextMenuEvent(QContextMenuEvent.Mouse, point, listing.viewport().mapToGlobal(point))
         QApplication.sendEvent(listing.viewport(), event)
         assert wait(lambda: bool(captured)), 'Context event did not open a menu'
+        assert not failures, failures
         return captured[0]
 
     try:
@@ -93,7 +127,7 @@ def run(destination):
         check('隔离目录视频真实播放', wait(lambda: not loaded.pending and window.current == movie_id and window.player.get_time() > 400))
         handle, context = window.player_view.video_handle(), window.context
         apply_theme(window, 'dark')
-        expected = ['取消收藏', '编辑标签…', '评分…', '重命名…', '删除…', '在资源管理器中打开']
+        expected = ['取消收藏', '编辑标签', '评分', '重命名', '删除', '在资源管理器中打开']
         for mode, name in (('files', '文件'), ('catalog', '库'), ('videos', '最近'), ('stars', '收藏')):
             captions = popup_action(mode, target)
             check(name + '页实际右键菜单包含六个指定动作', captions == expected and window.current == movie_id)
@@ -103,31 +137,39 @@ def run(destination):
               and window.player.get_time() > before + 200) and window.current == movie_id)
         popup_action('files', target, '收藏')
         check('未收藏目标菜单可重新收藏', window.catalog.video(target)['star'] == 1)
-        popup_action('files', target, '评分…')
-        dialog = window.media_menu.active_dialog
-        dialog.grab().save(str(output / 'rating-dark.png'))
-        dialog.choose(0)
-        check('右键评分支持零分且不修改播放对象', wait(lambda: window.media_menu.active_dialog is None)
-              and window.catalog.video(target)['score'] == 0 and window.current == movie_id)
-        popup_action('files', target, '评分…')
-        window.media_menu.active_dialog.findChild(QPushButton, 'score_unrated').click()
-        check('右键评分支持清除', wait(lambda: window.media_menu.active_dialog is None)
-              and window.catalog.video(target)['score'] is None)
+        popup_action('files', target, '评分', lambda submenu: submenu.findChild(RatingEditor).zero.click())
+        check('右键评分支持零分且不修改播放对象', wait(lambda: window.catalog.video(target)['score'] == 0)
+              and window.current == movie_id)
+        popup_action('files', target, '评分', lambda submenu: submenu.findChild(RatingEditor).clear.click())
+        check('右键评分支持清除', wait(lambda: window.catalog.video(target)['score'] is None))
         apply_theme(window, 'light')
-        popup_action('files', target, '重命名…')
+        popup_action('files', target, '重命名')
         dialog = window.media_menu.active_dialog
         dialog.findChild(QLineEdit, 'mediaRenameField').setText('改名后的目标.png')
         dialog.findChild(QDialogButtonBox).button(QDialogButtonBox.Save).click()
         check('右键改名更新相同身份并保持播放宿主', wait(lambda: window.media_menu.active_dialog is None)
               and window.catalog.resolve(target).name == '改名后的目标.png' and window.current == movie_id
               and window.player_view.video_handle() == handle)
-        popup_action('files', target, '编辑标签…')
-        dialog = window.media_menu.active_dialog
-        dialog.grab().save(str(output / 'edit-tags.png'))
-        dialog.chips['摄影'].click()
-        dialog.buttons.button(QDialogButtonBox.Ok).click()
-        check('右键标签通过草稿和实际分类流程保存到目标', wait(lambda: window.media_menu.active_dialog is None)
-              and json.loads(window.catalog.video(target)['tags']) == ['摄影'] and window.current == movie_id)
+        def edit_tags(submenu):
+            editor = submenu.findChild(TagEditor)
+            check('标签复用播放栏布局并隐藏独立确认按钮', not editor.buttons.isVisible()
+                  and not editor.footer_hint.isVisible() and editor.parentWidget().size() == window.player_view.options.tags_popup.size())
+            QTest.mouseClick(editor.search, Qt.LeftButton)
+            QTest.keyClicks(editor.search, 'x')
+            check('子菜单标签搜索可直接键入且不触发播放快捷键', editor.search.text() == 'x' and window.current == movie_id)
+            editor.search.clear()
+            editor.chips['摄影'].click()
+            def rename_input():
+                dialog = QApplication.activeModalWidget()
+                assert isinstance(dialog, QInputDialog)
+                dialog.setTextValue('镜头')
+                dialog.accept()
+            QTimer.singleShot(50, rename_input)
+            editor.prompt_rename('摄影')
+            check('标签重命名输入完成后才保存关闭的菜单', '镜头' in editor.schema)
+        popup_action('files', target, '编辑标签', edit_tags)
+        check('关闭右键菜单后标签通过实际分类流程保存到目标', wait(lambda: json.loads(window.catalog.video(target)['tags']) == ['镜头'])
+              and window.current == movie_id)
         assert wait(lambda: not window.library_controller.catalog_pending)
         revealed = []
         window.media_menu.reveal = revealed.append
@@ -135,13 +177,13 @@ def run(destination):
         check('资源管理器动作解析目标当前有效位置', revealed == [window.catalog.resolve(target)])
         kept = window.catalog.resolve(target)
         content = kept.read_bytes()
-        popup_action('catalog', target, '删除…')
+        popup_action('catalog', target, '删除')
         dialog = window.media_menu.active_dialog
         check('删除确认默认不勾选本地文件', not dialog.findChild(QCheckBox, 'deleteLocalFiles').isChecked())
         dialog.grab().save(str(output / 'delete-confirm.png'))
         dialog.findChild(QDialogButtonBox).button(QDialogButtonBox.Cancel).click()
         check('取消删除保留标记和本地文件', window.catalog.video(target)['star'] == 1 and kept.read_bytes() == content)
-        popup_action('catalog', target, '删除…')
+        popup_action('catalog', target, '删除')
         window.media_menu.active_dialog.findChild(QDialogButtonBox).button(QDialogButtonBox.Ok).click()
         check('默认删除仅移除软件记录且保留文件', wait(lambda: window.media_menu.active_dialog is None)
               and window.catalog.video(target) is None and kept.read_bytes() == content)
@@ -156,7 +198,7 @@ def run(destination):
         recycled = output / 'controlled-recycle'
         recycled.mkdir()
         window.deletion.submit = DeletionManager(window.store, recycle=lambda path: path.rename(recycled / path.name)).submit
-        popup_action('stars', local_id, '删除…')
+        popup_action('stars', local_id, '删除')
         dialog = window.media_menu.active_dialog
         dialog.findChild(QCheckBox, 'deleteLocalFiles').setChecked(True)
         dialog.findChild(QDialogButtonBox).button(QDialogButtonBox.Ok).click()
@@ -173,7 +215,7 @@ def run(destination):
         check('Ctrl+D使用同一确认框且默认保留本地文件', dialog is not None
               and not dialog.findChild(QCheckBox, 'deleteLocalFiles').isChecked() and movie_path.exists())
         dialog.findChild(QDialogButtonBox).button(QDialogButtonBox.Cancel).click()
-        popup_action('files', movie_id, '删除…')
+        popup_action('files', movie_id, '删除')
         dialog = window.media_menu.active_dialog
         dialog.findChild(QDialogButtonBox).button(QDialogButtonBox.Ok).click()
         check('删除当前软件记录后释放旧播放且保留视频文件', wait(lambda: window.media_menu.active_dialog is None and window.current != movie_id)
@@ -189,7 +231,7 @@ def run(destination):
         report['error'] = traceback.format_exc()
     finally:
         if window.media_menu.active_dialog is not None:
-            window.media_menu.active_dialog.reject()
+            window.media_menu.active_dialog.close()
         window.close()
         QThreadPool.globalInstance().waitForDone()
         window.thumbnails.pool.waitForDone()

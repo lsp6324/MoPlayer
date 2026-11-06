@@ -331,7 +331,7 @@ class PlayerView(QFrame):
         for panel in self.options.panels:
             panel.setStyleSheet(Template(STYLE_TEMPLATE).substitute(**effective))
             panel.set_colors(effective['surface_plain'], effective['line'])
-        rating = self.options.rating_popup.hearts
+        rating = self.options.rating_popup.editor.hearts
         rating.outline_color = QColor(effective['text_faint'])
         rating.fill_color = QColor(effective['accent'])
         rating.update()

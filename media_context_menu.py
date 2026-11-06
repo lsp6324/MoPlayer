@@ -1,12 +1,14 @@
 """Stable-ID media menus and input dialogs; services own every mutation."""
 from pathlib import Path
 
-from PySide6.QtCore import QObject, Qt, QEvent
+from PySide6.QtCore import QObject, Qt, QEvent, QTimer
 from PySide6.QtWidgets import (QMenu, QDialog, QVBoxLayout, QLabel, QLineEdit,
-                               QDialogButtonBox, QCheckBox, QMessageBox)
+                               QDialogButtonBox, QCheckBox, QMessageBox, QWidgetAction, QFrame)
 
 from application.tag_drafts import TagValues
-from score_editor import ScoreEditor
+from rating_editor import RatingEditor
+from PySide6.QtGui import QColor
+from theme import theme_tokens
 from tag_editor import TagEditor
 
 
@@ -21,6 +23,9 @@ class MediaContextMenu(QObject):
         self.active_menu, self.active_dialog = None, None
 
     def open(self, selection, position):
+        self._prepare(selection, lambda: self._open_ready(selection, position))
+
+    def _open_ready(self, selection, position):
         menu = self.build_menu(selection)
         if menu is None:
             return
@@ -29,7 +34,11 @@ class MediaContextMenu(QObject):
             menu.exec(position)
         finally:
             self.active_menu = None
-            menu.deleteLater()
+            editor = menu.findChild(TagEditor)
+            if editor is not None and editor.editing_dialog:
+                editor.editingFinished.connect(menu.deleteLater)
+            else:
+                menu.deleteLater()
 
     def build_menu(self, selection):
         video = self.repository.video(selection.video_id)
@@ -37,20 +46,28 @@ class MediaContextMenu(QObject):
             return None
         menu = QMenu(self.parent())
         menu.setAccessibleName('媒体右键菜单')
+        def invoke(action):
+            menu.close()
+            self._prepare(selection, action)
         actions = [
             ('取消收藏' if video['star'] else '收藏', lambda: self._favorite(selection, not bool(video['star']))),
-            ('编辑标签…', lambda: self._edit_tags(selection)),
-            ('评分…', lambda: self._edit_rating(selection)),
-            ('重命名…', lambda: self._rename(selection)),
-            ('删除…', lambda: self._delete(selection)),
+            ('编辑标签', None),
+            ('评分', None),
+            ('重命名', lambda: self._rename(selection)),
+            ('删除', lambda: self._delete(selection)),
             ('在资源管理器中打开', lambda: self._reveal(selection)),
         ]
         for number, (caption, action) in enumerate(actions):
             if number in (3, 5):
                 menu.addSeparator()
+            if number in (1, 2):
+                submenu = self._tag_menu(menu, selection) if number == 1 else self._rating_menu(menu, selection)
+                control = menu.addMenu(submenu)
+                control.setEnabled(self.available())
+                continue
             control = menu.addAction(caption)
             control.setEnabled(number == 5 or self.available())
-            control.triggered.connect(lambda checked=False, action=action: self._prepare(selection, action))
+            control.triggered.connect(lambda checked=False, action=action: invoke(action))
         return menu
 
     def confirm_delete(self, selection):
@@ -112,35 +129,63 @@ class MediaContextMenu(QObject):
         if self.available():
             self.classification.favorite(selection.video_id, value)
 
-    def _edit_tags(self, selection):
-        draft = self.drafts.open_for(selection.video_id)
-        if draft is None:
-            return
-        values = draft.values.copy()
-        dialog = TagEditor(values.tags, values.schema, self.parent(),
-                           baseline_schema=draft.baseline.schema, renames=values.renames,
-                           target_name=self.repository.video(selection.video_id)['name'])
-        dialog.enable_management(embedded=False)
-        dialog.setWindowTitle('编辑标签')
-        dialog.setToolTip(self.repository.video(selection.video_id)['name'])
-        dialog.buttons.accepted.disconnect(dialog.accept)
-        def save():
-            def commit():
-                self.drafts.update(selection.video_id, TagValues(dialog.chosen(), dialog.schema, dialog.renames))
-                return self.drafts.commit(selection.video_id)
-            self._submit(dialog, commit, dialog.message)
-        dialog.buttons.accepted.connect(save)
-        self._show(dialog)
+    def _content_menu(self, title, root, content, *, size=None):
+        submenu = QMenu(title, root)
+        body = QFrame()
+        body.setObjectName('playbackPopover')
+        layout = QVBoxLayout(body)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(content)
+        if size:
+            body.setFixedSize(*size)
+        action = QWidgetAction(submenu)
+        action.setDefaultWidget(body)
+        submenu.addAction(action)
+        submenu.setToolTip(content.toolTip())
+        return submenu
 
-    def _edit_rating(self, selection):
-        def show_error(message):
-            dialog.readout.setText('保存失败，请重试')
-            dialog.readout.setToolTip(message)
+    def _tag_menu(self, root, selection):
+        draft = self.drafts.open_for(selection.video_id)
+        values = draft.values if draft is not None else self.repository.tag_values(selection.video_id)
+        editor = TagEditor(values.tags, values.schema,
+                           baseline_schema=draft.baseline.schema if draft else values.schema, renames=values.renames)
+        editor.embed()
+        editor.setToolTip(self.repository.video(selection.video_id)['name'])
+        submenu = self._content_menu('编辑标签', root, editor, size=(500, 360))
+        # Keep the editor with this menu, and save once when the entire menu closes.
+        # Merely hovering or moving between the two submenus does not write.
+        saved = False
+        def save():
+            nonlocal saved
+            if saved or editor.editing_dialog:
+                return
+            saved = True
+            if draft is None:
+                return
+            self.drafts.update(selection.video_id, TagValues(editor.chosen(), editor.schema, editor.renames))
+            try:
+                self.drafts.commit(selection.video_id)
+            except ValueError as error:
+                message = str(error)
+                QTimer.singleShot(0, lambda: self._error(message))
+        root.aboutToHide.connect(save)
+        editor.editingFinished.connect(lambda: save() if not root.isVisible() else None)
+        return submenu
+
+    def _rating_menu(self, root, selection):
+        editor = RatingEditor()
+        editor.set_score(self.repository.video(selection.video_id)['score'])
+        colors = theme_tokens(self.parent())
+        editor.hearts.fill_color = QColor(colors['accent'])
+        editor.hearts.outline_color = QColor(colors['text_faint'])
+        editor.setToolTip(self.repository.video(selection.video_id)['name'])
         def choose(value):
-            dialog.show_preview(None)
-            self._submit(dialog, lambda: self.classification.rating(selection.video_id, value), show_error)
-        dialog = ScoreEditor(self.repository.video(selection.video_id), self.parent(), submit=choose, show_name=True)
-        self._show(dialog)
+            root.close()
+            self._prepare(selection, lambda: self.classification.rating(selection.video_id, value))
+        editor.chosen.connect(choose)
+        submenu = self._content_menu('评分', root, editor)
+        submenu.aboutToHide.connect(lambda: editor.hearts.set_preview(None))
+        return submenu
 
     def _form(self, title):
         dialog = QDialog(self.parent())

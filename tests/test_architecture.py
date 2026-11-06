@@ -10,7 +10,7 @@ UI = {
     'action_notice', 'media_context_menu',
     'accent_colors', 'color_picker', 'appearance_dialog', 'archive_settings_dialog', 'appearance', 'background_region', 'background_work', 'file_open', 'floating_surface', 'heart_rating',
     'hover_panel', 'folder_navigation', 'image_view', 'layout', 'library_view', 'library_views', 'media_header', 'player_view', 'playback_controls', 'playback_options',
-    'score_editor', 'seek_notice', 'seek_slider', 'tag_editor', 'tag_popover', 'tag_flow',
+    'rating_editor', 'score_editor', 'seek_notice', 'seek_slider', 'tag_editor', 'tag_popover', 'tag_flow',
     'theme', 'thumbnail_cache', 'ui', 'video_cursor', 'video_fullscreen', 'window_chrome', 'wordmark',
 }
 LEGACY = {'core', 'tag_migration', 'video_delete', 'storage_settings'}
@@ -29,6 +29,7 @@ FOUNDATION_IMPORTS = {
     'floating_surface': set(),
     'hover_panel': {'floating_surface'},
     'heart_rating': set(),
+    'rating_editor': {'heart_rating'},
     'media_header': {'heart_rating', 'ui', 'media_badges'},
     'media_badges': {'ui'},
     'background_work': set(),

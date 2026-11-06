@@ -1,5 +1,5 @@
 from copy import deepcopy  # 草稿不直接修改全局分类。
-from PySide6.QtCore import Qt, QSize, QMimeData, QTimer  # 实现胶囊换行、内部拖放与视口保持。
+from PySide6.QtCore import Qt, QSize, QMimeData, QTimer, Signal  # 实现胶囊换行、内部拖放与视口保持。
 from PySide6.QtGui import QDrag  # 使用原生拖动手势归类标签。
 from PySide6.QtWidgets import QApplication, QDialog, QVBoxLayout, QHBoxLayout, QWidget, QFrame, QScrollArea, QLabel, QLineEdit, QPushButton, QToolButton, QDialogButtonBox, QMenu, QInputDialog, QSizePolicy  # 构建参考图式的简洁标签卡片。
 from core import natural, validate_tag, validate_layout, canonical_tags, tag_chain  # 共用任意层级的标签路径与循环校验。
@@ -107,7 +107,9 @@ class ChildPanel(QFrame):  # 已由用户展开的子标签区域也可直接接
         self.editor.drop_tag(event, self.name)  # 避免两套不同的分类行为。
 
 class TagEditor(QDialog):  # 参考图式胶囊标签卡，父类只在主动点击后展示子类。
-    def __init__(self, tags, schema, parent=None, *, baseline_schema=None, renames=None, target_name=None):  # 只编辑传入的标签草稿。
+    editingFinished = Signal()
+
+    def __init__(self, tags, schema, parent=None, *, baseline_schema=None, renames=None):  # 只编辑传入的标签草稿。
         super().__init__(parent)  # 打开期间不强制暂停视频。
         self.schema = deepcopy(schema)  # 只有应用后才修改全局分类。
         baseline = schema if baseline_schema is None else baseline_schema
@@ -120,6 +122,7 @@ class TagEditor(QDialog):  # 参考图式胶囊标签卡，父类只在主动点
             if row.get('parent') in self.schema:  # 兼容上一版本的层级数据。
                 self.schema[row['parent']]['is_parent'] = True  # 不丢失真实父子关系。
         self.managing, self.delete_selection = False, set()
+        self.editing_dialog = False
         self.expanded, self.chips = set(), {}  # 初次打开不展开任何父标签。
         self.panels = {}
         self.dragging, self.pending_refresh, self.serial = False, False, 0  # 拖动结束后再安全更新布局。
@@ -152,12 +155,6 @@ class TagEditor(QDialog):  # 参考图式胶囊标签卡，父类只在主动点
         self.search.setFixedWidth(160)  # 不挤占胶囊区域。
         header.addWidget(self.search)  # 顶部只保留一个辅助操作。
         layout.addLayout(header)  # 与主标签区分隔。
-        if target_name:
-            target = QLabel(target_name)
-            target.setTextFormat(Qt.PlainText)
-            target.setWordWrap(True)
-            target.setToolTip(target_name)
-            layout.addWidget(target)
         self.scroll = QScrollArea()  # 多标签时只滚动胶囊区域。
         self.scroll.setWidgetResizable(True)  # 宽度变化时自动换行。
         self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)  # 不产生横向滚动条。
@@ -345,9 +342,14 @@ class TagEditor(QDialog):  # 参考图式胶囊标签卡，父类只在主动点
         menu.deleteLater()
 
     def prompt_rename(self, name):
-        value, accepted = QInputDialog.getText(self, '重命名标签', '新标签名（保存后同步所有文件的引用）', QLineEdit.Normal, name)
-        if accepted:
-            self.rename_tag(name, value)
+        self.editing_dialog = True
+        try:
+            value, accepted = QInputDialog.getText(self, '重命名标签', '新标签名（保存后同步所有文件的引用）', QLineEdit.Normal, name)
+            if accepted:
+                self.rename_tag(name, value)
+        finally:
+            self.editing_dialog = False
+            self.editingFinished.emit()
 
     @property
     def renames(self):
@@ -424,15 +426,23 @@ class TagEditor(QDialog):  # 参考图式胶囊标签卡，父类只在主动点
             return  # 暂不应用。
         super().accept()  # 成功后继续原来的全局迁移和自动评分流程。
 
-    def enable_management(self, *, embedded=True):
-        if embedded:
-            self.setStyleSheet('QFrame#tagCard { border:none; background:transparent; } QScrollArea { border:none; background:transparent; } QPushButton { padding:5px 10px; }')
+    def enable_management(self):
+        self.setStyleSheet('QFrame#tagCard { border:none; background:transparent; } QScrollArea { border:none; background:transparent; } QPushButton { padding:5px 10px; }')
         self.title.setObjectName('tagManager')
         self.title.setProperty('role', 'quiet')
         self.title.toggled.connect(self.set_management)
         self.delete_button.clicked.connect(self.delete_selected)
         self.delete_button.setProperty('role', 'quiet')
         self.delete_button.setEnabled(False)
+
+    def embed(self):
+        """The exact playback-bar presentation, also used inside media menus."""
+        self.setWindowFlags(Qt.Widget)
+        self.setAttribute(Qt.WA_TranslucentBackground, False)
+        self.setMinimumSize(0, 0)
+        self.buttons.hide()
+        self.footer_hint.hide()
+        self.enable_management()
 
     def set_management(self, enabled):
         self.managing = enabled

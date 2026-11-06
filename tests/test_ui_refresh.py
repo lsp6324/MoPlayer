@@ -616,7 +616,7 @@ def test_volume_and_speed_popovers(window):
 def test_heart_rating_saves_to_remote_metadata(window, score):
     window.rating_dialog()
     panel = window.player_view.options.rating_popup
-    assert panel.isVisible() and panel.hearts.width() > 0
+    assert panel.isVisible() and panel.editor.hearts.width() > 0
     panel.commit(score)
     assert window.store.video(window.current)['score'] == score
     assert not panel.isVisible()
@@ -1445,7 +1445,12 @@ def context_action(window, video_id, caption):
     from application.library import LibrarySelection
     menu = window.media_menu.build_menu(LibrarySelection(video_id))
     action = next(action for action in menu.actions() if action.text() == caption)
-    action.trigger()
+    if action.menu() is not None:
+        menu.popup(window.mapToGlobal(QPoint(40, 80)))
+        menu.setActiveAction(action)
+        action.menu().popup(menu.mapToGlobal(QPoint(menu.width(), menu.actionGeometry(action).top())))
+    else:
+        action.trigger()
     return menu
 
 
@@ -1480,7 +1485,7 @@ def test_all_pages_context_menu_freezes_clicked_identity_and_has_exactly_six_act
     assert selection.video_id == video_id and window.current == current
     menu = window.media_menu.build_menu(selection)
     actions = [action for action in menu.actions() if not action.isSeparator()]
-    assert [action.text() for action in actions] == ['取消收藏', '编辑标签…', '评分…', '重命名…', '删除…', '在资源管理器中打开']
+    assert [action.text() for action in actions] == ['取消收藏', '编辑标签', '评分', '重命名', '删除', '在资源管理器中打开']
     view.clearSelection()
     actions[0].trigger()
     assert window.catalog.video(video_id)['star'] == 0 and window.current == current
@@ -1488,39 +1493,45 @@ def test_all_pages_context_menu_freezes_clicked_identity_and_has_exactly_six_act
 
 
 def test_context_rating_and_explorer_use_clicked_target_without_playing_it(window, context_target):
-    from score_editor import ScoreEditor
+    from rating_editor import RatingEditor
     video_id, path = context_target
     current = window.current
     window.play_path = Mock()
-    context_action(window, video_id, '评分…')
-    dialog = window.media_menu.active_dialog
-    assert isinstance(dialog, ScoreEditor) and dialog.value == 4
-    dialog.choose(0)
-    assert window.catalog.video(video_id)['score'] == 0 and window.catalog.video(current)['score'] is None
+    menu = context_action(window, video_id, '评分')
+    editor = menu.findChild(RatingEditor)
+    assert editor.hearts.score == 4
+    assert editor.hearts.size() == window.player_view.options.rating_popup.editor.hearts.size()
+    assert editor.layout().contentsMargins() == window.player_view.options.rating_popup.editor.layout().contentsMargins()
+    editor.zero.click()
+    assert context_wait(lambda: window.catalog.video(video_id)['score'] == 0)
+    assert window.catalog.video(current)['score'] is None and not menu.isVisible()
     window.media_menu.reveal = Mock()
     context_action(window, video_id, '在资源管理器中打开')
     window.media_menu.reveal.assert_called_once_with(path)
     assert window.current == current and not window.play_path.called
 
 
-def test_context_tag_failure_keeps_target_draft_and_dialog_then_can_retry(window, context_target):
-    from PySide6.QtWidgets import QDialogButtonBox
+def test_context_tag_failure_preserves_draft_and_reopens_in_same_embedded_style(window, context_target):
+    from tag_editor import TagEditor
     from application.operations import Outcome, Status
     video_id, path = context_target
     current = window.current
     pending = Operation()
     window.classification.apply_tags = Mock(return_value=pending)
-    context_action(window, video_id, '编辑标签…')
-    dialog = window.media_menu.active_dialog
-    dialog.chips['existing'].click()
-    dialog.buttons.button(QDialogButtonBox.Ok).click()
-    assert not dialog.isEnabled() and window.classification.apply_tags.call_args.args[0] == video_id
+    menu = context_action(window, video_id, '编辑标签')
+    editor = menu.findChild(TagEditor)
+    editor.chips['existing'].click()
+    assert not editor.buttons.isVisible() and not editor.footer_hint.isVisible()
+    assert editor.parentWidget().size() == window.player_view.options.tags_popup.size()
+    assert not window.classification.apply_tags.called
+    menu.close()
+    assert window.classification.apply_tags.call_args.args[0] == video_id
     pending.finish(Outcome(Status.FAILED, error=PermissionError('save failed')))
-    assert dialog.isVisible() and dialog.isEnabled() and 'save failed' in dialog.hint.text()
     assert window.tag_drafts.open_for(video_id).dirty and window.current == current
     window.classification.apply_tags = Mock(return_value=Operation.success())
-    dialog.buttons.button(QDialogButtonBox.Ok).click()
-    assert window.media_menu.active_dialog is None
+    retry = context_action(window, video_id, '编辑标签')
+    assert retry.findChild(TagEditor).chosen() == ['existing']
+    retry.close()
     assert window.classification.apply_tags.call_args.args[:2] == (video_id, ['existing'])
     assert not window.tag_drafts.open_for(video_id).dirty and path.exists()
 
@@ -1530,7 +1541,7 @@ def test_context_rename_uses_original_identity_and_keeps_invalid_input_open(wind
     video_id, path = context_target
     current = window.current
     window.play_path = Mock()
-    context_action(window, video_id, '重命名…')
+    context_action(window, video_id, '重命名')
     dialog = window.media_menu.active_dialog
     field = dialog.findChild(QLineEdit, 'mediaRenameField')
     controls = dialog.findChild(QDialogButtonBox)
@@ -1548,13 +1559,13 @@ def test_context_delete_confirmation_defaults_to_records_and_cancel_changes_noth
     from PySide6.QtWidgets import QCheckBox, QDialogButtonBox
     video_id, path = context_target
     current = window.current
-    context_action(window, video_id, '删除…')
+    context_action(window, video_id, '删除')
     dialog = window.media_menu.active_dialog
     assert not dialog.findChild(QCheckBox, 'deleteLocalFiles').isChecked()
     dialog.findChild(QDialogButtonBox).button(QDialogButtonBox.Cancel).click()
     assert path.exists() and window.catalog.video(video_id)['score'] == 4
     window.deleter.recycle = Mock(side_effect=AssertionError('Must keep local files'))
-    context_action(window, video_id, '删除…')
+    context_action(window, video_id, '删除')
     dialog = window.media_menu.active_dialog
     assert not dialog.findChild(QCheckBox, 'deleteLocalFiles').isChecked()
     dialog.findChild(QDialogButtonBox).button(QDialogButtonBox.Ok).click()
@@ -1577,7 +1588,7 @@ def test_context_delete_local_option_recycles_all_registered_links_only(window, 
     recycled.mkdir()
     window.deleter.recycle = lambda target: target.rename(recycled / target.name)
     current = window.current
-    context_action(window, video_id, '删除…')
+    context_action(window, video_id, '删除')
     dialog = window.media_menu.active_dialog
     dialog.findChild(QCheckBox, 'deleteLocalFiles').setChecked(True)
     dialog.findChild(QDialogButtonBox).button(QDialogButtonBox.Ok).click()
@@ -1587,22 +1598,25 @@ def test_context_delete_local_option_recycles_all_registered_links_only(window, 
 
 
 
-def test_context_pending_editor_rejects_escape_until_save_finishes(window, context_target):
-    from PySide6.QtWidgets import QDialogButtonBox
-    from application.operations import Outcome, Status
+def test_context_submenu_hover_is_read_only_and_switching_retains_tag_edits(window, context_target):
+    from tag_editor import TagEditor
     video_id, path = context_target
-    pending = Operation()
-    window.classification.apply_tags = Mock(return_value=pending)
-    context_action(window, video_id, '编辑标签…')
-    dialog = window.media_menu.active_dialog
-    dialog.chips['existing'].click()
-    dialog.buttons.button(QDialogButtonBox.Ok).click()
-    QTest.keyClick(dialog, Qt.Key_Escape)
-    dialog.close()
-    assert window.media_menu.active_dialog is dialog and dialog.isVisible()
-    pending.finish(Outcome(Status.SUCCEEDED))
-    assert window.media_menu.active_dialog is None
-
+    window.classification.apply_tags = Mock(return_value=Operation.success())
+    menu = context_action(window, video_id, '编辑标签')
+    editor = menu.findChild(TagEditor)
+    tag_action = menu.actions()[1]
+    rating_action = menu.actions()[2]
+    assert tag_action.menu().isVisible() and not rating_action.menu().isVisible()
+    assert window.media_menu.active_dialog is None and not window.classification.apply_tags.called
+    editor.chips['existing'].click()
+    tag_action.menu().hide()
+    rating_action.menu().popup(menu.mapToGlobal(QPoint(menu.width(), menu.actionGeometry(rating_action).top())))
+    assert not window.classification.apply_tags.called
+    rating_action.menu().hide()
+    tag_action.menu().popup(menu.mapToGlobal(QPoint(menu.width(), menu.actionGeometry(tag_action).top())))
+    assert editor.chosen() == ['existing']
+    menu.close()
+    assert window.classification.apply_tags.call_count == 1
 
 
 def test_context_action_waits_for_current_draft_and_does_not_retarget_selection(window, context_target):
@@ -1629,3 +1643,48 @@ def test_file_folder_and_empty_space_do_not_open_media_menu(window, tmp_path):
     view.files.customContextMenuRequested.emit(view.files.visualRect(view.files.model().index(0, 0)).center())
     view.files.customContextMenuRequested.emit(QPoint(12, view.files.viewport().height() - 1))
     assert requested.count() == 0
+
+
+@pytest.mark.parametrize('succeeded', [False, True])
+def test_context_rating_waits_for_the_same_menu_tag_save_and_stops_on_failure(window, context_target, succeeded):
+    from tag_editor import TagEditor
+    from rating_editor import RatingEditor
+    video_id, path = context_target
+    window.fail = Mock()
+    queued = []
+    window.file_tasks.dispatch = lambda work, completed: queued.append((work, completed))
+    window.classification.rating = Mock()
+    menu = context_action(window, video_id, '编辑标签')
+    menu.findChild(TagEditor).chips['existing'].click()
+    menu.findChild(RatingEditor).zero.click()
+    assert queued and not window.classification.rating.called
+    work, completed = queued[0]
+    completed(work() if succeeded else None, None if succeeded else PermissionError('blocked'))
+    assert context_wait(lambda: not window.tag_drafts.saving)
+    if succeeded:
+        window.classification.rating.assert_called_once_with(video_id, 0)
+        assert json.loads(window.catalog.video(video_id)['tags']) == ['existing']
+    else:
+        assert not window.classification.rating.called and window.tag_drafts.open_for(video_id).dirty
+
+
+@pytest.mark.parametrize('accepted', [False, True])
+def test_context_tag_rename_modal_finishes_before_the_closed_menu_saves(window, context_target, accepted, monkeypatch):
+    from PySide6.QtWidgets import QInputDialog
+    from tag_editor import TagEditor
+    video_id, path = context_target
+    window.fail = Mock()
+    menu = context_action(window, video_id, '编辑标签')
+    editor = menu.findChild(TagEditor)
+    editor.chips['existing'].click()
+    def respond(*args):
+        menu.close()
+        assert window.tag_drafts.open_for(video_id).values.tags == []
+        return 'changed', accepted
+    monkeypatch.setattr(QInputDialog, 'getText', respond)
+    editor.prompt_rename('existing')
+    assert context_wait(lambda: not window.tag_drafts.saving)
+    expected = 'changed' if accepted else 'existing'
+    assert json.loads(window.catalog.video(video_id)['tags']) == [expected]
+    assert expected in window.catalog.tag_values(video_id).schema
+    assert not window.fail.called

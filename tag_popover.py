@@ -38,12 +38,7 @@ class TagPanel(HoverPanel):
         self.video_id = draft.video_id
         self.editor = TagEditor(draft.values.tags, draft.values.schema, self.body,
                                 baseline_schema=draft.baseline.schema, renames=draft.values.renames)
-        self.editor.setWindowFlags(Qt.Widget)
-        self.editor.setAttribute(Qt.WA_TranslucentBackground, False)
-        self.editor.setMinimumSize(0, 0)
-        self.editor.buttons.hide()
-        self.editor.footer_hint.hide()
-        self.editor.enable_management()
+        self.editor.embed()
         self.content.addWidget(self.editor)
         self.editor.show()
         return True
