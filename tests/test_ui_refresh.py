@@ -256,16 +256,34 @@ def test_folder_browse_uses_flat_rows_and_does_not_change_playback(window, tmp_p
 def test_short_folder_breadcrumb_remains_readable_after_layout(window, tmp_path):
     from core import Snapshot
     from PySide6.QtWidgets import QPushButton, QStyleOptionButton, QStyle
-    root = str(tmp_path / '样例')
+    root = str(tmp_path.anchor + '样例')
     window.library_controller.adopt_snapshot(Snapshot(root, {root: ([], [])}))
     QApplication.processEvents()
     navigation = window.library_view.folder_navigation
     current = next(control for control in navigation.findChildren(QPushButton) if control.property('current'))
-    assert current.text() == '样例'
+    assert current.text() == root
     option = QStyleOptionButton()
     current.initStyleOption(option)
     available = current.style().subElementRect(QStyle.SE_PushButtonContents, option, current).width()
     assert current.fontMetrics().horizontalAdvance(current.text()) <= available
+
+
+def test_same_named_import_folders_show_their_drive_in_breadcrumbs(window):
+    from pathlib import Path
+    from core import Snapshot
+    from PySide6.QtWidgets import QPushButton
+    navigation = window.library_view.folder_navigation
+    captions = []
+    for drive in ('C:', 'E:'):
+        root = str(Path(drive + '/学习资料'))
+        window.library_controller.adopt_snapshot(Snapshot(root, {root: ([], [])}))
+        QApplication.processEvents()
+        current = next(control for control in navigation.findChildren(QPushButton)
+                       if control.isVisible() and control.property('current'))
+        captions.append(current.text())
+        assert current.text().startswith(drive) and '学习资料' in current.text()
+        assert current.toolTip() == root and not navigation.up.isEnabled()
+    assert captions[0] != captions[1]
 
 
 def test_folder_return_restores_selection_scroll_and_metadata_refresh_preserves_rows(window, tmp_path):

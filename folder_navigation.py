@@ -9,14 +9,16 @@ from ui import button, label
 
 
 class _PathButton(QPushButton):
-    def __init__(self, name, path, current, parent):
+    def __init__(self, name, path, current, parent, *, root=False):
         super().__init__(name, parent)
         self.setProperty('role', 'breadcrumb')
         self.setProperty('current', current)
         self.setToolTip(path)
         self.setAccessibleName(name)
+        self.elide_mode = Qt.ElideMiddle if root else Qt.ElideRight
         self.setCursor(Qt.PointingHandCursor)
-        self.setMinimumWidth(28)
+        anchor_width = self.fontMetrics().horizontalAdvance(Path(path).anchor) + 16 if root else 28
+        self.setMinimumWidth(max(28, min(96, anchor_width)))
         self.setMaximumWidth(160)
         self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
 
@@ -24,7 +26,7 @@ class _PathButton(QPushButton):
         option = QStyleOptionButton()
         self.initStyleOption(option)
         available = self.style().subElementRect(QStyle.SE_PushButtonContents, option, self).width()
-        option.text = self.fontMetrics().elidedText(self.text(), Qt.ElideRight, max(0, available))
+        option.text = self.fontMetrics().elidedText(self.text(), self.elide_mode, max(0, available))
         painter = QStylePainter(self)
         painter.drawControl(QStyle.CE_PushButton, option)
 
@@ -62,7 +64,8 @@ class FolderNavigation(QWidget):
             if current.parent == current:
                 raise ValueError('浏览位置不在导入目录内。')
             current = current.parent
-        self._segments = tuple((path.name or str(path), str(path)) for path in reversed(paths))
+        self._segments = tuple((str(path) if path == boundary else path.name or str(path), str(path))
+                               for path in reversed(paths))
         self.setToolTip(str(folder))
         self.up.setEnabled(len(paths) > 1)
         self.up.setToolTip('返回上一级' if len(paths) > 1 else '已到导入目录')
@@ -117,7 +120,7 @@ class FolderNavigation(QWidget):
                 control.setMenu(menu)
             else:
                 name, path = self._segments[index]
-                control = _PathButton(name, path, index == count - 1, self)
+                control = _PathButton(name, path, index == count - 1, self, root=index == 0)
                 control.clicked.connect(lambda checked=False, target=path: self.requested.emit(target))
             self.path.addWidget(control)
         self.path.addStretch()

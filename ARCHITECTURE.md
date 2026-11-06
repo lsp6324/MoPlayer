@@ -46,7 +46,7 @@
 | appearance.BackgroundCanvas / background_region.py | 画布拥有背景像素、强度与全窗裁切；BackgroundRegion 只通过注入的绘制端口呈现同一画布局部，供原生视频宿主上方的空闲区域使用，不查询存储或媒体。背景变更刷新主题透明角色，尺寸变更仅使空闲区重绘，不移动/重建视频宿主。 |
 | appearance.py / appearance_dialog.py / theme.py | Appearance 原子保存背景、主题和强调色；AppearanceDialog 拥有编辑草稿、预览、保存失败保留及取消还原，通过显式 UI 回调连接；theme 统一推导普通/全屏强调色，不在各视图另写固定强调色。 |
 | library_view.py | 左侧资料库的分页、当前目录及各目录的选择/滚动位置；浏览已扫描目录仅更换可见投影，向窗口表达导入、打开视频、取消收藏等意图，不访问具体数据库或文件服务。文件页装配 VideoDelegate；最近／收藏装配 CatalogDelegate，其 plain_unlisted 配置仅依据已准备行的 in_library 为未入库记录回退到 VideoDelegate，已入库记录与库共用绘制，不查询或镜像成员状态。 |
-| folder_navigation.py | 独立路径导航组件；导入根边界内的上一级、可点击路径、长路径折叠菜单与提示，只发目录意图，不持有资料库或播放对象。按钮在绘制时省略文本，不用截断文本反复改变布局尺寸。 |
+| folder_navigation.py | 独立路径导航组件；导入根边界内的上一级、可点击路径、长路径折叠菜单与提示，只发目录意图，不持有资料库或播放对象。根按钮保留完整路径，绘制时从中间省略以保留盘符及末尾目录；子目录从末尾省略。无障碍名称和悬停保持完整文本，不用截断文本反复改变布局尺寸。 |
 | library_views.py / thumbnail_cache.py / background_work.py | 单目录 FolderModel、最近/收藏 VideoListModel 与行绘制、保留拖放的 DropList、Qt 图像缓存、工作线程结果交付。FolderModel 的可见行保留快照原索引，绘制只读取模型准备好的元数据。 |
 | player_view.py | 播放区控件、元数据展示、时间轴展示、浮层与全屏 UI 装配；接收 PlayerInfo / PlaybackStatus 与进度，发出操作意图，不读数据库或具体播放器。 |
 | action_notice.py | 播放区右上角的非交互操作回执，复用 FloatingSurface；只接收标题、详情和强调色，持有 2000ms 展示计时及定位，避开可见全屏标题，不读业务数据。 |

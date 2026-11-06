@@ -12,7 +12,7 @@ def run(destination):
     from PySide6.QtCore import Qt, QPoint, QThreadPool, QTimer
     from PySide6.QtGui import QImage, QColor, QPainter, QLinearGradient
     from PySide6.QtTest import QTest
-    from PySide6.QtWidgets import QApplication, QInputDialog, QMenu
+    from PySide6.QtWidgets import QApplication, QInputDialog, QMenu, QPushButton
     from app import Window
     from theme import apply_theme
     from runtime import BUNDLE
@@ -85,6 +85,11 @@ def run(destination):
         check('文件页载入独立样本', wait(lambda: not loaded.pending) and loaded.outcome.succeeded)
         browsing = window.library_controller.browsing
         view = window.library_view
+        root_button = next(control for control in view.folder_navigation.findChildren(QPushButton)
+                           if control.isVisible() and control.property('current'))
+        check('文件页导入根路径显示完整位置并保留盘符', root_button.text() == str(samples)
+              and root_button.text().startswith(samples.drive) and not view.folder_navigation.up.isEnabled())
+        view.folder_navigation.grab().save(str(output / 'folder-drive.png'))
         file_selection = view.files.model().index(1, 0)
         view.files.setCurrentIndex(file_selection)
         selected_file = file_selection.data(Qt.UserRole)
