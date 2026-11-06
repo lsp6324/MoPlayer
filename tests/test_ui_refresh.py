@@ -463,6 +463,26 @@ def test_tag_input_native_dispatch_and_add_does_not_select(window):
     assert window.classification.apply_tags.call_args.args[0] == window.current
 
 
+def test_tag_arrow_keyboard_activation_does_not_trigger_playback(window):
+    window.player_view.toggle_tags()
+    panel = window.player_view.options.tags_popup
+    editor = panel.editor
+    editor.set_parent('existing', True)
+    panel.activateWindow()
+    editor.chips['existing'].arrow.setFocus()
+    QApplication.processEvents()
+    window.toggle = Mock()
+    window.player_view.fullscreen.toggle = Mock()
+    QTest.keyClick(editor.chips['existing'].arrow, Qt.Key_Space)
+    assert editor.expanded == {'existing'}
+    assert not window.toggle.called
+    editor.chips['existing'].arrow.setFocus()
+    QTest.keyClick(editor.chips['existing'].arrow, Qt.Key_Return)
+    assert not editor.expanded and not window.toggle.called and not window.player_view.fullscreen.toggle.called
+    editor.confirm_saved()
+    window.classification.apply_tags = Mock(return_value=Operation.success())
+
+
 def test_tag_management_multiselect_and_close_flush(window):
     window.classification.apply_tags = Mock(return_value=Operation.success())
     window.player_view.toggle_tags()

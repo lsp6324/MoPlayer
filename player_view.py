@@ -292,7 +292,7 @@ class PlayerView(QFrame):
         if event.key() == Qt.Key_Escape and self.options.popup_visible():
             self.options.dismiss()
             return True
-        return self.options.rating_popup.handle_key(event)
+        return self.options.tags_popup.handle_key(event) or self.options.rating_popup.handle_key(event)
 
     def accept_rate(self, rate):
         self.options.accept_rate(rate)

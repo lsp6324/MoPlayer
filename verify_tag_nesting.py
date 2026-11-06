@@ -36,11 +36,11 @@ def run(destination):  # 只验证本次标签需求，不运行完整回归。
     def check(name, passed):  # 所有结果必须来自实际状态。
         checks.append({'name': name, 'passed': bool(passed)})  # 保存逐项证据。
         assert passed, name  # 失败时立即停止，不交付假成功。
-    QTest.mouseClick(editor.chips['游戏'], Qt.LeftButton)  # 展开第一个父标签。
+    QTest.mouseClick(editor.chips['游戏'].arrow, Qt.LeftButton)
     app.processEvents()  # 完成子区重建。
-    QTest.mouseClick(editor.chips['3D'], Qt.LeftButton)  # 展开第二个父标签。
-    app.processEvents()  # 完成互斥切换。
-    check('打开3D自动关闭游戏', editor.expanded == {'3D'} and '角色' in editor.chips)  # 同时只打开一个父类。
+    QTest.mouseClick(editor.chips['3D'].arrow, Qt.LeftButton)
+    app.processEvents()  # 完成两组行下展开。
+    check('不同父标签可分别在行下展开', editor.expanded == {'游戏', '3D'} and '角色' in editor.chips)
     class InternalDrop(QDropEvent):  # 与正式胶囊拖动保持相同来源校验。
         def source(self):  # 指定同一编辑器来源。
             return editor  # 外部文件仍不能成为标签。
@@ -48,13 +48,16 @@ def run(destination):  # 只验证本次标签需求，不运行完整回归。
     mime.setData(MIME, '3D'.encode('utf-8'))  # 父标签作为拖动源。
     event = InternalDrop(QPointF(10, 10), Qt.MoveAction, mime, Qt.LeftButton, Qt.NoModifier)  # 生成真实 Qt 落下事件。
     editor.drop_tag(event, '游戏')  # 父标签归入另一个父标签。
-    app.processEvents()  # 保持原有单一展开项。
+    app.processEvents()  # 保留两组原有展开状态。
     check('父标签拖入父标签保留原有子标签', event.isAccepted() and editor.schema['3D']['parent'] == '游戏' and editor.schema['角色']['parent'] == '3D' and editor.schema['3D']['is_parent'])  # 不丢失后代。
-    editor.activate('游戏')  # 返回新的根父标签。
+    if '游戏' not in editor.expanded:
+        editor.chips['游戏'].arrow.click()
     app.processEvents()  # 显示子父标签胶囊。
-    QTest.mouseClick(editor.chips['3D'], Qt.LeftButton)  # 点击子父标签后才打开其子区。
-    app.processEvents()  # 替换先前父区。
-    check('子父标签单独展开并有返回入口', editor.expanded == {'3D'} and '角色' in editor.chips)  # 不展开所有祖先。
+    if '3D' not in editor.expanded:
+        QTest.mouseClick(editor.chips['3D'].arrow, Qt.LeftButton)
+    app.processEvents()  # 等待嵌套子区完成布局。
+    check('子父标签在父区内继续行下展开', editor.expanded == {'游戏', '3D'} and '角色' in editor.chips
+          and editor.panels['游戏'].isAncestorOf(editor.panels['3D']))
     check('禁止把祖先拖入后代', not editor.assign_parent('游戏', '3D') and editor.schema['游戏']['parent'] is None)  # 防止无限路径。
     validate_layout(editor.schema.values())  # 后端也必须接受合法多层关系。
     editor.grab().save(str(output / 'nested-parent.png'))  # 保存实际子父标签界面。

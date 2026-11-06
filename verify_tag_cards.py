@@ -48,7 +48,7 @@ def run(destination):  # 不运行播放、删除或完整回归。
     application.processEvents()  # 完成归类后的布局。
     check('拖入父类后保持全部折叠', drop.isAccepted() and not editor.expanded and '爱丽丝' not in editor.chips)  # 不隐式展开。
     editor.grab().save(str(output / 'tags-collapsed.png'))  # 保存折叠界面证据。
-    QTest.mouseClick(editor.chips['绝区零'], Qt.LeftButton)  # 点击父胶囊才显示子类。
+    QTest.mouseClick(editor.chips['绝区零'].arrow, Qt.LeftButton)  # 箭头展开，本体只选择。
     application.processEvents()  # 等待子类区布局。
     check('只展开主动点击的父标签', editor.expanded == {'绝区零'} and '爱丽丝' in editor.chips)  # 另一父标签仍折叠。
     QTest.mouseClick(editor.chips['爱丽丝'], Qt.LeftButton)  # 实际点击选中子标签。

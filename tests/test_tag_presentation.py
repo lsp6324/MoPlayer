@@ -2,6 +2,8 @@
 from copy import deepcopy
 import pytest
 from PySide6.QtWidgets import QApplication, QInputDialog
+from PySide6.QtCore import Qt
+from PySide6.QtTest import QTest
 from application.tag_labels import tag_labels, tag_label
 from application.tag_drafts import TagDrafts, TagValues
 from application.operations import Operation, Outcome, Status
@@ -36,13 +38,14 @@ def test_selected_descendant_is_distinct_from_explicit_parent_selection(editor):
     parent = editor.chips['风景']
     assert not parent.isChecked() and parent.property('implicitSelected')
     assert '本级未选' in parent.toolTip() and '已选子标签' in parent.toolTip()
-    editor.activate('风景')
-    assert editor.parent_choices['风景'].text() == '已由子标签包含'
-    assert not editor.parent_choices['风景'].isEnabled()
+    editor.chips['风景'].click()
+    assert editor.chips['风景'].isChecked() and not editor.expanded
+    editor.chips['风景'].click()
+    editor.chips['风景'].arrow.click()
     assert editor.chips['山川'].property('implicitSelected')
-    editor.activate('山川')
+    editor.chips['山川'].arrow.click()
     editor.activate('雪山')
-    editor.parent_choices['山川'].click()
+    editor.chips['山川'].click()
     assert editor.chosen() == ['山川'] and editor.chips.get('风景').property('implicitSelected')
 
 
@@ -54,6 +57,71 @@ def test_search_exposes_matching_child_with_path_without_changing_expansion(edit
     assert not editor.expanded and editor.chosen() == ['雪山']
     editor.search.clear()
     assert set(editor.chips) == {'风景', '摄影'} and not editor.expanded
+
+
+def test_children_expand_below_the_parent_row_without_moving_its_peers(editor):
+    for n in range(15):
+        name = f'{n:02d}标签'
+        editor.schema[name] = dict(name=name, kind='major', parent=None, is_parent=False)
+    editor.schema['01标签']['is_parent'] = True
+    editor.schema['本行子标签'] = dict(name='本行子标签', kind='minor', parent='01标签', is_parent=False)
+    editor.rebuild()
+    QTest.qWait(40)
+    anchor = editor.chips['01标签']
+    original = anchor.geometry().topLeft()
+    anchor.arrow.click()
+    QTest.qWait(40)
+    anchor, branch = editor.chips['01标签'], editor.panels['01标签']
+    assert anchor.geometry().topLeft() == original
+    siblings = [chip for chip in editor.chips.values() if chip.parentWidget() is anchor.parentWidget()]
+    same_row = [chip for chip in siblings if chip.y() == anchor.y()]
+    assert branch.y() > max(chip.geometry().bottom() for chip in same_row)
+    assert branch.width() == anchor.parentWidget().contentsRect().width()
+    later = [chip for chip in siblings if chip.y() > anchor.y()]
+    assert later and min(chip.y() for chip in later) > branch.geometry().bottom()
+    selection = editor.chosen()
+    editor.chips['01标签'].arrow.click()
+    QTest.qWait(30)
+    assert editor.chosen() == selection and editor.chips['01标签'].geometry().topLeft() == original
+
+
+def test_nested_and_multiple_expansions_reflow_without_hiding_ancestors(editor):
+    long_name = '很长的子标签' * 12
+    editor.schema[long_name] = dict(name=long_name, kind='minor', parent='山川', is_parent=False)
+    editor.rebuild()
+    editor.chips['风景'].arrow.click()
+    editor.chips['山川'].arrow.click()
+    QTest.qWait(40)
+    assert editor.panels['风景'].isAncestorOf(editor.panels['山川'])
+    assert {'风景', '山川', '雪山', '摄影'} <= editor.chips.keys()
+    for width in (520, 480, 700):
+        editor.resize(width, 380)
+        QTest.qWait(30)
+        child = editor.chips['山川']
+        branch = editor.panels['山川']
+        assert branch.y() > child.geometry().bottom()
+        for chip in editor.chips.values():
+            assert chip.geometry().right() < chip.parentWidget().width()
+            if chip.arrow is not None:
+                assert chip.arrow.geometry().right() < chip.width()
+    editor.chips['风景'].arrow.click()
+    assert '雪山' not in editor.chips and editor.chosen() == ['雪山']
+    editor.chips['风景'].arrow.click()
+    assert '雪山' in editor.chips and {'风景', '山川'} <= editor.expanded
+
+
+def test_arrow_keyboard_activation_and_search_preserve_selection_and_expansion(editor):
+    before = editor.chosen()
+    editor.chips['风景'].arrow.setFocus()
+    QTest.keyClick(editor.chips['风景'].arrow, Qt.Key_Space)
+    assert editor.chosen() == before and editor.expanded == {'风景'}
+    assert editor.chips['风景'].arrow.hasFocus()
+    editor.search.setText('风景')
+    assert editor.chips['风景'].arrow is None and not editor.panels
+    editor.search.setText('雪山')
+    assert not editor.panels and editor.expanded == {'风景'}
+    editor.search.clear()
+    assert '风景' in editor.panels and editor.chosen() == before
 
 
 def test_context_menu_renames_parent_and_preserves_children_selection_and_cancel(editor, monkeypatch):

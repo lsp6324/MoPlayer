@@ -1,6 +1,6 @@
 """Tag editing view; draft ownership and submission live in the application."""
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QVBoxLayout, QApplication
+from PySide6.QtWidgets import QVBoxLayout, QApplication, QAbstractButton
 
 from application.operations import Operation, Outcome, Status
 from application.tag_drafts import TagValues
@@ -56,6 +56,15 @@ class TagPanel(HoverPanel):
             self.close_timer.start()
             return
         super().close_if_idle()
+
+    def handle_key(self, event):
+        focus = QApplication.focusWidget()
+        if (self.isVisible() and event.key() in (Qt.Key_Space, Qt.Key_Return, Qt.Key_Enter)
+                and isinstance(focus, QAbstractButton) and owned_by(focus, self.editor)):
+            if not event.isAutoRepeat():
+                focus.click()
+            return True
+        return False
 
     def flush_pending(self):
         self.capture()

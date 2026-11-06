@@ -15,6 +15,7 @@
 | application/operations.py | 异步操作完成结果，以及提交草稿后继续用户动作的协调。 |
 | application/tag_drafts.py | 按视频 ID 管理标签基线、工作草稿、重命名映射和正在提交的值；成功才确认基线并将后续重命名重基到已提交名称，失败及恢复保留草稿。 |
 | application/tag_labels.py | 纯父子路径和展示标签推导；卡片、标题、筛选及管理搜索统一使用“父 › 子”表示，祖先与后代重复选择不重复展示。持久选择仍使用原标签名。 |
+| tag_editor.py | 标签草稿的选择、搜索、拖放及展开视图；胶囊本体与独立箭头分别表达选择和展开。FlowLayout 统一测量与放置胶囊行及其下方子区，递归支持嵌套；展开集合与滚动只属于视图，不改变持久选择。TagPanel 经 PlayerView 接收按钮键盘意图，避免落入全局播放快捷键。 |
 | application/file_tasks.py | 文件操作的准入、开始/结束生命周期、完成结果和可恢复失败分类。 |
 | application/cleanup.py | 独立旧入口清理的准入、节流、合并运行与保护路径快照，不拥有媒体生命周期。 |
 | infrastructure/archive_cleanup.py | 重试 cleanup_jobs；保护播放源及已重新成为有效路径的入口，校验身份/内容状态，失败持久记账，不回写分类元数据。 |

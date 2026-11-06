@@ -290,10 +290,20 @@ def run(destination):
         tag_popup = window.player_view.options.tags_popup
         tag_popup.open_above()
         editor = tag_popup.editor
-        editor.activate('风景')
+        QTest.qWait(60)
+        QTest.mouseClick(editor.chips['风景'], Qt.LeftButton)
+        check('父标签本体只选择不展开', '风景' in editor.selected and not editor.expanded)
+        QTest.mouseClick(editor.chips['风景'], Qt.LeftButton)
+        origin = editor.chips['风景'].geometry().topLeft()
+        QTest.mouseClick(editor.chips['风景'].arrow, Qt.LeftButton)
+        QTest.qWait(60)
+        anchor, branch = editor.chips['风景'], editor.panels['风景']
+        peers = [chip for chip in editor.chips.values() if chip.parentWidget() is anchor.parentWidget() and chip.y() == anchor.y()]
+        check('箭头在父标签行下展开且父标签原位保留', anchor.geometry().topLeft() == origin
+              and branch.y() > max(chip.geometry().bottom() for chip in peers) and '风景' not in editor.selected)
         check('父级隐含选择与本级选择分开', not editor.chips['风景'].isChecked()
               and editor.chips['风景'].property('implicitSelected')
-              and not editor.parent_choices['风景'].isEnabled())
+              and editor.chips['风景'].arrow is not None and '风景' in editor.panels)
         tag_popup.grab().save(str(output / 'tag-manager-parent.png'))
         dialog_checks = []
         def accept_rename():
