@@ -1,8 +1,8 @@
 from types import SimpleNamespace
 import pytest
-from application.batch_actions import BatchActions
-from application.library import LibrarySelection
-from application.operations import Operation, Outcome, Status, UserActions
+from moplayer.application.batch_actions import BatchActions
+from moplayer.application.library import LibrarySelection
+from moplayer.application.operations import Operation, Outcome, Status, UserActions
 
 
 class Harness:

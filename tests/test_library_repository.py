@@ -1,5 +1,5 @@
-from core import Store
-from infrastructure.library_repository import LibraryRepository
+from moplayer.core import Store
+from moplayer.infrastructure.library_repository import LibraryRepository
 
 
 def test_metadata_snapshot_handles_large_requested_sets_and_excludes_unrelated_videos(tmp_path):

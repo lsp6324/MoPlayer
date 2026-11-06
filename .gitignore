@@ -20,5 +20,6 @@ __pycache__/
 .env.*
 # Local UI verification and private backups.
 backups/
-test-evidence/ui-refresh/
-test-evidence/ui-refresh-empty.png
+test-evidence/
+.pytest_cache/
+*.egg-info/

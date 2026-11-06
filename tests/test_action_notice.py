@@ -4,7 +4,7 @@ import pytest
 from PySide6.QtCore import QCoreApplication, QEvent, QPoint, QRect, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QMainWindow, QWidget
-from action_notice import ActionNotice
+from moplayer.gui.action_notice import ActionNotice
 
 
 @pytest.fixture

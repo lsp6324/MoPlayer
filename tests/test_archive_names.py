@@ -2,9 +2,9 @@
 from pathlib import Path
 import json
 import pytest
-from core import Store, Archiver, archive_name, identity
-from infrastructure.archive_configuration import ArchiveConfiguration
-from storage_settings import StorageSettings
+from moplayer.core import Store, Archiver, archive_name, identity
+from moplayer.infrastructure.archive_configuration import ArchiveConfiguration
+from moplayer.storage_settings import StorageSettings
 
 
 def sample(tmp_path):

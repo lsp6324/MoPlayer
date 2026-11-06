@@ -3,10 +3,10 @@ from unittest.mock import Mock
 
 import pytest
 
-from application.file_tasks import FileTasks
-from application.operations import Operation, Outcome, Status, UserActions
-from application.playback import PlaybackSession
-from application.tag_drafts import TagDrafts, TagValues
+from moplayer.application.file_tasks import FileTasks
+from moplayer.application.operations import Operation, Outcome, Status, UserActions
+from moplayer.application.playback import PlaybackSession
+from moplayer.application.tag_drafts import TagDrafts, TagValues
 
 
 def tag_values(tags=()):

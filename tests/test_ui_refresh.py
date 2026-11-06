@@ -5,17 +5,17 @@ private-desktop check in verify_ui_refresh.py.
 """
 import json
 import time
-from application.operations import Operation
+from moplayer.application.operations import Operation
 from unittest.mock import Mock
 import pytest
 from PySide6.QtCore import Qt, QPoint, QEvent, QCoreApplication, QThreadPool
 from PySide6.QtGui import QMouseEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
-from app import Window
-from runtime import load_vlc
+from moplayer.app import Window
+from moplayer.runtime import load_vlc
 vlc = load_vlc()
-from theme import apply_theme
+from moplayer.gui.theme import apply_theme
 
 
 @pytest.fixture
@@ -63,7 +63,7 @@ def test_recent_and_favorite_members_render_the_same_card_as_library(window, mod
     from PySide6.QtCore import QRect
     from PySide6.QtGui import QColor, QImage, QPainter, QPixmap
     from PySide6.QtWidgets import QStyleOptionViewItem
-    from library_views import VideoDelegate
+    from moplayer.gui.library_views import VideoDelegate
     apply_theme(window, theme)
     window.store.execute('INSERT INTO tags VALUES(?)', ('子标签',))
     window.store.execute('INSERT INTO tag_layout VALUES(?,?,?)', ('子标签', 'minor', 'existing'))
@@ -145,7 +145,7 @@ def test_recent_unlisted_card_stays_simple_until_marked_and_keeps_library_style_
 def test_single_video_drop_loads_parent_and_plays_selected_identity_after_save(window, tmp_path):
     from PySide6.QtCore import QMimeData, QUrl, QPointF
     from PySide6.QtGui import QDragEnterEvent, QDropEvent
-    from application.operations import Outcome, Status
+    from moplayer.application.operations import Outcome, Status
     folder = tmp_path / '拖入 文件夹'
     folder.mkdir()
     a, b, c = [folder / name for name in ('A.mp4', 'B.MP4', 'C.mp4')]
@@ -209,7 +209,7 @@ def test_drop_rejects_invalid_payloads_and_rechecks_removed_file(window, tmp_pat
 
 
 def test_failed_draft_save_prevents_dropped_video_from_replacing_current(window, tmp_path):
-    from application.operations import Outcome, Status
+    from moplayer.application.operations import Outcome, Status
     path = tmp_path / 'next.mp4'
     path.write_bytes(b'next')
     previous = window.current
@@ -222,8 +222,8 @@ def test_failed_draft_save_prevents_dropped_video_from_replacing_current(window,
 
 
 def test_folder_browse_uses_flat_rows_and_does_not_change_playback(window, tmp_path):
-    from core import Snapshot
-    from library_views import FOLDER_ROLE, LOCATION_ROLE
+    from moplayer.core import Snapshot
+    from moplayer.gui.library_views import FOLDER_ROLE, LOCATION_ROLE
     from PySide6.QtTest import QSignalSpy
     root, child, leaf = map(str, (tmp_path, tmp_path / 'child', tmp_path / 'child' / 'leaf'))
     snapshot = Snapshot(root, {root: ([child], [(window.current, 'root.mp4')]),
@@ -254,7 +254,7 @@ def test_folder_browse_uses_flat_rows_and_does_not_change_playback(window, tmp_p
 
 
 def test_short_folder_breadcrumb_remains_readable_after_layout(window, tmp_path):
-    from core import Snapshot
+    from moplayer.core import Snapshot
     from PySide6.QtWidgets import QPushButton, QStyleOptionButton, QStyle
     root = str(tmp_path.anchor + '样例')
     window.library_controller.adopt_snapshot(Snapshot(root, {root: ([], [])}))
@@ -270,7 +270,7 @@ def test_short_folder_breadcrumb_remains_readable_after_layout(window, tmp_path)
 
 def test_same_named_import_folders_show_their_drive_in_breadcrumbs(window):
     from pathlib import Path
-    from core import Snapshot
+    from moplayer.core import Snapshot
     from PySide6.QtWidgets import QPushButton
     navigation = window.library_view.folder_navigation
     captions = []
@@ -290,7 +290,7 @@ def test_same_named_import_folders_show_their_drive_in_breadcrumbs(window):
 
 def test_drive_breadcrumb_targets_disk_root_and_up_stops_only_there(window, tmp_path):
     from pathlib import Path
-    from core import Snapshot
+    from moplayer.core import Snapshot
     from PySide6.QtWidgets import QPushButton
     from PySide6.QtTest import QSignalSpy
     root = str(tmp_path / '导入目录')
@@ -310,7 +310,7 @@ def test_drive_breadcrumb_targets_disk_root_and_up_stops_only_there(window, tmp_
 
 
 def test_browse_outside_import_and_enter_sibling_preserves_playback_history_and_selection(window, tmp_path, monkeypatch):
-    from library_views import FOLDER_ROLE
+    from moplayer.gui.library_views import FOLDER_ROLE
     root, sibling = tmp_path / '导入', tmp_path / '其他'
     root.mkdir()
     sibling.mkdir()
@@ -353,7 +353,7 @@ def test_browse_outside_import_and_enter_sibling_preserves_playback_history_and_
 
 
 def test_inaccessible_directory_keeps_current_view_and_shows_inline_error(window, tmp_path, monkeypatch):
-    from core import Snapshot
+    from moplayer.core import Snapshot
     root = str(tmp_path)
     window.library_controller.adopt_snapshot(Snapshot(root, {root: ([], [])}))
     def denied(*args):
@@ -368,8 +368,8 @@ def test_inaccessible_directory_keeps_current_view_and_shows_inline_error(window
 
 
 def test_folder_return_restores_selection_scroll_and_metadata_refresh_preserves_rows(window, tmp_path):
-    from core import Snapshot
-    from library_views import LOCATION_ROLE
+    from moplayer.core import Snapshot
+    from moplayer.gui.library_views import LOCATION_ROLE
     from PySide6.QtTest import QSignalSpy
     from PySide6.QtWidgets import QAbstractItemView
     window.thumbnails.request = lambda vid: None
@@ -408,7 +408,7 @@ def test_folder_return_restores_selection_scroll_and_metadata_refresh_preserves_
 
 
 def test_deep_breadcrumbs_fold_and_allow_ancestor_navigation(window, tmp_path):
-    from core import Snapshot
+    from moplayer.core import Snapshot
     from PySide6.QtWidgets import QPushButton
     paths = [tmp_path]
     for n in range(8):
@@ -450,7 +450,7 @@ def test_requested_nested_video_opens_its_directory_in_flat_browser(window, tmp_
 def test_external_directory_changes_refresh_automatically_and_keep_stable_selection(window, tmp_path):
     from PySide6.QtCore import QPersistentModelIndex
     from PySide6.QtTest import QSignalSpy
-    from library_views import FOLDER_ROLE, LOCATION_ROLE
+    from moplayer.gui.library_views import FOLDER_ROLE, LOCATION_ROLE
     window.thumbnails.request = lambda vid: None
     root = tmp_path / 'watched'
     root.mkdir()
@@ -564,7 +564,7 @@ def test_library_refresh_preserves_selection_and_visible_scroll_anchor(window, t
 
 
 def test_cancel_button_cancels_all_library_work_and_ignores_late_result(window, tmp_path):
-    from core import Snapshot
+    from moplayer.core import Snapshot
     tasks = []
     window.work = lambda function, ready: tasks.append((function, ready))
     window.library_controller.adopt_snapshot(Snapshot(str(tmp_path), {str(tmp_path): ([], [])}))
@@ -748,7 +748,7 @@ def test_keyboard_seek_combines_notice_and_timeline_without_stale_snapback(windo
 
 
 def test_timeline_clock_keeps_moving_between_repeated_decoder_samples():
-    from seek_slider import PlaybackClock
+    from moplayer.gui.seek_slider import PlaybackClock
     clock = PlaybackClock()
     clock.sample(2000, 100000, True, 1, 10)
     assert clock.position(10.1) == pytest.approx(2100)
@@ -819,7 +819,7 @@ def test_clearing_media_removes_seek_surface_immediately(window):
 
 @pytest.mark.parametrize('rate', [.5, 1, 1.5, 2])
 def test_timeline_clock_speed_changes_are_continuous_and_pause_is_stable(rate):
-    from seek_slider import PlaybackClock
+    from moplayer.gui.seek_slider import PlaybackClock
     clock = PlaybackClock()
     clock.sample(2000, 100000, True, 1, 10)
     before = clock.position(10.2)
@@ -831,7 +831,7 @@ def test_timeline_clock_speed_changes_are_continuous_and_pause_is_stable(rate):
 
 
 def test_timeline_corrects_small_errors_without_backward_steps_and_snaps_on_seek():
-    from seek_slider import PlaybackClock
+    from moplayer.gui.seek_slider import PlaybackClock
     clock = PlaybackClock()
     clock.sample(2000, 100000, True, 1, 10)
     before = clock.position(10.25)
@@ -851,7 +851,7 @@ def test_timeline_corrects_small_errors_without_backward_steps_and_snaps_on_seek
 
 def test_timeline_renders_fractional_progress_without_seeking_or_polling(window, monkeypatch):
     from types import SimpleNamespace
-    import seek_slider
+    from moplayer.gui import seek_slider
     now = [10.0]
     monkeypatch.setattr(seek_slider, 'time', SimpleNamespace(monotonic=lambda: now[0]))
     real = window.player
@@ -933,7 +933,7 @@ def test_fullscreen_title_and_cursor_share_visibility_without_resizing_video(win
 
 def test_fullscreen_interactions_restart_shared_idle_deadline(window, monkeypatch):
     from types import SimpleNamespace
-    import video_fullscreen
+    from moplayer.gui import video_fullscreen
     now = [100.0]
     monkeypatch.setattr(video_fullscreen, 'time', SimpleNamespace(monotonic=lambda: now[0]))
     window.player_view.fullscreen.toggle()
@@ -1032,7 +1032,7 @@ def test_background_tag_preflight_failure_preserves_reopened_draft_and_has_no_re
 
 
 def test_tag_save_continues_latest_selected_video(window, tmp_path):
-    from core import Snapshot
+    from moplayer.core import Snapshot
     window.storage.save(tmp_path / 'archive')
     window.archiver.root = tmp_path / 'archive'
     original = window.current
@@ -1056,7 +1056,7 @@ def test_tag_save_continues_latest_selected_video(window, tmp_path):
 
 
 def test_failed_tag_save_does_not_navigate_and_retry_can_continue(window, tmp_path):
-    from core import Snapshot
+    from moplayer.core import Snapshot
     window.storage.save(tmp_path / 'archive')
     window.archiver.root = tmp_path / 'archive'
     original = window.current
@@ -1104,7 +1104,7 @@ def test_recovering_tag_task_confirms_existing_draft_without_submitting_it_again
 
 
 def test_recovering_another_archived_video_updates_its_visible_tree_name(window, tmp_path):
-    from core import Snapshot
+    from moplayer.core import Snapshot
     root = str(tmp_path)
     second = tmp_path / 'legacy B.mp4'
     second.write_bytes(b'independent archive recovery fixture')
@@ -1237,7 +1237,7 @@ def test_native_tag_menu_input_does_not_dismiss_or_commit(window, cancel):
 
 
 def test_global_tag_delete_preserves_video_entities(window, tmp_path):
-    from core import identity
+    from moplayer.core import identity
     root = tmp_path / 'archive'
     window.storage.save(root)
     window.archiver.root = root
@@ -1320,7 +1320,7 @@ def test_decode_failure_remains_visible_without_status_bar(window):
 
 
 def test_play_icon_survives_redraw_without_backend_transition(window):
-    from ui import icon
+    from moplayer.gui.ui import icon
     real = window.player
     fake = Mock()
     fake.get_state.return_value = vlc.State.Playing
@@ -1357,7 +1357,7 @@ def test_play_icon_survives_redraw_without_backend_transition(window):
     (vlc.State.Stopped, 'play', '播放'),
 ])
 def test_transport_action_and_actual_icon_agree(window, state, symbol, action):
-    from ui import icon
+    from moplayer.gui.ui import icon
     real = window.player
     fake = Mock()
     fake.get_state.return_value = state
@@ -1429,7 +1429,7 @@ def test_recent_tab_offers_confirmed_history_clearing(window, monkeypatch):
 
 @pytest.fixture
 def context_target(window, tmp_path):
-    from core import Snapshot
+    from moplayer.core import Snapshot
     path = tmp_path / '右键 目标.mp4'
     path.write_bytes(b'context target')
     video_id = window.store.register(path)
@@ -1442,7 +1442,7 @@ def context_target(window, tmp_path):
 
 
 def context_action(window, video_id, caption):
-    from application.library import LibrarySelection
+    from moplayer.application.library import LibrarySelection
     menu = window.media_menu.build_menu(LibrarySelection(video_id))
     action = next(action for action in menu.actions() if action.text() == caption)
     if action.menu() is not None:
@@ -1493,7 +1493,7 @@ def test_all_pages_context_menu_freezes_clicked_identity_and_has_exactly_six_act
 
 
 def test_context_rating_and_explorer_use_clicked_target_without_playing_it(window, context_target):
-    from rating_editor import RatingEditor
+    from moplayer.gui.rating_editor import RatingEditor
     video_id, path = context_target
     current = window.current
     window.play_path = Mock()
@@ -1512,8 +1512,8 @@ def test_context_rating_and_explorer_use_clicked_target_without_playing_it(windo
 
 
 def test_context_tag_failure_preserves_draft_and_reopens_in_same_embedded_style(window, context_target):
-    from tag_editor import TagEditor
-    from application.operations import Outcome, Status
+    from moplayer.gui.tag_editor import TagEditor
+    from moplayer.application.operations import Outcome, Status
     video_id, path = context_target
     current = window.current
     pending = Operation()
@@ -1599,7 +1599,7 @@ def test_context_delete_local_option_recycles_all_registered_links_only(window, 
 
 
 def test_context_submenu_hover_is_read_only_and_switching_retains_tag_edits(window, context_target):
-    from tag_editor import TagEditor
+    from moplayer.gui.tag_editor import TagEditor
     video_id, path = context_target
     window.classification.apply_tags = Mock(return_value=Operation.success())
     menu = context_action(window, video_id, '编辑标签')
@@ -1620,7 +1620,7 @@ def test_context_submenu_hover_is_read_only_and_switching_retains_tag_edits(wind
 
 
 def test_context_action_waits_for_current_draft_and_does_not_retarget_selection(window, context_target):
-    from application.operations import Outcome, Status
+    from moplayer.application.operations import Outcome, Status
     video_id, path = context_target
     pending = Operation()
     window.player_view.options.flush_pending = lambda: pending
@@ -1632,7 +1632,7 @@ def test_context_action_waits_for_current_draft_and_does_not_retarget_selection(
 
 
 def test_file_folder_and_empty_space_do_not_open_media_menu(window, tmp_path):
-    from core import Snapshot
+    from moplayer.core import Snapshot
     from PySide6.QtTest import QSignalSpy
     root, child = str(tmp_path), str(tmp_path / 'child')
     window.library_controller.adopt_snapshot(Snapshot(root, {root: ([child], []), child: ([], [])}))
@@ -1647,8 +1647,8 @@ def test_file_folder_and_empty_space_do_not_open_media_menu(window, tmp_path):
 
 @pytest.mark.parametrize('succeeded', [False, True])
 def test_context_rating_waits_for_the_same_menu_tag_save_and_stops_on_failure(window, context_target, succeeded):
-    from tag_editor import TagEditor
-    from rating_editor import RatingEditor
+    from moplayer.gui.tag_editor import TagEditor
+    from moplayer.gui.rating_editor import RatingEditor
     video_id, path = context_target
     window.fail = Mock()
     queued = []
@@ -1671,7 +1671,7 @@ def test_context_rating_waits_for_the_same_menu_tag_save_and_stops_on_failure(wi
 @pytest.mark.parametrize('accepted', [False, True])
 def test_context_tag_rename_modal_finishes_before_the_closed_menu_saves(window, context_target, accepted, monkeypatch):
     from PySide6.QtWidgets import QInputDialog
-    from tag_editor import TagEditor
+    from moplayer.gui.tag_editor import TagEditor
     video_id, path = context_target
     window.fail = Mock()
     menu = context_action(window, video_id, '编辑标签')
@@ -1691,7 +1691,7 @@ def test_context_tag_rename_modal_finishes_before_the_closed_menu_saves(window, 
 
 
 def test_archive_settings_switch_disables_details_preserves_draft_and_cancel(window):
-    from archive_settings_dialog import ArchiveSettingsDialog
+    from moplayer.gui.archive_settings_dialog import ArchiveSettingsDialog
     from PySide6.QtWidgets import QDialogButtonBox
     submit=Mock(return_value=Operation.success())
     dialog=ArchiveSettingsDialog(window,root=window.storage.root,folders=window.storage.folders,error='',apply=submit)
@@ -1709,7 +1709,7 @@ def test_archive_settings_switch_disables_details_preserves_draft_and_cancel(win
 
 
 def test_disabled_archiving_keeps_tags_rating_favorite_and_all_links_in_place(window,tmp_path):
-    from application.archive_folders import ArchiveFolders
+    from moplayer.application.archive_folders import ArchiveFolders
     source=tmp_path/'tag-only.mp4';source.write_bytes(b'tag only file')
     video_id=window.store.register(source)
     archived=window.current
@@ -1734,7 +1734,7 @@ def test_disabled_archiving_keeps_tags_rating_favorite_and_all_links_in_place(wi
 
 
 def test_disabled_archive_save_keeps_current_media_loaded(window):
-    from application.archive_folders import ArchiveFolders
+    from moplayer.application.archive_folders import ArchiveFolders
     window.play_path=Mock()
     window.clear_player=Mock()
     operation=window.archive_configuration.apply('',ArchiveFolders(),enabled=False)

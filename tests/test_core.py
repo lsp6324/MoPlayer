@@ -3,7 +3,7 @@ import os  # 检查硬链接实体身份。
 import threading  # 构造扫描取消信号。
 from pathlib import Path  # 创建隔离测试目录。
 import pytest  # 提供参数化测试和异常断言。
-from core import Store, Archiver, scan, identity, validate_tag, natural  # 测试实际生产核心代码。
+from moplayer.core import Store, Archiver, scan, identity, validate_tag, natural  # 测试实际生产核心代码。
 
 @pytest.fixture  # 每个测试拥有独立数据库与归档目录。
 def library(tmp_path):  # 不接触用户真实视频。
@@ -116,7 +116,7 @@ def test_link_failure_retains_source(tmp_path, library, monkeypatch):  # 验证�
 
 @pytest.mark.parametrize('stage', ['copy_verified', 'prepared', 'linked', 'committed'])  # 覆盖跨卷复制分支的关键中断阶段。
 def test_cross_volume_branch_recovery(tmp_path, library, monkeypatch, stage):  # 注入卷判断，使用真实复制和 SHA256 校验。
-    import core  # 替换卷判断而不替换复制实现。
+    from moplayer import core  # 替换卷判断而不替换复制实现。
     store, archive = library  # 使用隔离测试数据。
     source = video(tmp_path / 'source/movie.mp4')  # 创建完整来源内容。
     original_hash = core.digest(source)  # 保存用于恢复后比较的内容摘要。
@@ -148,7 +148,7 @@ def test_database_commit_failure_keeps_data(tmp_path, library, monkeypatch):  # 
     assert Archiver(store, archive.root).recover() == []  # 数据库恢复后可安全重试。
 
 def test_space_failure(tmp_path, library, monkeypatch):  # 验证空间不足不会删除源视频。
-    import core  # 注入剩余空间与卷分支。
+    from moplayer import core  # 注入剩余空间与卷分支。
     store, archive = library  # 获取归档器。
     source = video(tmp_path / 'source/movie.mp4')  # 准备源文件。
     vid = store.register(source)  # 登记身份。

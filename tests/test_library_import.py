@@ -3,8 +3,8 @@ from threading import Event
 
 import pytest
 
-from core import EXTENSIONS, Store
-from infrastructure.library_scanner import LibraryScanner
+from moplayer.core import EXTENSIONS, Store
+from moplayer.infrastructure.library_scanner import LibraryScanner
 
 
 @pytest.fixture

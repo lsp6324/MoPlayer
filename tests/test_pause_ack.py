@@ -1,7 +1,7 @@
 import time  # 避免周期进度保存干扰暂停确认场景。
 from PySide6.QtWidgets import QApplication  # 运行真实窗口控件与播放状态显示。
-from app import Window  # 调用生产定时器和 VLC 状态定义。
-from runtime import load_vlc
+from moplayer.app import Window  # 调用生产定时器和 VLC 状态定义。
+from moplayer.runtime import load_vlc
 vlc = load_vlc()
 
 def test_reload_waits_for_pause_acknowledgement(tmp_path):  # 暂停命令发出后，内核尚在播放时不能结束恢复状态。

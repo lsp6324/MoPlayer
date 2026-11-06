@@ -2,8 +2,8 @@
 from pathlib import Path
 from types import SimpleNamespace
 
-from application.library import LibraryController, NavigationStep
-from application.operations import Status
+from moplayer.application.library import LibraryController, NavigationStep
+from moplayer.application.operations import Status
 
 
 def snapshot(root, *ids):

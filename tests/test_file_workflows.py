@@ -2,13 +2,13 @@
 import json
 from types import SimpleNamespace
 import pytest
-from application.classification import Classification
-from application.renaming import Renaming
-from application.deletion import Deletion
-from application.recovery import Recovery
-from application.file_results import PlaybackTarget, FileAction
-from application.file_tasks import FileTasks
-from application.operations import Operation, Outcome, Status, UserActions
+from moplayer.application.classification import Classification
+from moplayer.application.renaming import Renaming
+from moplayer.application.deletion import Deletion
+from moplayer.application.recovery import Recovery
+from moplayer.application.file_results import PlaybackTarget, FileAction
+from moplayer.application.file_tasks import FileTasks
+from moplayer.application.operations import Operation, Outcome, Status, UserActions
 
 
 class Repository:

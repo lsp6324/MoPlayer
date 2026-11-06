@@ -4,10 +4,10 @@ import pytest
 from PySide6.QtWidgets import QApplication, QInputDialog
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
-from application.tag_labels import tag_labels, tag_label
-from application.tag_drafts import TagDrafts, TagValues
-from application.operations import Operation, Outcome, Status
-from tag_editor import TagEditor
+from moplayer.application.tag_labels import tag_labels, tag_label
+from moplayer.application.tag_drafts import TagDrafts, TagValues
+from moplayer.application.operations import Operation, Outcome, Status
+from moplayer.gui.tag_editor import TagEditor
 
 
 SCHEMA = {'风景': dict(name='风景', kind='major', parent=None, is_parent=True),

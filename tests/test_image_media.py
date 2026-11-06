@@ -6,14 +6,14 @@ from PySide6.QtCore import QEvent, QPoint, QPointF, QThreadPool, Qt, QCoreApplic
 from PySide6.QtGui import QColor, QImage, QMouseEvent, QWheelEvent
 from PySide6.QtWidgets import QApplication, QMainWindow, QSplitter, QVBoxLayout, QWidget
 
-from application.operations import Operation
-from application.playback import PlaybackStatus
-from app import Window
-from core import EXTENSIONS, IMAGE_EXTENSIONS, VIDEO_EXTENSIONS, media_kind
-from image_view import ImageView
-from infrastructure.image_loader import ImageLoadError, ImageLoader
-from player_view import PlayerInfo, PlayerView
-from theme import LIGHT_TOKENS
+from moplayer.application.operations import Operation
+from moplayer.application.playback import PlaybackStatus
+from moplayer.app import Window
+from moplayer.core import EXTENSIONS, IMAGE_EXTENSIONS, VIDEO_EXTENSIONS, media_kind
+from moplayer.gui.image_view import ImageView
+from moplayer.infrastructure.image_loader import ImageLoadError, ImageLoader
+from moplayer.gui.player_view import PlayerInfo, PlayerView
+from moplayer.gui.theme import LIGHT_TOKENS
 
 
 @pytest.fixture(scope='module')

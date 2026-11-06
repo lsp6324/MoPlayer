@@ -1,5 +1,5 @@
-from application.cleanup import Cleanup
-from application.operations import Status
+from moplayer.application.cleanup import Cleanup
+from moplayer.application.operations import Status
 
 
 def test_retirement_has_its_own_throttled_lifecycle_and_frozen_protected_paths():

@@ -1,6 +1,6 @@
 from itertools import product
 import pytest
-from application.archive_folders import ArchiveFolders
+from moplayer.application.archive_folders import ArchiveFolders
 
 
 @pytest.mark.parametrize('tags,score,favorite',product([False,True],repeat=3))

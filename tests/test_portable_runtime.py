@@ -11,7 +11,7 @@ def test_portable_bootstrap_contains_python_qt_temporary_files_and_settings(tmp_
     script = '''
 import json, os, tempfile
 from pathlib import Path
-from runtime import configure_portable
+from moplayer.runtime import configure_portable
 root = Path(__import__('sys').argv[1])
 before = {key: os.environ.get(key) for key in ('APPDATA', 'LOCALAPPDATA', 'USERPROFILE')}
 configure_portable(root)
@@ -45,10 +45,10 @@ def test_setup_import_has_no_filesystem_or_profile_side_effects(tmp_path):
     script = '''
 import os
 from pathlib import Path
-import runtime
+from moplayer import runtime
 root=Path(__import__('sys').argv[1])
 runtime.BASE=root
-import setup_explorer_thumbnails as setup
+from tools import setup_explorer_thumbnails as setup
 assert setup.ENVIRONMENT.is_relative_to(root/'data')
 assert not root.exists()
 '''
@@ -58,7 +58,7 @@ assert not root.exists()
 
 def test_registration_command_preserves_arbitrary_portable_path():
     import base64
-    from setup_explorer_thumbnails import registration_command
+    from tools.setup_explorer_thumbnails import registration_command
     script = Path("E:/解压 $目录/O'Brien (test)/register.ps1")
     command = registration_command('powershell.exe', script)
     outer = base64.b64decode(command[-1]).decode('utf-16le')
@@ -70,7 +70,7 @@ def test_registration_command_preserves_arbitrary_portable_path():
 
 def test_encoded_registration_payload_executes_from_space_unicode_and_apostrophe_path(tmp_path):
     import base64
-    from setup_explorer_thumbnails import registration_command
+    from tools.setup_explorer_thumbnails import registration_command
     directory = tmp_path / "解压 $目录 O'Brien (test)"
     directory.mkdir()
     script = directory / 'register.ps1'
@@ -88,7 +88,7 @@ def test_component_download_and_extract_stay_in_selected_portable_data(tmp_path,
     import hashlib
     import shutil
     import zipfile
-    import setup_explorer_thumbnails as setup
+    from tools import setup_explorer_thumbnails as setup
     archive = tmp_path / 'official-fixture.zip'
     with zipfile.ZipFile(archive, 'w') as package:
         package.writestr('64-bit/IcarosThumbnailProvider.dll', b'isolated component fixture')
@@ -109,7 +109,7 @@ def test_component_download_and_extract_stay_in_selected_portable_data(tmp_path,
 
 
 def test_unwritable_portable_directory_fails_without_profile_fallback(tmp_path, monkeypatch):
-    from runtime import configure_portable
+    from moplayer.runtime import configure_portable
     before = dict(os.environ)
     def denied(*args, **kwargs):
         raise PermissionError('unwritable extracted folder')
@@ -120,7 +120,7 @@ def test_unwritable_portable_directory_fails_without_profile_fallback(tmp_path, 
 
 
 def test_overlong_frozen_process_path_cannot_fall_back_to_vlc_appdata(tmp_path, monkeypatch):
-    import runtime
+    from moplayer import runtime
     monkeypatch.setattr(runtime.sys, 'frozen', True, raising=False)
     monkeypatch.setattr(runtime.sys, 'executable', 'E:/' + 'x' * 260 + '/MoPlayer.exe')
     with pytest.raises(OSError, match='260'):

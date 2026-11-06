@@ -3,8 +3,8 @@ import os
 from pathlib import Path
 import pytest
 
-from core import Archiver, Store, identity
-from infrastructure.file_renaming import FileRenaming
+from moplayer.core import Archiver, Store, identity
+from moplayer.infrastructure.file_renaming import FileRenaming
 
 
 @pytest.fixture

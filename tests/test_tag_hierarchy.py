@@ -2,9 +2,9 @@ import json  # 检查全局批次和标签元数据。
 import threading  # 验证扫描登记不能穿插文件迁移提交。
 from pathlib import Path  # 检查被迁移的旧入口是否已清理。
 import pytest  # 参数化校验危险结构与中断恢复。
-from core import Store, Archiver, identity, validate_layout, archive_name  # 使用真实路径、硬链接和永久身份实现。
-from tag_migration import TagMigration  # 验证跨多个视频的全局迁移。
-from video_delete import DeletionManager  # 检查全局迁移与删除互斥保护。
+from moplayer.core import Store, Archiver, identity, validate_layout, archive_name  # 使用真实路径、硬链接和永久身份实现。
+from moplayer.tag_migration import TagMigration  # 验证跨多个视频的全局迁移。
+from moplayer.video_delete import DeletionManager  # 检查全局迁移与删除互斥保护。
 
 def schema(parent='绝区零'):  # 创建两个独立标签和一个父子分类。
     return [{'name': parent, 'kind': 'major', 'parent': None}, {'name': '爱丽丝', 'kind': 'minor', 'parent': parent}, {'name': '黑丝', 'kind': 'major', 'parent': None}]  # 使用用户示例中的名称。

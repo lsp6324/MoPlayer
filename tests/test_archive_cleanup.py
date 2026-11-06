@@ -4,13 +4,13 @@ from pathlib import Path
 import sqlite3
 import pytest
 
-import core
-from core import Store, Archiver, identity
-from application.archive_folders import ArchiveFolders
-from infrastructure.archive_cleanup import ArchiveCleanup
-from infrastructure.library_repository import LibraryRepository
-from infrastructure.schema import migrate
-from video_delete import DeletionManager
+from moplayer import core
+from moplayer.core import Store, Archiver, identity
+from moplayer.application.archive_folders import ArchiveFolders
+from moplayer.infrastructure.archive_cleanup import ArchiveCleanup
+from moplayer.infrastructure.library_repository import LibraryRepository
+from moplayer.infrastructure.schema import migrate
+from moplayer.video_delete import DeletionManager
 
 
 @pytest.fixture

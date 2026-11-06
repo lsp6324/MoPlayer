@@ -5,8 +5,8 @@ from unittest.mock import patch
 
 import pytest
 
-from application.archive_folders import ArchiveFolders
-from storage_settings import StorageSettings
+from moplayer.application.archive_folders import ArchiveFolders
+from moplayer.storage_settings import StorageSettings
 
 
 def test_new_install_defaults_to_video_without_creating_files(tmp_path):
@@ -55,7 +55,7 @@ def test_failed_default_settings_save_preserves_existing_location(tmp_path):
     old = tmp_path / 'custom'
     settings.save(old)
     before = settings.file.read_bytes()
-    with patch('storage_settings.os.replace', side_effect=OSError('disk full')):
+    with patch('moplayer.storage_settings.os.replace', side_effect=OSError('disk full')):
         with pytest.raises(OSError):
             settings.save(settings.default_root)
     assert settings.root == old and settings.file.read_bytes() == before
@@ -77,7 +77,7 @@ def test_failed_toggle_save_keeps_enabled_and_existing_preferences(tmp_path):
     settings = StorageSettings(tmp_path / 'data')
     settings.save(settings.root)
     before = settings.file.read_bytes()
-    with patch('storage_settings.os.replace', side_effect=OSError('disk full')):
+    with patch('moplayer.storage_settings.os.replace', side_effect=OSError('disk full')):
         with pytest.raises(OSError):
             settings.save(settings.root, enabled=False)
     assert settings.enabled and settings.file.read_bytes() == before

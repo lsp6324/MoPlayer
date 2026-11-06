@@ -3,8 +3,8 @@ import pytest
 from PySide6.QtCore import Qt, QPersistentModelIndex, qInstallMessageHandler
 from PySide6.QtTest import QAbstractItemModelTester, QSignalSpy
 from PySide6.QtWidgets import QApplication
-from core import Snapshot
-from library_views import FolderModel, VideoListModel, DETAILS_ROLE, FOLDER_ROLE, LOCATION_ROLE
+from moplayer.core import Snapshot
+from moplayer.gui.library_views import FolderModel, VideoListModel, DETAILS_ROLE, FOLDER_ROLE, LOCATION_ROLE
 
 
 @pytest.fixture

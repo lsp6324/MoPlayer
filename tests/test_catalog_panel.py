@@ -4,11 +4,11 @@ from string import Template
 from PySide6.QtCore import Qt, QCoreApplication, QEvent
 from PySide6.QtWidgets import QApplication, QWidget, QVBoxLayout
 from PySide6.QtTest import QSignalSpy, QTest
-from application.catalog import CatalogFilter
-from catalog_panel import CatalogPanel
-from catalog_delegate import CatalogDelegate
-from library_views import VideoListModel
-from theme import STYLE_TEMPLATE, LIGHT_TOKENS
+from moplayer.application.catalog import CatalogFilter
+from moplayer.gui.catalog_panel import CatalogPanel
+from moplayer.gui.catalog_delegate import CatalogDelegate
+from moplayer.gui.library_views import VideoListModel
+from moplayer.gui.theme import STYLE_TEMPLATE, LIGHT_TOKENS
 
 
 class Thumbnails:
@@ -69,7 +69,7 @@ def test_catalog_list_card_matches_other_pages_row_and_visible_thumbnail(panel):
     from PySide6.QtCore import QRect
     from PySide6.QtGui import QColor, QImage, QPainter, QPixmap
     from PySide6.QtWidgets import QStyleOptionViewItem
-    from library_views import VideoDelegate
+    from moplayer.gui.library_views import VideoDelegate
 
     marker = QColor('#fd07d9')
     pixmap = QPixmap(280, 158)
@@ -295,7 +295,7 @@ def test_short_single_tag_shows_its_name_instead_of_overflow(panel, monkeypatch,
     from PySide6.QtCore import QRect
     from PySide6.QtGui import QImage, QPainter
     from PySide6.QtWidgets import QStyleOptionViewItem
-    import catalog_delegate
+    from moplayer.gui import catalog_delegate
     captions = []
     draw = catalog_delegate.paint_capsule
     def capture(painter, rect, text, colors):
@@ -321,7 +321,7 @@ def test_narrow_card_keeps_a_hierarchy_label_before_the_overflow_count(panel, mo
     from PySide6.QtCore import QRect
     from PySide6.QtGui import QImage, QPainter
     from PySide6.QtWidgets import QStyleOptionViewItem
-    import catalog_delegate
+    from moplayer.gui import catalog_delegate
     labels = []
     draw = catalog_delegate.paint_capsule
     def capture(painter, rect, text, colors):
@@ -346,8 +346,8 @@ def test_score_input_shows_and_edits_the_current_threshold():
     """The score field must show its digits and turn typing into a filter value."""
     from PySide6.QtGui import QColor, QPalette, QIntValidator
     from PySide6.QtWidgets import QWidget
-    from catalog_filter_popup import CatalogFilterPopup
-    from theme import theme_tokens
+    from moplayer.gui.catalog_filter_popup import CatalogFilterPopup
+    from moplayer.gui.theme import theme_tokens
     app = QApplication.instance() or QApplication([])
     host = QWidget()
     host.theme = 'dark'

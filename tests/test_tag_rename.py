@@ -1,8 +1,8 @@
 """Global renames preserve references, identities and recoverable frozen jobs."""
 import json
 import pytest
-from core import Store, Archiver, identity
-from tag_migration import TagMigration
+from moplayer.core import Store, Archiver, identity
+from moplayer.tag_migration import TagMigration
 
 
 @pytest.fixture

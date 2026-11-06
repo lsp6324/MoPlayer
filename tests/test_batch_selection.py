@@ -2,9 +2,9 @@ import json
 from PySide6.QtCore import Qt, QItemSelectionModel, QPoint
 from PySide6.QtTest import QTest, QSignalSpy
 from PySide6.QtWidgets import QApplication, QCheckBox, QLabel, QPushButton
-from core import Snapshot
-from application.library import LibrarySelectionGroup
-from batch_tag_editor import BatchTagEditor
+from moplayer.core import Snapshot
+from moplayer.application.library import LibrarySelectionGroup
+from moplayer.gui.batch_tag_editor import BatchTagEditor
 from test_ui_refresh import window, context_wait
 import pytest
 
@@ -134,14 +134,14 @@ def test_bulk_menu_rating_waits_for_its_pending_tag_intent(window, tmp_path):
     menu = window.media_menu.build_menu(window.library_view.context_selection())
     menu.popup(window.mapToGlobal(QPoint(20, 70)))
     menu.findChild(BatchTagEditor).editor.chips['existing'].click()
-    from rating_editor import RatingEditor
+    from moplayer.gui.rating_editor import RatingEditor
     menu.findChild(RatingEditor).zero.click()
     assert context_wait(lambda: window.batch_actions.active is None and all(window.catalog.video(vid)['score'] == 0 for vid in ids))
     assert all(window.catalog.tag_values(vid).tags == ['existing'] for vid in ids)
 
 
 def test_old_failed_target_draft_is_committed_before_bulk_change(window, tmp_path):
-    from application.tag_drafts import TagValues
+    from moplayer.application.tag_drafts import TagValues
     ids, snapshot = populate(window, tmp_path)
     window.storage.enabled = False
     draft = window.tag_drafts.open_for(ids[1])
@@ -181,7 +181,7 @@ def test_bulk_delete_deduplicates_hardlink_aliases_and_freezes_mode(window, tmp_
 
 
 def test_bulk_archive_favorite_uses_stable_ids_after_paths_and_rows_change(window, tmp_path):
-    from application.archive_folders import ArchiveFolders
+    from moplayer.application.archive_folders import ArchiveFolders
     ids, snapshot = populate(window, tmp_path)
     window.storage.root = tmp_path / 'archive'
     window.archiver.root = window.storage.root

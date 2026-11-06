@@ -3,12 +3,12 @@ from threading import Event
 import json
 from types import SimpleNamespace
 import pytest
-from application.catalog import CatalogFilter, CatalogContext, select_rows
-from application.library import LibraryController
-from application.operations import Status
-from infrastructure.library_preferences import LibraryPreferences
-from infrastructure.library_repository import LibraryRepository
-from core import Store
+from moplayer.application.catalog import CatalogFilter, CatalogContext, select_rows
+from moplayer.application.library import LibraryController
+from moplayer.application.operations import Status
+from moplayer.infrastructure.library_preferences import LibraryPreferences
+from moplayer.infrastructure.library_repository import LibraryRepository
+from moplayer.core import Store
 
 
 SCHEMA = {'风景': {'parent': None}, '山川': {'parent': '风景'}, '雪山': {'parent': '山川'}, '摄影': {'parent': None}}

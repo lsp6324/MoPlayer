@@ -1,11 +1,11 @@
 """Portable application protocols for archive settings and favorite changes."""
 from types import SimpleNamespace
 
-from application.archive_configuration import ArchiveConfiguration
-from application.archive_folders import ArchiveFolders
-from application.classification import Classification
-from application.file_tasks import FileTasks
-from application.operations import Status
+from moplayer.application.archive_configuration import ArchiveConfiguration
+from moplayer.application.archive_folders import ArchiveFolders
+from moplayer.application.classification import Classification
+from moplayer.application.file_tasks import FileTasks
+from moplayer.application.operations import Status
 
 
 def setup():

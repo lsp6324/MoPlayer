@@ -8,12 +8,12 @@ from unittest.mock import patch
 
 import pytest
 
-from application.archive_folders import ArchiveFolders
-from core import Archiver, Store, identity
-from infrastructure.archive_configuration import ArchiveConfiguration
-from storage_settings import StorageSettings
-from tag_migration import TagMigration
-from video_delete import DeletionManager
+from moplayer.application.archive_folders import ArchiveFolders
+from moplayer.core import Archiver, Store, identity
+from moplayer.infrastructure.archive_configuration import ArchiveConfiguration
+from moplayer.storage_settings import StorageSettings
+from moplayer.tag_migration import TagMigration
+from moplayer.video_delete import DeletionManager
 
 
 def setup(tmp_path):
@@ -138,7 +138,7 @@ def test_legacy_storage_config_defaults_and_atomic_save_failure(tmp_path):
     settings=StorageSettings(data)
     assert settings.folders == ArchiveFolders()
     before=config.read_bytes()
-    with patch('storage_settings.os.replace',side_effect=OSError('write failed')):
+    with patch('moplayer.storage_settings.os.replace',side_effect=OSError('write failed')):
         with pytest.raises(OSError):
             settings.save(tmp_path/'new',ArchiveFolders(False,False,True))
     assert settings.root==tmp_path/'old' and settings.folders==ArchiveFolders()
@@ -170,7 +170,7 @@ def test_json_commit_failure_keeps_recoverable_completed_batch(tmp_path):
     vid=video(store,tmp_path/'sample.mp4',archiver=archive)
     old_config=settings.file.read_bytes()
     target=tmp_path/'new'
-    with patch('storage_settings.os.replace',side_effect=OSError('settings disk full')):
+    with patch('moplayer.storage_settings.os.replace',side_effect=OSError('settings disk full')):
         with pytest.raises(OSError):
             service.submit(target,ArchiveFolders(False,False,False))
     assert store.resolve(vid).parent==target
@@ -287,7 +287,7 @@ def test_disabling_retains_all_paths_and_needs_no_available_archive_volume(tmp_p
     before=store.video(vid)
     root=settings.root
     probe=Mock(side_effect=AssertionError('Disable must not access storage'))
-    monkeypatch.setattr('infrastructure.archive_configuration.validate_storage_path',probe)
+    monkeypatch.setattr('moplayer.infrastructure.archive_configuration.validate_storage_path',probe)
     assert service.submit('unavailable-relative-input',ArchiveFolders(False,False,True),enabled=False)==[]
     assert not probe.called and not settings.enabled and not StorageSettings(store.directory).enabled
     assert settings.root==root and archive.root==root
@@ -299,7 +299,7 @@ def test_disable_write_failure_and_pending_job_do_not_change_effective_switch(tm
     from unittest.mock import Mock
     store,settings,archive,service=setup(tmp_path)
     before=settings.file.read_bytes()
-    monkeypatch.setattr('storage_settings.os.replace',Mock(side_effect=OSError('disk full')))
+    monkeypatch.setattr('moplayer.storage_settings.os.replace',Mock(side_effect=OSError('disk full')))
     with pytest.raises(OSError): service.submit(settings.root,settings.folders,enabled=False)
     assert settings.enabled and settings.file.read_bytes()==before
     store.execute('INSERT INTO archive_setting_jobs VALUES(?,?,?,?,?)',('pending','planned','{}',None,1))

@@ -6,12 +6,12 @@ from PySide6.QtCore import QObject, Signal
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QWidget
 
-from application.catalog import CatalogFilter
-from application.library import LibraryController
-from core import Store
-from infrastructure.library_preferences import LibraryPreferences
-from infrastructure.library_repository import LibraryRepository
-from library_view import LibraryView
+from moplayer.application.catalog import CatalogFilter
+from moplayer.application.library import LibraryController
+from moplayer.core import Store
+from moplayer.infrastructure.library_preferences import LibraryPreferences
+from moplayer.infrastructure.library_repository import LibraryRepository
+from moplayer.gui.library_view import LibraryView
 
 
 class Thumbnails(QObject):

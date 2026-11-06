@@ -1,9 +1,9 @@
 """First successful archive is dated; edits and old unknown dates are preserved."""
 import sqlite3
 import pytest
-import core
-from core import Store, Archiver
-from infrastructure.schema import migrate
+from moplayer import core
+from moplayer.core import Store, Archiver
+from moplayer.infrastructure.schema import migrate
 
 
 def test_upgrade_keeps_old_dates_unknown_and_preserves_rows(tmp_path):

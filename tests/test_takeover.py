@@ -4,12 +4,12 @@ from pathlib import Path
 from threading import Event
 from types import SimpleNamespace
 import pytest
-from core import Store, identity
-from application.archive_folders import ArchiveFolders
-from application.takeover import TakeoverRules, infer, Takeover
-from application.operations import Operation, Outcome, Status
-from application.file_tasks import FileTasks
-from infrastructure.takeover import TakeoverService
+from moplayer.core import Store, identity
+from moplayer.application.archive_folders import ArchiveFolders
+from moplayer.application.takeover import TakeoverRules, infer, Takeover
+from moplayer.application.operations import Operation, Outcome, Status
+from moplayer.application.file_tasks import FileTasks
+from moplayer.infrastructure.takeover import TakeoverService
 
 
 @pytest.fixture
@@ -261,7 +261,7 @@ def test_replaced_known_path_gets_new_identity_without_inheriting_old_marks(stor
 
 
 def test_confirmed_import_refresh_and_navigation_wait_for_atomic_commit(store, tmp_path):
-    from application.operations import UserActions
+    from moplayer.application.operations import UserActions
     root = tmp_path / 'old'
     media(root, 'plain.mp4')
     plan = preview(store, root)

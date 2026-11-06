@@ -1,11 +1,11 @@
 """Receipts describe committed changes, including archives with no folder layers."""
 import pytest
-from application.archive_folders import ArchiveFolders
-from application.classification import Classification
-from application.file_tasks import FileTasks
-from core import Archiver, Store, identity
-from infrastructure.library_repository import LibraryRepository
-from tag_migration import TagMigration
+from moplayer.application.archive_folders import ArchiveFolders
+from moplayer.application.classification import Classification
+from moplayer.application.file_tasks import FileTasks
+from moplayer.core import Archiver, Store, identity
+from moplayer.infrastructure.library_repository import LibraryRepository
+from moplayer.tag_migration import TagMigration
 
 
 @pytest.fixture

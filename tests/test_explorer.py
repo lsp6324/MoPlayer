@@ -1,7 +1,7 @@
 from pathlib import Path
 from unittest.mock import Mock
 import pytest
-from infrastructure import explorer
+from moplayer.infrastructure import explorer
 
 
 def test_explorer_receives_resolved_file_as_a_single_argument_without_shell(tmp_path, monkeypatch):

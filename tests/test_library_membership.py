@@ -5,9 +5,9 @@ import time
 
 import pytest
 
-from core import Archiver, Store, identity
-from infrastructure.library_repository import LibraryRepository
-from infrastructure.schema import migrate
+from moplayer.core import Archiver, Store, identity
+from moplayer.infrastructure.library_repository import LibraryRepository
+from moplayer.infrastructure.schema import migrate
 
 
 @pytest.fixture

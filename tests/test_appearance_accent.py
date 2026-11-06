@@ -4,11 +4,11 @@ import pytest
 from PySide6.QtCore import Qt, QEvent, QCoreApplication, QPoint
 from PySide6.QtTest import QTest, QSignalSpy
 from PySide6.QtWidgets import QApplication, QWidget, QDialog
-from accent_colors import DEFAULT_ACCENT, PRESETS
-from appearance import Appearance
-from appearance_dialog import AppearanceDialog
-from color_picker import AccentPicker
-from theme import colors_for, LIGHT_TOKENS, TOKENS
+from moplayer.gui.accent_colors import DEFAULT_ACCENT, PRESETS
+from moplayer.gui.appearance import Appearance
+from moplayer.gui.appearance_dialog import AppearanceDialog
+from moplayer.gui.color_picker import AccentPicker
+from moplayer.gui.theme import colors_for, LIGHT_TOKENS, TOKENS
 
 
 @pytest.fixture
@@ -96,7 +96,7 @@ def test_save_reopen_and_failed_save_keep_exact_color_and_draft(application,tmp_
     second=AppearanceDialog(None,appearance,preview_theme=lambda *args:None,preview_background=lambda *args:None)
     second.show()
     second.accent_picker.set_color('#123456')
-    with patch('appearance.os.replace',side_effect=OSError('disk full')),patch('appearance_dialog.QMessageBox.warning'):
+    with patch('moplayer.gui.appearance.os.replace',side_effect=OSError('disk full')),patch('moplayer.gui.appearance_dialog.QMessageBox.warning'):
         second.accept()
     assert second.isVisible() and second.accent_picker.color=='#123456'
     assert appearance.accent=='#0c2238' and appearance.file.read_bytes()==before
@@ -104,9 +104,9 @@ def test_save_reopen_and_failed_save_keep_exact_color_and_draft(application,tmp_
 
 
 def test_custom_colors_do_not_mutate_default_theme_and_survive_fullscreen(application,tmp_path):
-    from app import Window
+    from moplayer.app import Window
     window=Window(tmp_path/'data')
-    from theme import apply_theme
+    from moplayer.gui.theme import apply_theme
     old_light,old_dark=dict(LIGHT_TOKENS),dict(TOKENS)
     handle=window.player_view.video_handle()
     apply_theme(window,'light','#ffffff')
@@ -123,7 +123,7 @@ def test_custom_colors_do_not_mutate_default_theme_and_survive_fullscreen(applic
     assert window.player_view.normal_colors['accent_source']=='#159f9b'
     assert window.player_view.video_handle()==handle
     assert LIGHT_TOKENS==old_light and TOKENS==old_dark
-    from score_editor import ScoreEditor
+    from moplayer.gui.score_editor import ScoreEditor
     from PySide6.QtGui import QColor
     rating=ScoreEditor(dict(name='sample.mp4',score=8),window)
     rating.show()

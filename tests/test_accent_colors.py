@@ -1,5 +1,5 @@
 import pytest
-from accent_colors import PRESETS, accent_roles, contrast, normalize_color
+from moplayer.gui.accent_colors import PRESETS, accent_roles, contrast, normalize_color
 
 
 @pytest.mark.parametrize('value',['#12abEF','#000000','#ffffff'])

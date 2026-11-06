@@ -1,16 +1,18 @@
 # MoPlayer 开发约束
 
-本文件适用于整个仓库及后续功能开发、修复、重构和审查。先阅读 `ARCHITECTURE.md`；涉及 UI 时同时参考 `UI_MIGRATION.md`。用户明确的新指令优先。
+本文件适用于整个仓库及后续功能开发、修复、重构和审查。先阅读 `docs/ARCHITECTURE.md`；涉及 UI 时同时参考 `docs/UI_MIGRATION.md`。用户明确的新指令优先。
 
 ## 模块边界
+
+- 源码统一在 `src/moplayer/`，界面在 `gui/`，开发／系统集成工具在 `tools/`，原生验收在 `tools/verify/`；根目录 `app.py` 仅设置源码路径并委托包入口。导入必须使用 `moplayer.*`／`tools.*`，不新增旧名称兼容别名或业务入口。源码资源及便携数据仍以项目根为基准，打包后以 EXE 为基准。测试和源码包通过 `pyproject.toml`、`tools/package_release.py` 配置；具体命令见 `docs/DEVELOPMENT.md`。
 
 - 旧目录接管由 application.takeover 持有只读预览／取消和确认导入流程，infrastructure.takeover 单独读取目录并按文件身份合并硬链接。预览不能调用 Store.register 或写入库；规则、路径身份／大小／修改时间、原记录和全局标签结构冻结后才交给 UI。确认时重新校验，全部接管记录／路径／新标签在单个 SQLite 事务内提交，异常整批回滚；不能借普通扫描、Classification 或归档器边预览边登记／移动。接管是初始元数据导入的专用入口，普通收藏继续统一走 Classification.favorite。冲突默认不选；明确包含时仅纳入库并保留原标记，不提交推断标签／评分／收藏。禁止自动猜测文件名、合并普通副本、恢复未知历史或改 archived 状态。显示与选择属于 TakeoverDialog，窗口只装配服务和入口；当前草稿、文件任务、播放宿主及原队列必须保留。
 
 - 文件页批量选择开关、Ctrl／Shift／Ctrl+A、文件夹排除与跨刷新选择归 LibraryView／DropList；右键已选项保留整组，未选项切换单选。MediaContextMenu 将不可变 LibrarySelectionGroup 交给 BatchContextMenu；多选仅提供收藏、标签添加／移除、评分和删除，不提供重命名／资源管理器定位。BatchActions 持有整批准入、串行分类和部分结果，失败／取消后不继续剩余文件；停止必须等待当前事务。Deletion.delete_many 先处理其他项、最后处理当前播放项，全部对账后只按原实际播放队列继续一次，不能逐项播放待删除成员。沿用每个视频现有持久删除任务，不改变恢复方式或归档开关语义。
 
 - 新行为先确定责任模块、状态所有者和对外接口，再实现。沿用已有入口，替换错误实现时删除失效路径。
-- `application/` 管理播放会话、草稿、用户动作和文件任务流程；不能导入 Qt、VLC、视图、SQL 或具体存储适配器。
-- `infrastructure/` 对接既有 Store、文件服务和运行库。UI 通过资料库接口访问数据，禁止在视图、绘制函数、事件过滤器中新增 SQL。
+- `src/moplayer/application/` 管理播放会话、草稿、用户动作和文件任务流程；不能导入 Qt、VLC、视图、SQL 或具体存储适配器。
+- `src/moplayer/infrastructure/` 对接既有 Store、文件服务和运行库。UI 通过资料库接口访问数据，禁止在视图、绘制函数、事件过滤器中新增 SQL。
 - UI 基础组件只依赖 Qt 和更低层组件；功能浮层依赖基础浮层，基础浮层不能反向依赖功能。禁止导入环，包括用函数内 import 隐藏的环。
 - 窗口负责装配与 UI 适配。新增业务流程不能继续堆入 Window；不能通过任意 window 属性、getattr/hasattr 或混入类转移问题。
 - 左侧资料库的扫描、取消、元数据和列表成员属于 `LibraryController`；分页、选择和滚动属于 `LibraryView`，可见行属于其 Qt 模型。不得重新注入 `window.tree`、`window.sidebar_list` 或在窗口恢复扫描标志；业务事件按稳定视频 ID 传递，不捕获会随刷新变化的行号。
@@ -41,9 +43,9 @@
 ## 变更与验证
 
 - 完成后运行架构边界测试，以及与变更相关的行为测试。架构测试失败应修正依赖；不得为了通过测试扩大所有模块的依赖许可、删除守卫或任意提高基线。
-- 新模块必须归类；必要的边界变化需同步 `ARCHITECTURE.md`，说明职责、依赖方向和验证。
+- 新模块必须归类；必要的边界变化需同步 `docs/ARCHITECTURE.md`，说明职责、依赖方向和验证。
 - 修复应添加能在旧实现上失败的回归，覆盖用户可观察结果或状态协议。不要只断言方法被调用、内部字段与实现相同。
-- 界面焦点、浮层、全屏、DPI、VLC HWND 或光标变更，使用 `run_isolated_desktop.py` 在独立 Windows 桌面验证；不得控制用户桌面、切换桌面、移动真实鼠标。禁止直接运行含系统指针操作的 `verify.py`。
+- 界面焦点、浮层、全屏、DPI、VLC HWND 或光标变更，使用 `tools/run_isolated_desktop.py` 在独立 Windows 桌面验证；不得控制用户桌面、切换桌面、移动真实鼠标。禁止直接运行含系统指针操作的 `tools/verify/verify.py`。
 - 不自动关闭用户播放器。替换预览时先构建到新目录并验证；仅更新程序和运行库，保留 data，并核对替换前后数据哈希。受占用时先完成独立工作，再告知用户正常退出。
 - 需要用户退出播放器时，直接使用提问并保持任务进行，等回复后继续更新；不要先结束对话再报告待更新。
 - 保留现有数据库、稳定视频 ID、文件身份、硬链接、命名和恢复语义。`core.py`、`tag_migration.py`、`video_delete.py`、`storage_settings.py` 的底层规则沿用现有实现；若任务需要改变这些规则，单独说明、验证和提交，不得用归档旧源码覆盖。

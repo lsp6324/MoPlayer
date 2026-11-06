@@ -3,10 +3,10 @@ import pytest
 from PySide6.QtCore import Qt, QEvent, QCoreApplication
 from PySide6.QtTest import QSignalSpy
 from PySide6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QSplitter
-from application.operations import Operation
-from application.playback import PlaybackStatus
-from player_view import PlayerView, PlayerInfo
-from theme import LIGHT_TOKENS, TOKENS
+from moplayer.application.operations import Operation
+from moplayer.application.playback import PlaybackStatus
+from moplayer.gui.player_view import PlayerView, PlayerInfo
+from moplayer.gui.theme import LIGHT_TOKENS, TOKENS
 
 
 class Drafts:
@@ -76,7 +76,7 @@ def test_switching_same_named_videos_cancels_editor_and_ignores_late_rename(view
     view.header._submit()
     view.present_video(PlayerInfo('same.mp4',7,(),False,'second'))
     assert requested==[('first','new.mp4')] and not view.header.editor.isVisible()
-    from application.operations import Outcome, Status
+    from moplayer.application.operations import Outcome, Status
     operation.finish(Outcome(Status.FAILED,error=OSError('late')))
     assert view.header.filename=='same.mp4' and not view.header.error_label.isVisible()
 
@@ -90,7 +90,7 @@ def test_live_file_task_preserves_play_and_seek_but_blocks_metadata_edits(view):
 
 
 def test_theme_and_fullscreen_keep_transport_and_video_host(view):
-    from ui import icon
+    from moplayer.gui.ui import icon
     view.present_video(PlayerInfo('视频.mp4', None, (), False))
     view.present_transport(PlaybackStatus.PLAYING, True, False)
     handle = view.video_handle()

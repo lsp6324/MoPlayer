@@ -1,11 +1,14 @@
 """Executable dependency rules: parse production code without loading Qt/VLC."""
 import ast
+from functools import lru_cache
 from pathlib import Path
 import re
 
 
 ROOT = Path(__file__).resolve().parents[1]
+SOURCE = ROOT / 'src/moplayer'
 UI = {
+    'gui',
     'catalog_panel', 'catalog_filter_popup', 'catalog_delegate', 'media_badges',
     'action_notice', 'media_context_menu', 'batch_context_menu', 'batch_tag_editor', 'takeover_dialog',
     'accent_colors', 'color_picker', 'appearance_dialog', 'archive_settings_dialog', 'appearance', 'background_region', 'background_work', 'file_open', 'floating_surface', 'heart_rating',
@@ -14,7 +17,7 @@ UI = {
     'theme', 'thumbnail_cache', 'ui', 'video_cursor', 'video_fullscreen', 'window_chrome', 'wordmark',
 }
 LEGACY = {'core', 'tag_migration', 'video_delete', 'storage_settings'}
-BOOTSTRAP = {'app', 'runtime'}
+BOOTSTRAP = {'app', 'runtime', 'moplayer', '__main__', 'launcher'}
 TOOLS = {
     'make_icon', 'package_release', 'refresh_icon', 'regenerate_shell_thumbnail',
     'register_player', 'repair_thumbnails', 'run_isolated_desktop', 'setup_explorer_thumbnails',
@@ -40,33 +43,64 @@ FOUNDATION_IMPORTS = {
 }
 
 
+def logical_name(name):
+    """Normalize physical package paths; the original dependency rules stay intact."""
+    for prefix in ('moplayer.gui.', 'moplayer.', 'tools.verify.', 'tools.'):
+        if name.startswith(prefix):
+            return name[len(prefix):]
+    return name
+
+
+@lru_cache(maxsize=1)
+def source_paths():
+    result = {'launcher': ROOT / 'app.py'}
+    for path in SOURCE.rglob('*.py'):
+        relative = path.relative_to(ROOT / 'src')
+        name = '.'.join(relative.parent.parts if path.name == '__init__.py' else relative.with_suffix('').parts)
+        logical = logical_name(name)
+        assert logical not in result, f'Duplicate logical module: {logical}'
+        result[logical] = path
+    return result
+
+
+@lru_cache(maxsize=1)
 def production_modules():
-    paths = [*ROOT.glob('*.py'), *ROOT.glob('application/**/*.py'), *ROOT.glob('infrastructure/**/*.py')]
-    return {'.'.join(p.relative_to(ROOT).parent.parts if p.name == '__init__.py' else p.relative_to(ROOT).with_suffix('').parts): ast.parse(p.read_text(encoding='utf-8-sig'))
-            for p in paths if not p.stem.startswith('verify') and p.stem not in TOOLS}
+    return {name: ast.parse(path.read_text(encoding='utf-8-sig')) for name, path in source_paths().items()}
 
 
 def imports(tree, module):
     result = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom):
-            package = module.split('.') if (ROOT.joinpath(*module.split('.')) / '__init__.py').is_file() else module.split('.')[:-1]
+            path = source_paths()[module]
+            full = '.'.join(path.relative_to(ROOT / 'src').parent.parts) if module != 'launcher' else ''
+            package = full.split('.') if full else []
             prefix = package[:len(package) - node.level + 1] if node.level else []
             dependency = '.'.join([*prefix, *([node.module] if node.module else [])])
-            result.add(dependency)
-            result.update(dependency + '.' + alias.name for alias in node.names)
+            result.add(logical_name(dependency))
+            result.update(logical_name(dependency + '.' + alias.name) for alias in node.names)
         elif isinstance(node, ast.Import):
-            result.update(alias.name for alias in node.names)
+            result.update(logical_name(alias.name) for alias in node.names)
     return result
 
 
 def test_every_production_module_has_an_explicit_layer():
     for path in ROOT.iterdir():
-        if path.is_dir() and path.name not in {'application', 'infrastructure', 'tests', 'test-evidence', 'dist', 'build', 'release', '.git', '.venv', '__pycache__'}:
+        if path.is_dir() and path.name not in {'src', 'tools', 'tests', 'test-evidence', 'dist', 'build', 'release', '.git', '.venv', '__pycache__'}:
             assert not list(path.rglob('*.py')), f'Classify new production package {path.name} in the architecture rules'
     unknown = set(production_modules()) - UI - LEGACY - BOOTSTRAP
     unknown = {name for name in unknown if name not in {'application', 'infrastructure'} and not name.startswith(('application.', 'infrastructure.'))}
     assert not unknown, f'Classify modules and document their ownership: {sorted(unknown)}'
+    for name, path in source_paths().items():
+        if name in UI:
+            assert path.is_relative_to(SOURCE / 'gui'), f'{name}: UI belongs to the gui package'
+        elif name not in {'launcher', 'moplayer', '__main__'}:
+            assert not path.is_relative_to(SOURCE / 'gui'), f'{name}: business/runtime modules cannot hide in gui'
+    assert {path.name for path in ROOT.glob('*.py')} == {'app.py'}, 'Only the launcher belongs at the repository root'
+    assert not list((ROOT / 'src').glob('*.py')), 'Production code belongs to the moplayer package'
+    assert {path.name for path in (ROOT / 'src').iterdir() if path.is_dir() and not path.name.endswith('.egg-info')} == {'moplayer'}
+    tool_modules = {path.stem for path in (ROOT / 'tools').rglob('*.py') if path.name != '__init__.py'}
+    assert all(name in TOOLS or name.startswith('verify') for name in tool_modules), 'Classify newly added tools'
 
 
 def test_application_has_no_ui_native_storage_or_dynamic_import_dependency():
@@ -136,7 +170,8 @@ def test_portable_paths_are_configured_before_qapplication_without_machine_paths
     application = next(node for node in calls if node.func.id == 'QApplication')
     assert configure.lineno < application.lineno, 'Configure portable runtime before initializing Qt'
     for name in ('runtime.py', 'storage_settings.py', 'setup_explorer_thumbnails.py', 'register_thumbnail_component.ps1'):
-        text = (ROOT / name).read_text(encoding='utf-8-sig')
+        path = SOURCE / name if name in ('runtime.py', 'storage_settings.py') else ROOT / 'tools' / name
+        text = path.read_text(encoding='utf-8-sig')
         assert not re.search(r'(?i)[a-z]:[\\/]+(?:tools|users|codex)[\\/]+', text), f'{name}: remove machine-specific runtime paths'
 
 

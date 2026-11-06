@@ -3,9 +3,9 @@ import pytest
 from PySide6.QtCore import QPoint, Qt, QThreadPool
 from PySide6.QtGui import QColor, QImage, QPainter
 from PySide6.QtWidgets import QApplication, QPushButton
-from app import Window
-from appearance_dialog import AppearanceDialog
-from theme import apply_theme, theme_tokens
+from moplayer.app import Window
+from moplayer.gui.appearance_dialog import AppearanceDialog
+from moplayer.gui.theme import apply_theme, theme_tokens
 
 
 @pytest.fixture
@@ -85,7 +85,7 @@ def test_cancel_preview_restores_default_library_and_idle_background(scene):
         preview_theme=lambda theme,accent:apply_theme(window,theme,accent),
         preview_background=window.canvas.set_background)
     dialog.show()
-    with patch('appearance_dialog.QFileDialog.getOpenFileName',return_value=(str(images[0]),'PNG')):
+    with patch('moplayer.gui.appearance_dialog.QFileDialog.getOpenFileName',return_value=(str(images[0]),'PNG')):
         dialog.findChild(QPushButton,'chooseBackground').click()
     assert window.canvas.has_background and theme_tokens(window)['backdrop']
     dialog.reject()

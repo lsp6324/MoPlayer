@@ -1,11 +1,11 @@
 import pytest
 from PySide6.QtWidgets import QApplication
 from PySide6.QtGui import QColor
-from media_header import MediaHeader
-from theme import LIGHT_TOKENS, TOKENS
+from moplayer.gui.media_header import MediaHeader
+from moplayer.gui.theme import LIGHT_TOKENS, TOKENS
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
-from application.operations import Operation, Outcome, Status
+from moplayer.application.operations import Operation, Outcome, Status
 
 
 @pytest.fixture

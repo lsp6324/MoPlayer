@@ -2,8 +2,8 @@ import json
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest, QSignalSpy
 from PySide6.QtWidgets import QApplication
-from application.tag_drafts import TagValues
-from takeover_dialog import TakeoverDialog
+from moplayer.application.tag_drafts import TagValues
+from moplayer.gui.takeover_dialog import TakeoverDialog
 from test_ui_refresh import window, context_wait
 from test_takeover import media, dump
 

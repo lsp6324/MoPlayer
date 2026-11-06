@@ -1,8 +1,8 @@
 import os  # 创建测试视频的硬链接入口。
 import threading  # 驱动正式目录扫描。
 import pytest  # 验证故障及恢复结果。
-from core import Store, Archiver, scan  # 使用实际数据库和播放顺序实现。
-from video_delete import DeletionManager  # 测试生产删除事务。
+from moplayer.core import Store, Archiver, scan  # 使用实际数据库和播放顺序实现。
+from moplayer.video_delete import DeletionManager  # 测试生产删除事务。
 
 def setup(tmp_path):  # 构造完全隔离的文件与回收替身。
     store = Store(tmp_path / 'data')  # 每项测试使用独立数据库。
@@ -168,8 +168,8 @@ def test_pending_deletion_cannot_be_reinterpreted_as_another_mode(tmp_path):
 
 
 def test_forget_cancels_retired_entry_cleanup_without_deleting_it(tmp_path):
-    from core import identity
-    from infrastructure.archive_cleanup import ArchiveCleanup
+    from moplayer.core import identity
+    from moplayer.infrastructure.archive_cleanup import ArchiveCleanup
     store, source, path, vid, recycled, recycle = setup(tmp_path)
     retired = source / 'retired.mp4'
     os.link(path, retired)
