@@ -15,14 +15,16 @@ class TagMigration:  # 在现有逐视频归档日志之上协调全局分类迁
         if self.fault:  # 故障注入只用于隔离验收。
             self.fault(state)  # 正式运行不会主动中断。
 
-    def submit(self, vid, score, tags, rows, *, defer_cleanup=False, renames=None):  # 明确确认后才创建全库迁移意图。
+    def submit(self, vid, score, tags, rows, *, defer_cleanup=False, renames=None, metadata_only=False):  # 明确确认后才创建全库迁移意图。
         with self.archiver.lock, self.lock, self.store.file_lock:  # 与归档设置保持相同锁顺序。
             if self.store.query('SELECT id FROM archive_setting_jobs WHERE state<>"done"'):
                 raise RuntimeError('有未完成的归档设置整理，请先恢复。')
-            if self.archiver.root is None:  # 路径未设置时不留下无法执行的新批次。
+            if not metadata_only and self.archiver.root is None:  # 纯标记不依赖归档卷。
                 raise RuntimeError('请先在“设置 → 归档设置”选择视频存储文件夹。')  # 当前草稿和来源文件保持原状。
             if self.store.query('SELECT id FROM hierarchy_jobs WHERE state<>"done"') or self.store.query('SELECT id FROM jobs WHERE state<>"done"'):  # 不覆盖先前尚未完成的文件意图。
                 raise RuntimeError('有未完成文件任务，请先通过“文件任务”恢复。')  # 已完成的中间状态仍由日志保护。
+            if score is not None and (type(score) is not int or not 0 <= score <= 10):
+                raise ValueError('评分必须为 0～10 的整数或未评分')
             layout = validate_layout(rows)  # 全部小类必须有有效的大类父级。
             old = self.store.tag_layout()  # 保存当前已确认的全局关系。
             renames = dict(renames or {})
@@ -36,7 +38,7 @@ class TagMigration:  # 在现有逐视频归档日志之上协调全局分类迁
                 previous = json.loads(video['tags'])  # 保留其他视频原有选择以判断全局删除影响。
                 chosen = list(tags) if video['id'] == vid else [renames.get(name, name) for name in previous]
                 chosen = [name for name in chosen if name not in removed]  # 重命名替换引用，真正删除的标签才移除。
-                metadata_only = video['id'] != vid and not video['archived']  # 未归档的其他视频只更新元数据。
+                entry_metadata_only = metadata_only or (video['id'] != vid and not video['archived'])
                 if video['id'] != vid and chosen == previous and tag_parts(previous, old) == tag_parts(chosen, layout):  # 路径展示变化也需要刷新未归档记录。
                     continue  # 保留无关视频的磁盘入口和播放数据。
                 target_score = score if video['id'] == vid else video['score']  # 全局分类迁移不改变其他视频的评分。
@@ -45,13 +47,14 @@ class TagMigration:  # 在现有逐视频归档日志之上协调全局分类迁
                     if name not in layout:  # 确认草稿必须包含相关视频使用的全局标签。
                         raise ValueError('全局标签结构缺少：' + name)  # 不猜测用户希望删除或保留的分类。
                 chosen = canonical_tags(chosen, layout)  # 子类的父级从全局关系隐含获取。
-                archive_name(video['original_name'] or video['name'])  # 在任何文件变动前检查所有目标名称长度。
+                if not entry_metadata_only:
+                    archive_name(video['original_name'] or video['name'])  # 纯标记无需访问或约束本地文件。
                 if self.store.query('SELECT id FROM deletion_jobs WHERE video=? AND state<>"done"', (video['id'],)):  # 删除与全局迁移不能争夺同一视频。
                     raise RuntimeError('受影响视频有未完成删除，请先在文件任务中恢复。')  # 不提交不完整的结构迁移。
-                entries.append({'video': video['id'], 'score': target_score, 'tags': chosen, 'done': False, 'metadata_only': metadata_only})  # 冻结归档或纯元数据更新意图。
+                entries.append({'video': video['id'], 'score': target_score, 'tags': chosen, 'done': False, 'metadata_only': entry_metadata_only})  # 冻结归档或纯元数据更新意图。
             if not any(entry['video'] == vid for entry in entries):  # 当前身份已被外部删除时不得作用于其他视频。
                 raise FileNotFoundError('当前视频记录已不存在，未提交标签修改。')  # 保留原全局结构。
-            plan = {'layout': list(layout.values()), 'videos': entries, 'current': vid, 'archive_root': str(self.archiver.root), 'archive_folders': self.archiver.folders.to_dict()}  # 冻结根目录，重启后不使用后来修改的设置。
+            plan = {'layout': list(layout.values()), 'videos': entries, 'current': vid, 'archive_root': str(self.archiver.root) if self.archiver.root is not None else None, 'archive_folders': self.archiver.folders.to_dict()}  # 冻结根目录，重启后不使用后来修改的设置。
             if renames:
                 plan['renames'] = renames
             if defer_cleanup:
@@ -76,7 +79,7 @@ class TagMigration:  # 在现有逐视频归档日志之上协调全局分类迁
                     if entry['done']:  # 已完成的文件不重复建立和清理入口。
                         continue  # 同一视频的收藏与历史始终保留原 ID。
                     if entry.get('metadata_only'):  # 全局删除不让原本未归档的视频突然归档。
-                        self.store.execute('UPDATE videos SET tags=? WHERE id=?', (json.dumps(entry['tags'], ensure_ascii=False), entry['video']))  # 仍由持久批次记录进度以便恢复。
+                        self.store.execute('UPDATE videos SET tags=?,score=? WHERE id=?', (json.dumps(entry['tags'], ensure_ascii=False), entry['score'], entry['video']))  # 仍由持久批次记录进度以便恢复。
                     else:  # 已归档视频或本次主动确认的视频同步实际目录。
                         batch_archiver.submit(entry['video'], entry['score'], entry['tags'], layout=layout, hierarchy_job=job,
                                               defer_cleanup=plan.get('defer_cleanup',False))

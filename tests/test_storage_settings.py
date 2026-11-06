@@ -59,3 +59,34 @@ def test_failed_default_settings_save_preserves_existing_location(tmp_path):
         with pytest.raises(OSError):
             settings.save(settings.default_root)
     assert settings.root == old and settings.file.read_bytes() == before
+
+
+def test_archive_enabled_defaults_on_for_existing_settings_and_roundtrips_off(tmp_path):
+    settings = StorageSettings(tmp_path / 'data')
+    assert settings.enabled
+    settings.save(settings.root, enabled=False)
+    assert not settings.enabled and not StorageSettings(settings.file.parent).enabled
+    assert json.loads(settings.file.read_text(encoding='utf-8'))['archive_enabled'] is False
+    data = json.loads(settings.file.read_text(encoding='utf-8'))
+    del data['archive_enabled']
+    settings.file.write_text(json.dumps(data), encoding='utf-8')
+    assert StorageSettings(settings.file.parent).enabled
+
+
+def test_failed_toggle_save_keeps_enabled_and_existing_preferences(tmp_path):
+    settings = StorageSettings(tmp_path / 'data')
+    settings.save(settings.root)
+    before = settings.file.read_bytes()
+    with patch('storage_settings.os.replace', side_effect=OSError('disk full')):
+        with pytest.raises(OSError):
+            settings.save(settings.root, enabled=False)
+    assert settings.enabled and settings.file.read_bytes() == before
+
+
+@pytest.mark.parametrize('value', [0, 1, 'false', None])
+def test_archive_toggle_rejects_non_boolean_saved_values(tmp_path, value):
+    data = tmp_path / 'data'
+    data.mkdir()
+    (data/'storage.json').write_text(json.dumps(dict(archive_root='video',archive_enabled=value)),encoding='utf-8')
+    settings=StorageSettings(data)
+    assert settings.error and settings.root is None

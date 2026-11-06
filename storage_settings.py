@@ -21,14 +21,19 @@ class StorageSettings:  # 本地偏好不写入源码或公共仓库。
     def __init__(self, directory):  # 配置与便携数据放在一起。
         self.file = Path(directory).absolute() / 'storage.json'  # 不更改历史视频数据库位置。
         self.folders = ArchiveFolders()
+        self.enabled = True
         self.root, self.error = None, ''
         try:  # 不把损坏配置当作可用路径。
             settings = json.loads(self.file.read_text(encoding='utf-8'))  # 读取上次明确保存的位置。
+            enabled = settings.get('archive_enabled', True)
+            if type(enabled) is not bool:
+                raise ValueError('归档开关无效。')
             value = settings['archive_root']  # 保持配置格式简单明确。
             if not isinstance(value, str) or (value != 'video' and not Path(value).is_absolute()):
                 raise ValueError('保存的存储路径无效，请重新选择。')  # 启动时提示重新配置。
             folders = ArchiveFolders.from_dict(settings['archive_folders']) if 'archive_folders' in settings else ArchiveFolders()
             self.folders = folders
+            self.enabled = enabled
             self.root = self.default_root if value == 'video' else Path(value)
         except FileNotFoundError:  # 首次启动不存在配置是正常情况。
             self.root = self.default_root  # 新安装直接使用程序旁 video；首次归档再验证并创建。
@@ -39,9 +44,12 @@ class StorageSettings:  # 本地偏好不写入源码或公共仓库。
     def default_root(self):
         return self.file.parent.parent / 'video'
 
-    def save(self, root, folders=None):  # 只在后台能力检查成功后保存。
+    def save(self, root, folders=None, *, enabled=None):  # 只在后台能力检查成功后保存。
         root = Path(root)  # 统一调用方传入的路径对象。
         folders = self.folders if folders is None else folders
+        enabled = self.enabled if enabled is None else enabled
+        if type(enabled) is not bool:
+            raise ValueError('归档开关必须为布尔值。')
         if not root.is_absolute():  # API 同样禁止相对路径。
             raise ValueError('存储路径必须是完整的绝对路径。')  # 不修改已有设置。
         self.file.parent.mkdir(parents=True, exist_ok=True)  # 数据目录可正常保存配置。
@@ -49,11 +57,12 @@ class StorageSettings:  # 本地偏好不写入源码或公共仓库。
         try:  # 写入失败保留上次设置和内存状态。
             with temporary.open('x', encoding='utf-8') as stream:  # 独占创建本次配置草稿。
                 value = 'video' if root == self.default_root else str(root)
-                json.dump({'archive_root': value, 'archive_folders': folders.to_dict()}, stream, ensure_ascii=False, indent=2)
+                json.dump({'archive_root': value, 'archive_folders': folders.to_dict(), 'archive_enabled': enabled}, stream, ensure_ascii=False, indent=2)
                 stream.flush()  # 刷新 Python 缓冲。
                 os.fsync(stream.fileno())  # 在原子提交前确保内容落盘。
             os.replace(temporary, self.file)  # 完整替换，不留下半个 JSON。
         finally:  # 只清理本次临时文件。
             temporary.unlink(missing_ok=True)  # 不删除原配置。
         self.folders = folders
+        self.enabled = enabled
         self.root, self.error = root, ''  # 保存成功后才切换有效设置。

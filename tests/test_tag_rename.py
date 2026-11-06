@@ -71,3 +71,46 @@ def test_invalid_rename_does_not_create_a_job_or_change_records(library):
         migration.submit(ids[0], 8, ['山川'], list(store.tag_layout().values()), renames={'风景': '山川'})
     assert store.query('SELECT * FROM videos') == before
     assert store.query('SELECT * FROM hierarchy_jobs') == jobs
+
+
+def test_metadata_only_tags_need_no_archive_root_or_local_file_and_zero_enters_library(tmp_path):
+    store = Store(tmp_path/'data')
+    source = tmp_path/'source.mp4'
+    source.write_bytes(b'tags only')
+    vid = store.register(source)
+    source.unlink()
+    migration=TagMigration(store,Archiver(store,None))
+    migration.submit(vid,0,['标签'],[dict(name='标签',kind='major',parent=None)],metadata_only=True)
+    video=store.video(vid)
+    assert video['score']==0 and json.loads(video['tags'])==['标签'] and video['in_library']
+    assert not video['archived'] and video['archived_at'] is None
+    assert not store.query('SELECT * FROM jobs') and not store.query('SELECT * FROM cleanup_jobs')
+    assert not (tmp_path/'video').exists()
+    store.db.close()
+
+
+def test_metadata_only_rename_preserves_all_archived_links_and_recovers_frozen_mode(library,tmp_path):
+    store,archive,migration,ids,sources=library
+    before={vid:store.video(vid) for vid in ids}
+    paths=store.query('SELECT * FROM paths ORDER BY path')
+    identities={row['path']:identity(row['path']) for row in paths}
+    jobs=store.query('SELECT * FROM jobs')
+    def fail(state):
+        if state=='migrating': raise OSError('interrupted metadata')
+    migration.fault=fail
+    rows=[dict(name='风景',kind='major',parent=None),dict(name='群山',kind='minor',parent='风景')]
+    with pytest.raises(OSError):
+        migration.submit(ids[0],0,['群山'],rows,renames={'山川':'群山'},metadata_only=True)
+    frozen=json.loads(store.query('SELECT plan FROM hierarchy_jobs WHERE state<>"done"')[0]['plan'])
+    assert all(entry['metadata_only'] for entry in frozen['videos'])
+    restarted=TagMigration(store,Archiver(store,tmp_path/'changed-target'))
+    assert restarted.recover()==[]
+    assert store.query('SELECT * FROM paths ORDER BY path')==paths and store.query('SELECT * FROM jobs')==jobs
+    assert all(identity(path)==value for path,value in identities.items())
+    for vid in ids:
+        video=store.video(vid)
+        assert json.loads(video['tags'])==['群山']
+        for field in ('archived','archived_at','library_added_at','star','position','played','original_name'):
+            assert video[field]==before[vid][field]
+        assert video['score']==(0 if vid==ids[0] else before[vid]['score'])
+    assert not (tmp_path/'changed-target').exists()
