@@ -1,11 +1,12 @@
 """Native library filter popup. Inputs emit values, never query storage."""
-from PySide6.QtCore import Qt, Signal, QPoint, QSize
+from PySide6.QtCore import Qt, Signal, QPoint, QSize, QEvent, QTimer
 from PySide6.QtGui import QColor, QIntValidator
 from PySide6.QtWidgets import (QFrame, QWidget, QVBoxLayout, QHBoxLayout,
-                               QScrollArea, QLineEdit, QSizePolicy)
+                               QScrollArea, QLineEdit, QSizePolicy, QPushButton, QToolButton)
 from application.catalog import CatalogFilter, natural_name
 from application.tag_labels import tag_label, tag_path
 from heart_rating import HeartRating
+from tag_flow import FlowLayout
 from ui import label, button, icon
 
 
@@ -70,6 +71,176 @@ class TagChoices(QWidget):
         super().resizeEvent(event)
 
 
+class FilterTagChip(QPushButton):
+    """Selecting a condition and opening its children are separate actions."""
+    def __init__(self, choices, name, *, searchable=False):
+        super().__init__()
+        self.name = name
+        self.label = tag_label(name, choices.schema) if searchable else name
+        self.arrow = None
+        self.setObjectName('filterTagChip')
+        self.setCheckable(True)
+        self.setFixedHeight(28)
+        self.setMinimumWidth(0)
+        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        self.setCursor(Qt.PointingHandCursor)
+        self.clicked.connect(lambda checked=False: choices.toggled.emit(name))
+        if name in choices.parents and not searchable:
+            self.arrow = QToolButton(self)
+            self.arrow.setObjectName('filterTagArrow')
+            self.arrow.setFocusPolicy(Qt.StrongFocus)
+            self.arrow.setArrowType(Qt.DownArrow if name in choices.expanded else Qt.RightArrow)
+            self.arrow.setAccessibleName(('收起' if name in choices.expanded else '展开') + name + '的子标签')
+            self.arrow.setToolTip(self.arrow.accessibleName())
+            self.arrow.clicked.connect(lambda checked=False: choices.toggle_expanded(name))
+            self.arrow.installEventFilter(self)
+        self.setProperty('hasArrow', self.arrow is not None)
+        self.setText(self.label)
+
+    def sizeHint(self):
+        return QSize(min(280, self.fontMetrics().horizontalAdvance(self.label) + 28 + (26 if self.arrow else 0)), 28)
+
+    def minimumSizeHint(self):
+        return QSize(0, 28)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self.arrow is not None:
+            self.arrow.setGeometry(max(0, self.width() - 27), 1, 26, 26)
+        available = max(0, self.width() - 24 - (26 if self.arrow else 0))
+        self.setText(self.fontMetrics().elidedText(self.label, Qt.ElideMiddle, available))
+
+    def keyPressEvent(self, event):
+        if event.key() in (Qt.Key_Return, Qt.Key_Enter):
+            if not event.isAutoRepeat():
+                self.click()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+    def eventFilter(self, watched, event):
+        if watched is self.arrow and event.type() == QEvent.KeyPress and event.key() in (Qt.Key_Return, Qt.Key_Enter):
+            if not event.isAutoRepeat():
+                self.arrow.click()
+            return True
+        return super().eventFilter(watched, event)
+
+
+class FilterTagChoices(QWidget):
+    """Filter-only hierarchy; expansion never emits a filter change."""
+    toggled = Signal(str)
+    branchOpened = Signal(str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.schema, self.chips, self.panels = {}, {}, {}
+        self.parents, self.expanded = set(), set()
+        self.selected, self.query, self.signature = (), '', None
+        self.setMinimumWidth(0)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.outer = QVBoxLayout(self)
+        self.outer.setContentsMargins(0, 0, 0, 0)
+        self.content = None
+
+    def present(self, schema, selected, query=''):
+        self.schema = {name: dict(row) for name, row in schema.items()}
+        for name in selected:
+            self.schema.setdefault(name, {})
+        self.parents = {name for name, row in self.schema.items() if row.get('is_parent')}
+        self.parents.update(row['parent'] for row in self.schema.values() if row.get('parent') in self.schema)
+        self.expanded.intersection_update(self.parents)
+        self.selected, self.query = tuple(selected), query.strip().casefold()
+        signature = (tuple((name, row.get('parent'), name in self.parents) for name, row in self.schema.items()), self.query)
+        if signature != self.signature:
+            self.signature = signature
+            self.rebuild()
+        else:
+            self.update_selection()
+
+    def rebuild(self):
+        if self.content is not None:
+            self.outer.removeWidget(self.content)
+            self.content.hide()
+            self.content.deleteLater()
+        self.content = QWidget()
+        self.flow = FlowLayout(self.content)
+        self.flow.setSpacing(6)
+        self.chips, self.panels = {}, {}
+
+        def populate(flow, names, ancestors=()):
+            for name in sorted(names, key=natural_name):
+                if self.query and self.query not in tag_label(name, self.schema).casefold():
+                    continue
+                chip = FilterTagChip(self, name, searchable=bool(self.query))
+                flow.addWidget(chip)
+                self.chips[name] = chip
+                if self.query or name not in self.expanded or name in ancestors:
+                    continue
+                panel = QFrame()
+                panel.setObjectName('filterTagBranch')
+                layout = QVBoxLayout(panel)
+                layout.setContentsMargins(10, 6, 6, 6)
+                heading = label(tag_label(name, self.schema), 'muted')
+                heading.setWordWrap(True)
+                layout.addWidget(heading)
+                area = QWidget()
+                child_flow = FlowLayout(area)
+                child_flow.setSpacing(6)
+                children = [child for child, row in self.schema.items() if row.get('parent') == name]
+                populate(child_flow, children, (*ancestors, name))
+                layout.addWidget(area)
+                if not children:
+                    layout.addWidget(label('暂无子标签', 'muted'))
+                flow.add_branch(chip, panel)
+                self.panels[name] = panel
+
+        roots = [name for name, row in self.schema.items() if self.query or row.get('parent') not in self.schema]
+        populate(self.flow, roots)
+        self.outer.addWidget(self.content)
+        self.content.show()
+        self.update_selection()
+        self.arrange()
+
+    def update_selection(self):
+        ancestors = {ancestor for name in self.selected for ancestor in tag_path(name, self.schema)[:-1]}
+        for name, chip in self.chips.items():
+            chip.setChecked(name in self.selected)
+            chip.setProperty('implicitSelected', name in ancestors and name not in self.selected)
+            chip.style().unpolish(chip)
+            chip.style().polish(chip)
+            state = '本级筛选已选' if name in self.selected else '本级筛选未选；包含已选子标签' if name in ancestors else '未选'
+            chip.setToolTip(tag_label(name, self.schema) + '\n' + state + ('\n选择本级可匹配本级及全部后代' if name in self.parents else '') + '\n点击选择／取消；箭头只展开')
+
+    def toggle_expanded(self, name):
+        arrow = self.chips[name].arrow
+        focused = arrow is not None and arrow.hasFocus()
+        self.expanded.symmetric_difference_update({name})
+        self.rebuild()
+        if focused and name in self.chips and self.chips[name].arrow is not None:
+            self.chips[name].arrow.setFocus(Qt.OtherFocusReason)
+        if name in self.expanded:
+            self.branchOpened.emit(name)
+
+    def arrange(self):
+        if self.content is not None:
+            self.setFixedHeight(self.flow.heightForWidth(max(1, self.width())))
+
+    def resizeEvent(self, event):
+        self.arrange()
+        super().resizeEvent(event)
+
+    def apply_colors(self, colors):
+        self.setStyleSheet(
+            'QPushButton#filterTagChip { color:'+colors['text']+'; border:1px solid '+colors['line']+'; border-radius:14px; padding:0; background:transparent; }'
+            'QPushButton#filterTagChip[hasArrow="true"] { padding-right:26px; }'
+            'QPushButton#filterTagChip:hover { background:'+colors['hover']+'; }'
+            'QPushButton#filterTagChip:checked { color:'+colors['accent']+'; background:'+colors['accent_soft']+'; border-color:'+colors['accent_line']+'; }'
+            'QPushButton#filterTagChip[implicitSelected="true"]:!checked { border-style:dashed; border-color:'+colors['accent_line']+'; }'
+            'QToolButton#filterTagArrow { color:'+colors['text']+'; border:0; border-left:1px solid '+colors['line']+'; border-radius:0; padding:0; background:transparent; }'
+            'QFrame#filterTagBranch { border:1px solid '+colors['line']+'; border-radius:7px; background:transparent; }')
+        self.arrange()
+
+
 class CatalogFilterPopup(QFrame):
     changed = Signal(object)
     resetRequested = Signal()
@@ -95,7 +266,7 @@ class CatalogFilterPopup(QFrame):
         close.setAccessibleName('关闭筛选')
         heading.addWidget(close)
         layout.addLayout(heading)
-        scroll = QScrollArea()
+        self.scroll = scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -156,8 +327,9 @@ class CatalogFilterPopup(QFrame):
         self.no_tags.setStyleSheet('padding:3px 7px;')
         tag_search_row.addWidget(self.no_tags)
         self.body_layout.addLayout(tag_search_row)
-        self.tags = TagChoices()
+        self.tags = FilterTagChoices()
         self.tags.toggled.connect(self.toggle_tag)
+        self.tags.branchOpened.connect(self.reveal_tag_branch)
         self.body_layout.addWidget(self.tags)
         self.tag_description = label('', 'muted')
         self.tag_description.setWordWrap(True)
@@ -220,13 +392,16 @@ class CatalogFilterPopup(QFrame):
         self.changed.emit(dict(tags=tuple(tags)))
 
     def refresh_tags(self):
-        search = self.search.text().casefold()
-        names = sorted(set(self.schema) | set(self.filters.tags), key=natural_name)
-        self.tags.present([name for name in names if search in tag_label(name, self.schema).casefold()], self.filters.tags,
-                          {name: tag_label(name, self.schema) for name in names})
-        for name, chip in self.tags.chips.items():
-            chain = tag_path(name, self.schema)
-            chip.setToolTip(' / '.join(chain) + ('\n包含子标签' if self.schema.get(name, {}).get('is_parent') else ''))
+        self.tags.present(self.schema, self.filters.tags, self.search.text())
+
+    def reveal_tag_branch(self, name):
+        def reveal():
+            panel = self.tags.panels.get(name)
+            if not self.isVisible() or panel is None:
+                return
+            children = [chip for chip in self.tags.chips.values() if chip.parentWidget().parentWidget() is panel]
+            self.scroll.ensureWidgetVisible(children[0] if children else panel, 0, 12)
+        QTimer.singleShot(0, self, reveal)
 
     def show_for(self, anchor):
         available = anchor.screen().availableGeometry()

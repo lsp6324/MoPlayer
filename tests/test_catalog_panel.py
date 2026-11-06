@@ -159,14 +159,82 @@ def test_tag_search_does_not_filter_media_and_reset_keeps_sort_and_view(panel):
 def test_hierarchy_paths_are_visible_in_filter_chips_and_summary_without_losing_typed_search(panel):
     panel.present_schema({'风景': {}, '山川': {'parent': '风景'}, '雪山': {'parent': '山川'}})
     panel.change(tags=('雪山',))
-    assert panel.popup.tags.chips['雪山'].text() == '风景 › 山川 › 雪山'
+    assert set(panel.popup.tags.chips) == {'风景'}
+    assert panel.popup.tags.chips['风景'].property('implicitSelected')
     assert '风景 › 山川 › 雪山' in ' '.join(panel.summary.chips)
     panel.popup.search.setText('风景')
     assert set(panel.popup.tags.chips) == {'风景', '山川', '雪山'}
+    assert panel.popup.tags.chips['雪山'].text() == '风景 › 山川 › 雪山'
     panel.search.setText('尚未提交的文件名')
     panel.present_schema({'自然': {}, '山川': {'parent': '自然'}, '雪山': {'parent': '山川'}})
     assert panel.search.text() == '尚未提交的文件名'
     assert '自然 › 山川 › 雪山' in ' '.join(panel.summary.chips)
+
+
+def test_filter_tag_body_selects_but_arrow_opens_below_its_row_without_filtering(panel):
+    schema = {f'{n:02d}标签': {} for n in range(18)}
+    schema['01子标签'] = {'parent': '01标签'}
+    panel.present_schema(schema)
+    panel.popup.show_for(panel.filter_button)
+    QTest.qWait(40)
+    choices = panel.popup.tags
+    changes = QSignalSpy(panel.filtersChanged)
+    origin = choices.chips['01标签'].geometry().topLeft()
+    QTest.mouseClick(choices.chips['01标签'].arrow, Qt.LeftButton)
+    QTest.qWait(40)
+    parent, branch = choices.chips['01标签'], choices.panels['01标签']
+    assert parent.geometry().topLeft() == origin and changes.count() == 0
+    assert panel.filters.tags == () and '01子标签' in choices.chips
+    siblings = [chip for chip in choices.chips.values() if chip.parentWidget() is parent.parentWidget()]
+    assert branch.y() > max(chip.geometry().bottom() for chip in siblings if chip.y() == parent.y())
+    assert min(chip.y() for chip in siblings if chip.y() > parent.y()) > branch.geometry().bottom()
+    child = choices.chips['01子标签']
+    assert child.mapTo(panel.popup.scroll.viewport(), child.rect().bottomLeft()).y() < panel.popup.scroll.viewport().height()
+    QTest.mouseClick(parent, Qt.LeftButton)
+    assert panel.filters.tags == ('01标签',) and choices.expanded == {'01标签'} and changes.count() == 1
+    QTest.mouseClick(choices.chips['01标签'], Qt.LeftButton)
+    assert panel.filters.tags == () and choices.expanded == {'01标签'} and changes.count() == 2
+    QTest.mouseClick(choices.chips['01子标签'], Qt.LeftButton)
+    assert panel.filters.tags == ('01子标签',) and choices.chips['01标签'].property('implicitSelected')
+    QTest.mouseClick(choices.chips['01标签'].arrow, Qt.LeftButton)
+    assert panel.filters.tags == ('01子标签',) and not choices.expanded and changes.count() == 3
+
+
+def test_filter_nested_expansion_search_and_keyboard_preserve_conditions(panel):
+    panel.present_schema({'风景': {}, '山川': {'parent': '风景'}, '雪山': {'parent': '山川'},
+                          '摄影': {}, '设备': {'parent': '摄影'}})
+    panel.change(tags=('雪山',), score=7, score_mode='gte', tag_mode='or', favorite='yes')
+    before = panel.filters
+    changes = QSignalSpy(panel.filtersChanged)
+    panel.popup.show_for(panel.filter_button)
+    choices = panel.popup.tags
+    choices.chips['风景'].arrow.setFocus()
+    QTest.keyClick(choices.chips['风景'].arrow, Qt.Key_Return)
+    QTest.qWait(30)
+    assert choices.chips['风景'].arrow.hasFocus()
+    QTest.keyClick(choices.chips['山川'].arrow, Qt.Key_Space)
+    choices.chips['摄影'].arrow.click()
+    QTest.qWait(30)
+    assert choices.panels['风景'].isAncestorOf(choices.panels['山川'])
+    assert set(choices.expanded) == {'风景', '山川', '摄影'}
+    assert choices.chips['雪山'].isChecked() and panel.filters == before and changes.count() == 0
+    for width in (300, 380):
+        panel.popup.resize(width, 600)
+        QTest.qWait(30)
+        for chip in choices.chips.values():
+            assert chip.geometry().right() < chip.parentWidget().width()
+    expanded = set(choices.expanded)
+    panel.popup.search.setText('雪山')
+    assert set(choices.chips) == {'雪山'} and not choices.panels
+    assert choices.chips['雪山'].text() == '风景 › 山川 › 雪山'
+    panel.popup.search.setText('风景')
+    assert choices.chips['风景'].arrow is None
+    panel.popup.search.clear()
+    assert choices.expanded == expanded and '雪山' in choices.chips and '设备' in choices.chips
+    assert panel.filters == before and changes.count() == 0
+    panel.popup.hide()
+    panel.popup.show_for(panel.filter_button)
+    assert choices.expanded == expanded and panel.filters == before
 
 
 def test_grid_hides_the_scrollbar_until_content_actually_overflows(panel):

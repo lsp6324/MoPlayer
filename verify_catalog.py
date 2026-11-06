@@ -109,6 +109,19 @@ def run(destination):
         panel.popup.search.setText('夏日')
         check('浮窗支持标签搜索', len(panel.popup.tags.chips) == 1)
         panel.popup.search.clear()
+        filter_choices = panel.popup.tags
+        filter_before = panel.filters
+        anchor_position = filter_choices.chips['风景'].pos()
+        QTest.mouseClick(filter_choices.chips['风景'].arrow, Qt.LeftButton)
+        QTest.qWait(60)
+        filter_anchor, filter_branch = filter_choices.chips['风景'], filter_choices.panels['风景']
+        filter_peers = [chip for chip in filter_choices.chips.values()
+                        if chip.parentWidget() is filter_anchor.parentWidget() and chip.y() == filter_anchor.y()]
+        check('库筛选箭头在所在行下展开且不改变条件', panel.filters == filter_before
+              and filter_anchor.pos() == anchor_position and '山川' in filter_choices.chips
+              and filter_branch.y() > max(chip.geometry().bottom() for chip in filter_peers)
+              and filter_choices.chips['山川'].mapTo(panel.popup.scroll.viewport(), QPoint(0, 28)).y() < panel.popup.scroll.viewport().height())
+        panel.popup.grab().save(str(output / 'catalog-filter-expanded-dark.png'))
         panel.popup.number.setText('7')
         check('精确评分匹配真实结果', wait(lambda: not controller.catalog_pending) and controller.catalog_ids == [ids[4]])
         check('评分输入框显示当前分数', panel.popup.number.text() == '7' and panel.popup.number.width() >= 20)
@@ -119,6 +132,14 @@ def run(destination):
         check('重置评分完成', wait(lambda: not controller.catalog_pending))
         panel.popup.tags.chips['风景'].click()
         check('父标签包含子标签', wait(lambda: not controller.catalog_pending) and set(controller.catalog_ids) == {ids[0],ids[5]})
+        QTest.mouseClick(filter_choices.chips['山川'], Qt.LeftButton)
+        check('行下子标签可独立筛选并保留父级条件', wait(lambda: not controller.catalog_pending)
+              and panel.filters.tags == ('风景', '山川') and set(controller.catalog_ids) == {ids[0],ids[5]})
+        QTest.mouseClick(filter_choices.chips['风景'], Qt.LeftButton)
+        check('取消父标签可只保留子标签筛选', wait(lambda: not controller.catalog_pending)
+              and panel.filters.tags == ('山川',) and set(controller.catalog_ids) == {ids[0],ids[5]})
+        QTest.mouseClick(filter_choices.chips['山川'], Qt.LeftButton)
+        QTest.mouseClick(filter_choices.chips['风景'], Qt.LeftButton)
         panel.popup.tags.chips['摄影'].click()
         check('多选标签按交集匹配', wait(lambda: not controller.catalog_pending) and len(controller.catalog_ids) == 2)
         panel.popup.tag_mode['or'].click()
@@ -278,8 +299,10 @@ def run(destination):
         screenshot('catalog-unarchived.png')
         panel.popup.search.clear()
         panel.change(tags=('风景',))
-        check('筛选项直接显示父子路径', wait(lambda: not controller.catalog_pending)
+        panel.popup.search.setText('山川')
+        check('搜索筛选项直接显示父子路径', wait(lambda: not controller.catalog_pending)
               and '风景 › 山川' in panel.popup.tags.chips['山川'].text())
+        panel.popup.search.clear()
         target = next(row['id'] for row in controller.list_rows('catalog')
                       if '山川' in row['tag_names'] and not row.get('unavailable'))
         selection = controller.catalog_selection(target)

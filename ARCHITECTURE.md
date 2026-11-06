@@ -15,7 +15,8 @@
 | application/operations.py | 异步操作完成结果，以及提交草稿后继续用户动作的协调。 |
 | application/tag_drafts.py | 按视频 ID 管理标签基线、工作草稿、重命名映射和正在提交的值；成功才确认基线并将后续重命名重基到已提交名称，失败及恢复保留草稿。 |
 | application/tag_labels.py | 纯父子路径和展示标签推导；卡片、标题、筛选及管理搜索统一使用“父 › 子”表示，祖先与后代重复选择不重复展示。持久选择仍使用原标签名。 |
-| tag_editor.py | 标签草稿的选择、搜索、拖放及展开视图；胶囊本体与独立箭头分别表达选择和展开。FlowLayout 统一测量与放置胶囊行及其下方子区，递归支持嵌套；展开集合与滚动只属于视图，不改变持久选择。TagPanel 经 PlayerView 接收按钮键盘意图，避免落入全局播放快捷键。 |
+| tag_editor.py | 标签草稿的选择、搜索、拖放及展开视图；胶囊本体与独立箭头分别表达选择和展开。展开集合与滚动只属于视图，不改变持久选择。TagPanel 经 PlayerView 接收按钮键盘意图，避免落入全局播放快捷键。 |
+| tag_flow.py | 仅依赖 Qt 的共享 FlowLayout，统一测量与放置胶囊行及其下方子区，递归支持嵌套；标签管理和库筛选共用，不持有选择、草稿、筛选规则或业务引用。 |
 | application/file_tasks.py | 文件操作的准入、开始/结束生命周期、完成结果和可恢复失败分类。 |
 | application/cleanup.py | 独立旧入口清理的准入、节流、合并运行与保护路径快照，不拥有媒体生命周期。 |
 | infrastructure/archive_cleanup.py | 重试 cleanup_jobs；保护播放源及已重新成为有效路径的入口，校验身份/内容状态，失败持久记账，不回写分类元数据。 |
@@ -34,7 +35,7 @@
 | application/library.py | 浏览快照、视频元数据、最近/收藏记录，以及扫描、取消、延迟导航和按稳定 ID 准备删除上下文；不拥有当前播放。 |
 | application/catalog.py | 不依赖 Qt/SQL/磁盘的库筛选值、标签祖先匹配、自然及首次入库日期排序，以及固定 ID 顺序的集合播放上下文；仅以 in_library 判断库成员，不以 archived 判断，进度与路径仍按现有资料库解析。 |
 | infrastructure/library_preferences.py | 原子保存 data/library.json 中的筛选排序、列表/网格视图与当前页面，校验损坏输入。启动只采用筛选与视图，页面字段不决定打开哪一页；恢复不播放、不扫描。 |
-| catalog_panel.py / catalog_filter_popup.py / catalog_delegate.py / media_badges.py | 第一者持有工具栏、结果数、排序、列表/网格切换、已选条件摘要和库行视图，搜索合并计时也在此；第二者是筛选浮窗，只发出筛选值、重置与关闭意图，不查询存储或读取媒体；第三者按当前排布绘制已准备的库行，列表尺寸复用 library_views 的 THUMB_ROW / THUMB_VIEW / THUMB_RADIUS，与文件、最近、收藏页保持相同卡片比例；第四者向库行及 MediaHeader 提供相同胶囊和收藏绘制，评分复用 heart_rating。 |
+| catalog_panel.py / catalog_filter_popup.py / catalog_delegate.py / media_badges.py | 第一者持有工具栏、结果数、排序、列表/网格切换、已选条件摘要和库行视图，搜索合并计时也在此；第二者是筛选浮窗，只发出筛选值、重置与关闭意图，不查询存储或读取媒体；其 FilterTagChoices 持有独立的展开集合，胶囊选择与箭头展开分离，使用 tag_flow 行下布局，搜索结果按完整路径平铺，展开只调整布局和滚动，不发筛选值；已选摘要仍使用平铺 TagChoices。第三者按当前排布绘制已准备的库行，列表尺寸复用 library_views 的 THUMB_ROW / THUMB_VIEW / THUMB_RADIUS，与文件、最近、收藏页保持相同卡片比例；第四者向库行及 MediaHeader 提供相同胶囊和收藏绘制，评分复用 heart_rating。 |
 | infrastructure/library_repository.py | 面向应用和 UI 的视频、收藏、进度、目录及任务查询/写入；集中使用 SQL。所有视频行经 presented() 统一带出 kind、原始 tag_names 和层级 tag_labels，使最近／收藏加载不会让库丢展示字段；原始名用于匹配，完整路径用于展示。 |
 | infrastructure/library_scanner.py | 将既有扫描及 Snapshot 导航规则适配为资料库应用接口；统一拖放候选校验，执行前重新检查文件并固定视频身份，单视频扫描父目录。格式沿用 core.EXTENSIONS，不改变扫描、身份或播放顺序。 |
 | infrastructure/library_watch.py | Qt 目录监听、400ms 通知合并、失败/忙碌重试；监听扫描内目录及根的最近现存父级，2 秒探测根和未成功监听的目录以补偿遗漏。只请求控制器刷新，不读控件或拥有浏览/播放快照。关闭时停止监听和调度。 |
