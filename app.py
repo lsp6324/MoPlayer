@@ -89,17 +89,19 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
             available=lambda: not self.busy, current_video=lambda: self.current, refresh=self._refresh_file_records,
             validate=self.rename_service.validate)
         self.archive_configuration = ArchiveConfiguration(self.file_tasks, self.catalog,
-            lambda root, folders: self.archive_configuration_service.submit(root, folders),
+            lambda root, folders, **options: self.archive_configuration_service.submit(root, folders, **options),
             available=lambda: not self.busy, refresh=self._refresh_file_records,
-            restore_names=lambda: self.archive_configuration_service.restore_original_names(), notify=self._file_notice)
+            restore_names=lambda: self.archive_configuration_service.restore_original_names(), notify=self._file_notice,
+            archive_enabled=lambda: self.storage.enabled)
         self.classification = Classification(self.file_tasks, self.catalog,
-            lambda vid, score, tags, schema, **options: self.tag_migration.submit(vid, score, tags, schema, defer_cleanup=True, **options),
+            lambda vid, score, tags, schema, **options: self.tag_migration.submit(vid, score, tags, schema, defer_cleanup=True, metadata_only=not self.storage.enabled, **options),
             lambda vid, score, tags: self.archiver.submit(vid, score, tags, defer_cleanup=True),
             available=lambda: not self.busy, ensure_storage=self.ensure_storage,
             refresh=self._refresh_file_records, notify=self._file_notice,
             archive_locations=lambda vid: self.catalog.archive_locations(vid, self.storage.root),
             tags_renamed=self.library_controller.rename_catalog_tags,
             favorite_folders=lambda: self.storage.folders.favorite,
+            archive_enabled=lambda: self.storage.enabled,
             submit_favorite=lambda vid, score, tags, value: self.archiver.submit(vid, score, tags, favorite=value, defer_cleanup=True))
         self.deletion = Deletion(self.file_tasks, self.library_controller, lambda vid: self.deleter.submit(vid),
             available=lambda: not self.busy, playback_target=self._playback_target,
@@ -183,9 +185,12 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
             self.message('请先等待文件任务完成，或通过“更多 → 文件任务”恢复，再设置存储路径。')  # 保留原任务位置。
             return False  # 不切换正在使用的归档器。
         return ArchiveSettingsDialog(self, root=self.storage.root, folders=self.storage.folders,
-            error=self.storage.error, apply=self.archive_configuration.apply, first_run=first_run).exec() == QDialog.Accepted  # 取消不保存路径。
+            error=self.storage.error, apply=self.archive_configuration.apply, first_run=first_run,
+            enabled=self.storage.enabled).exec() == QDialog.Accepted  # 取消不保存路径。
 
     def initialize_storage(self):  # 默认位置无需引导；损坏配置仍提示修复。
+        if not self.storage.enabled:
+            return
         if self.storage.root is not None:  # 已配置用户不被重复打扰。
             return  # 不扫描或移动任何视频。
         if self.busy:  # 旧版已提交任务的恢复先完成。

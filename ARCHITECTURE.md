@@ -32,9 +32,9 @@
 | application/renaming.py | 固定视频 ID 和新名称，执行只读预检、文件任务准入及实际结果刷新；失败直接交付原位编辑器。 |
 | infrastructure/file_renaming.py | 校验并改名全部有效登记入口；冻结 jobs/action=rename 计划，按文件身份恢复，事务提交 name、original_name 和路径，不改变目录及分类状态。 |
 | application/archive_folders.py | 不可变的目录依据，新归档顺序为收藏 → 评分 → 标签；关闭某项只省略目录，不删除元数据。favorite_first 随任务冻结，缺少该字段的旧批次恢复时保留评分优先，旧偏好默认采用新顺序。 |
-| application/archive_configuration.py | 归档设置提交、文件任务准入及全库结果刷新，不访问具体文件、设置文件或 Qt。 |
-| infrastructure/archive_configuration.py | 用 archive_setting_jobs 冻结新根目录、目录依据、标签结构和全部已归档视频，重放既有 Archiver 子任务；所有视频完成后原子保存配置并切换有效规则。 |
-| archive_settings_dialog.py / storage_settings.py | 前者只展示归档设置草稿并调用应用端口；后者读取旧配置默认值、原子保存 root 与 archive_folders 并校验根目录能力，不再持有 UI 或窗口业务引用。 |
+| application/archive_configuration.py | 归档开关／目录设置提交、文件任务准入及结果刷新；关闭走不释放媒体的策略，不访问具体文件、设置文件或 Qt。 |
+| infrastructure/archive_configuration.py | 用 archive_setting_jobs 冻结新根目录、目录依据、标签结构和全部已归档视频，重放既有 Archiver 子任务；所有视频完成后原子保存配置并切换有效规则。关闭直接原子保存设置，不检查卷、不创建迁移任务；禁用期间不新建自动原名恢复批次，旧冻结任务仍按原意图恢复。 |
+| archive_settings_dialog.py / storage_settings.py | 前者按总开关、目录、条件及示例分组展示设置草稿，禁用时保留并置灰从属字段，只调用应用端口；后者读取旧配置默认值、原子保存 root、archive_folders、archive_enabled 并校验根目录能力，不再持有 UI 或窗口业务引用。 |
 | application/deletion.py | 稳定 ID 删除目标、异步目录准备、删除屏障清理及删除后的可取消导航。delete_files=false 直接调用注入的 forget，不依赖文件仍可定位；删除当前项后仍按固定播放上下文继续，非当前项不释放媒体。仅删记录完成后刷新文件页，保留文件可重新作为未标记记录列出。 |
 | application/recovery.py | 固定待恢复记录，保持服务恢复顺序，根据实际数据库记录刷新/排除视频；成功后对账草稿。 |
 | application/file_results.py | FileNotice、播放上下文快照与完成交付协议；状态刷新结束后才完成依赖操作，刷新异常不会误放行换片。 |
@@ -48,7 +48,7 @@
 | infrastructure/library_watch.py | Qt 目录监听、400ms 通知合并、失败/忙碌重试；监听扫描内目录及根的最近现存父级，2 秒探测根和未成功监听的目录以补偿遗漏。只请求控制器刷新，不读控件或拥有浏览/播放快照。关闭时停止监听和调度。 |
 | infrastructure/thumbnails.py | 缩略图磁盘缓存、FFmpeg 子进程和文件任务期间的暂停/删除屏障，不访问控件。 |
 | infrastructure/image_loader.py | QImageReader 读取静态图片：应用 EXIF 方向、按长边降采样；由调用方放到工作线程，不接触控件、播放状态或数据库。 |
-| ui.py / floating_surface.py / hover_panel.py | UI 基础图形、透明工具窗、共享悬停与焦点规则。 |
+| ui.py / floating_surface.py / hover_panel.py | UI 基础图形、接收主题色的无业务开关控件、透明工具窗、共享悬停与焦点规则。 |
 | accent_colors.py / color_picker.py | 前者纯 RGB 校验、预设及可读颜色角色推导；后者独立预设色块、色相/饱和明度色板和 RGB 控件，只发出颜色意图，不访问窗口、偏好或播放器。 |
 | appearance.BackgroundCanvas / background_region.py | 画布拥有背景像素、强度与全窗裁切；BackgroundRegion 只通过注入的绘制端口呈现同一画布局部，供原生视频宿主上方的空闲区域使用，不查询存储或媒体。背景变更刷新主题透明角色，尺寸变更仅使空闲区重绘，不移动/重建视频宿主。 |
 | appearance.py / appearance_dialog.py / theme.py | Appearance 原子保存背景、主题和强调色；AppearanceDialog 拥有编辑草稿、预览、保存失败保留及取消还原，通过显式 UI 回调连接；theme 统一推导普通/全屏强调色，不在各视图另写固定强调色。 |
@@ -132,7 +132,7 @@ GitHub workflow `.github/workflows/architecture.yml` 在 push 和 pull request �
 
 文件工作流协议测试一并纳入持续检查，覆盖冻结输入、部分失败、取消、媒体恢复失败、状态更新失败、普通归档恢复刷新，以及删除后继续/停止。窗口禁止直接提交/恢复服务或运行 FileTasks，已移除的流程入口不保留转发别名。
 
-归档目录设置默认沿用标签、评分启用且收藏关闭。保存设置立即整理全部已归档视频，未归档视频不移动；所有目录依据关闭时直接使用归档根目录。文件名保持已记录原名，标签、评分、收藏只影响元数据、目录和展示。目录依据不影响评分、标签、收藏元数据的有效性。
+归档目录设置默认沿用标签、评分启用且收藏关闭。启用归档并保存设置才整理全部已归档视频，未归档视频不移动；关闭总开关则标签／评分／收藏只写元数据，所有现有路径保留；所有目录依据关闭时直接使用归档根目录。文件名保持已记录原名，标签、评分、收藏只影响元数据、目录和展示。目录依据不影响评分、标签、收藏元数据的有效性。
 
 升级时，归档配置应用流程查找有可靠原名记录的旧归档视频，基础设施在 archive_setting_jobs 中记录原名恢复批次，复用原有安全归档子任务，在现有目录内恢复原名，不修改归档偏好。没有原名记录的保留当前名；同名不同内容追加稳定标识而不覆盖。旧 jobs、标签、设置和删除任务先按原日志恢复，然后在同一媒体释放周期内恢复原名，统一刷新实际受影响视频；不得按新命名规则篡改旧日志目标。
 

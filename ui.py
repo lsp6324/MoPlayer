@@ -1,6 +1,33 @@
 from PySide6.QtCore import Qt, QSize, QPointF, QRectF
 from PySide6.QtGui import QIcon, QPixmap, QPainter, QPen, QColor, QPolygonF
-from PySide6.QtWidgets import QLabel, QPushButton, QSizePolicy
+from PySide6.QtWidgets import QLabel, QPushButton, QSizePolicy, QAbstractButton
+
+
+class ToggleSwitch(QAbstractButton):
+    """Keyboard-accessible switch receiving the view's theme colors."""
+    def __init__(self, name, *, accent, track, parent=None):
+        super().__init__(parent)
+        self.accent_color, self.track_color = QColor(accent), QColor(track)
+        self.setCheckable(True)
+        self.setFocusPolicy(Qt.StrongFocus)
+        self.setAccessibleName(name)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setFixedSize(48, 28)
+        self.toggled.connect(self.update)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setOpacity(1 if self.isEnabled() else .45)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(self.accent_color if self.isChecked() else self.track_color)
+        painter.drawRoundedRect(QRectF(2, 3, 44, 22), 11, 11)
+        painter.setBrush(QColor('#ffffff'))
+        painter.drawEllipse(QRectF(26 if self.isChecked() else 4, 5, 18, 18))
+        if self.hasFocus():
+            painter.setBrush(Qt.NoBrush)
+            painter.setPen(QPen(self.accent_color, 1))
+            painter.drawRoundedRect(QRectF(.5, .5, 47, 27), 13, 13)
 
 def icon(name, color='#cbd2dd', size=24):  # 绘制统一的圆角细线图标。
     pixmap = QPixmap(size * 2, size * 2)  # 用双倍像素保证高 DPI 下清晰。

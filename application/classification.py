@@ -10,7 +10,9 @@ class Classification:
     def __init__(self, tasks, repository, submit_tags, submit_archive, *,
                  available, ensure_storage, refresh, notify,
                  favorite_folders=lambda: False, submit_favorite=None,
-                 archive_locations=lambda video_id: (), tags_renamed=lambda renames: None):
+                 archive_locations=lambda video_id: (), tags_renamed=lambda renames: None,
+                 archive_enabled=lambda: True):
+        self.archive_enabled = archive_enabled
         self.tags_renamed = tags_renamed
         self.archive_locations = archive_locations
         self.favorite_folders, self.submit_favorite = favorite_folders, submit_favorite
@@ -21,7 +23,7 @@ class Classification:
 
     def apply_tags(self, video_id, tags, schema, prompt_score=True, *, renames=None):
         tags, schema, renames = deepcopy(tags), deepcopy(schema), deepcopy(renames or {})
-        if not self.available() or not self.ensure_storage() or not self.available():
+        if not self.available() or (self.archive_enabled() and not self.ensure_storage()) or not self.available():
             return Operation.cancelled()
         video = self.repository.video(video_id)
         if video is None:
@@ -46,6 +48,11 @@ class Classification:
 
     def archive(self, video_id, score, tags, *, favorite=None):
         tags = deepcopy(tags)
+        if not self.archive_enabled():
+            if not self.available() or self.repository.pending_tasks() or self.repository.video(video_id) is None:
+                return Operation.cancelled()
+            return self._save_metadata(video_id, FileAction.ARCHIVE,
+                lambda: self.repository.set_classification(video_id, score, tags, favorite))
         if not self.available() or not self.ensure_storage() or not self.available():
             return Operation.cancelled()
         if self.repository.video(video_id) is None:
@@ -101,7 +108,7 @@ class Classification:
             return Operation.cancelled()
         if video['score'] == score:
             return Operation.success(video_id)
-        if video['archived']:
+        if video['archived'] and self.archive_enabled():
             return self.archive(video_id, score, json.loads(video['tags']))
         return self._save_metadata(video_id, FileAction.SCORE,
                                    lambda: self.repository.set_score(video_id, score))
@@ -128,7 +135,7 @@ class Classification:
         value = int(bool(value))
         if video['star'] == value:
             return Operation.success(video_id)
-        if video['archived'] and self.favorite_folders():
+        if video['archived'] and self.archive_enabled() and self.favorite_folders():
             return self.archive(video_id, video['score'], json.loads(video['tags']), favorite=value)
         return self._save_metadata(video_id, FileAction.FAVORITE,
                                    lambda: self.repository.set_favorite(video_id, value))

@@ -1688,3 +1688,69 @@ def test_context_tag_rename_modal_finishes_before_the_closed_menu_saves(window, 
     assert json.loads(window.catalog.video(video_id)['tags']) == [expected]
     assert expected in window.catalog.tag_values(video_id).schema
     assert not window.fail.called
+
+
+def test_archive_settings_switch_disables_details_preserves_draft_and_cancel(window):
+    from archive_settings_dialog import ArchiveSettingsDialog
+    from PySide6.QtWidgets import QDialogButtonBox
+    submit=Mock(return_value=Operation.success())
+    dialog=ArchiveSettingsDialog(window,root=window.storage.root,folders=window.storage.folders,error='',apply=submit)
+    dialog.show();QApplication.processEvents()
+    path=dialog.path.text()
+    dialog.favorite.setChecked(True)
+    QTest.keyClick(dialog.enable_archive,Qt.Key_Space)
+    assert not dialog.enable_archive.isChecked() and not dialog.path.isEnabled() and not dialog.tags.isEnabled()
+    assert dialog.path.text()==path and dialog.favorite.isChecked()
+    assert dialog.buttons.button(QDialogButtonBox.Save).text()=='保存'
+    dialog.enable_archive.click()
+    assert dialog.path.isEnabled() and dialog.favorite.isChecked()
+    dialog.reject()
+    assert not submit.called and window.storage.enabled
+
+
+def test_disabled_archiving_keeps_tags_rating_favorite_and_all_links_in_place(window,tmp_path):
+    from application.archive_folders import ArchiveFolders
+    source=tmp_path/'tag-only.mp4';source.write_bytes(b'tag only file')
+    video_id=window.store.register(source)
+    archived=window.current
+    window.archiver.submit(archived,8,['existing'])
+    before=window.store.query('SELECT * FROM paths ORDER BY path')
+    window.fail=Mock()
+    disabling=window.archive_configuration.apply('invalid-inactive-path',ArchiveFolders(True,True,True),enabled=False)
+    assert context_wait(lambda:not disabling.pending) and disabling.outcome.succeeded
+    assert not window.storage.enabled
+    window.classification.ensure_storage=Mock(side_effect=AssertionError('Must not ask for archive storage'))
+    window.archiver.submit=Mock(side_effect=AssertionError('Must not move files'))
+    for vid in (video_id,archived):
+        tags=window.classification.apply_tags(vid,['existing'],list(window.store.tag_layout().values()),prompt_score=False)
+        assert context_wait(lambda:not tags.pending) and tags.outcome.succeeded
+        assert window.classification.rating(vid,0).outcome.succeeded
+        assert window.classification.favorite(vid,True).outcome.succeeded
+        row=window.catalog.video(vid)
+        assert row['score']==0 and row['star']==1 and row['tags']=='["existing"]' and row['in_library']
+    assert not window.store.video(video_id)['archived'] and window.store.video(archived)['archived']
+    assert window.store.query('SELECT * FROM paths ORDER BY path')==before
+    assert source.read_bytes()==b'tag only file' and not window.archiver.submit.called and not window.fail.called
+
+
+def test_disabled_archive_save_keeps_current_media_loaded(window):
+    from application.archive_folders import ArchiveFolders
+    window.play_path=Mock()
+    window.clear_player=Mock()
+    operation=window.archive_configuration.apply('',ArchiveFolders(),enabled=False)
+    assert context_wait(lambda:not operation.pending) and operation.outcome.succeeded
+    assert not window.play_path.called and not window.clear_player.called
+
+
+def test_disabled_explicit_archive_command_saves_metadata_without_moving(window):
+    video_id=window.current
+    window.storage.save(window.storage.root,enabled=False)
+    before=window.store.query('SELECT * FROM paths WHERE id=?',(video_id,))
+    window.archiver.submit=Mock(side_effect=AssertionError('No file archive'))
+    outcome=window.classification.archive(video_id,0,['existing'],favorite=True).outcome
+    assert outcome.succeeded
+    video=window.catalog.video(video_id)
+    assert video['score']==0 and video['star']==1 and video['tags']=='["existing"]'
+    assert video['in_library'] and not video['archived']
+    assert window.store.query('SELECT * FROM paths WHERE id=?',(video_id,))==before
+    assert not window.archiver.submit.called

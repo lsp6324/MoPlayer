@@ -9,7 +9,7 @@ from pathlib import Path
 
 from application.tag_drafts import TagValues
 from application.tag_labels import tag_labels
-from core import media_kind
+from core import media_kind, validate_tag, canonical_tags
 
 
 class LibraryRepository:
@@ -66,6 +66,19 @@ class LibraryRepository:
 
     def set_score(self, video_id, score):
         self.store.execute('UPDATE videos SET score=? WHERE id=?', (score, video_id))
+
+    def set_classification(self, video_id, score, tags, favorite=None):
+        if score is not None and (type(score) is not int or not 0 <= score <= 10):
+            raise ValueError('评分必须为 0～10 的整数或未评分')
+        tags = [validate_tag(name) for name in tags]
+        if len({name.casefold() for name in tags}) != len(set(tags)):
+            raise ValueError('标签不能仅大小写不同')
+        tags = canonical_tags(tags, self.store.tag_layout())
+        with self.store.lock, self.store.db:
+            self.store.db.execute('UPDATE videos SET score=?,tags=?,star=COALESCE(?,star) WHERE id=?',
+                (score, json.dumps(tags, ensure_ascii=False), None if favorite is None else int(bool(favorite)), video_id))
+            for name in tags:
+                self.store.db.execute('INSERT OR IGNORE INTO tags VALUES(?)', (name,))
 
     def mark_played(self, video_id):
         self.store.execute('UPDATE videos SET played=? WHERE id=?', (time.time(), video_id))

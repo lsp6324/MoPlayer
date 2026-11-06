@@ -277,3 +277,58 @@ def test_settings_and_tag_submission_can_finish_concurrently_without_lock_invers
     assert not failures
     assert store.resolve(vid).parent==tmp_path/'new'/'未收藏'
     assert store.video(vid)['score']==9
+
+
+def test_disabling_retains_all_paths_and_needs_no_available_archive_volume(tmp_path, monkeypatch):
+    from unittest.mock import Mock
+    store,settings,archive,service=setup(tmp_path)
+    vid=video(store,tmp_path/'source.mp4',archiver=archive)
+    paths=store.query('SELECT * FROM paths ORDER BY path')
+    before=store.video(vid)
+    root=settings.root
+    probe=Mock(side_effect=AssertionError('Disable must not access storage'))
+    monkeypatch.setattr('infrastructure.archive_configuration.validate_storage_path',probe)
+    assert service.submit('unavailable-relative-input',ArchiveFolders(False,False,True),enabled=False)==[]
+    assert not probe.called and not settings.enabled and not StorageSettings(store.directory).enabled
+    assert settings.root==root and archive.root==root
+    assert store.query('SELECT * FROM paths ORDER BY path')==paths and store.video(vid)==before
+    assert not store.query('SELECT * FROM archive_setting_jobs')
+
+
+def test_disable_write_failure_and_pending_job_do_not_change_effective_switch(tmp_path,monkeypatch):
+    from unittest.mock import Mock
+    store,settings,archive,service=setup(tmp_path)
+    before=settings.file.read_bytes()
+    monkeypatch.setattr('storage_settings.os.replace',Mock(side_effect=OSError('disk full')))
+    with pytest.raises(OSError): service.submit(settings.root,settings.folders,enabled=False)
+    assert settings.enabled and settings.file.read_bytes()==before
+    store.execute('INSERT INTO archive_setting_jobs VALUES(?,?,?,?,?)',('pending','planned','{}',None,1))
+    with pytest.raises(RuntimeError): service.submit(settings.root,settings.folders,enabled=False)
+    assert settings.enabled and settings.file.read_bytes()==before
+
+
+def test_reenable_migrates_only_archived_and_restores_frozen_enabled_after_crash(tmp_path):
+    store,settings,archive,service=setup(tmp_path)
+    a=video(store,tmp_path/'a.mp4',archiver=archive)
+    b=video(store,tmp_path/'b.mp4',archived=False)
+    service.submit(settings.root,settings.folders,enabled=False)
+    store.execute('UPDATE videos SET tags=?,score=4,star=1 WHERE id=?',('["标签甲"]',b))
+    target=tmp_path/'new-archive'
+    service.fault=lambda state: (_ for _ in ()).throw(OSError('checkpoint')) if state=='migrating' else None
+    with pytest.raises(OSError): service.submit(target,ArchiveFolders(False,True,True))
+    assert not settings.enabled and store.resolve(b)==tmp_path/'b.mp4'
+    assert json.loads(store.query('SELECT plan FROM archive_setting_jobs WHERE state<>"done"')[0]['plan'])['archive_enabled']
+    restarted=ArchiveConfiguration(store,StorageSettings(store.directory),Archiver(store,archive.root))
+    assert restarted.recover()==[] and restarted.settings.enabled
+    assert store.resolve(a).is_relative_to(target) and store.resolve(b)==tmp_path/'b.mp4'
+
+
+def test_disabled_archive_does_not_create_automatic_original_name_restoration(tmp_path):
+    store,settings,archive,service=setup(tmp_path)
+    vid=video(store,tmp_path/'source.mp4',archiver=archive)
+    service.submit(settings.root,settings.folders,enabled=False)
+    store.execute('UPDATE videos SET original_name=? WHERE id=?',('old-source-name.mp4',vid))
+    before=store.query('SELECT * FROM paths ORDER BY path')
+    assert service.restore_original_names()==[]
+    assert store.query('SELECT * FROM paths ORDER BY path')==before
+    assert not store.query('SELECT * FROM archive_setting_jobs')

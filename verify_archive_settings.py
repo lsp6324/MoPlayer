@@ -41,7 +41,8 @@ def run(destination):
         return False
     def dialog():
         view=ArchiveSettingsDialog(window,root=window.storage.root,folders=window.storage.folders,
-                                   error=window.storage.error,apply=window.archive_configuration.apply)
+                                   error=window.storage.error,apply=window.archive_configuration.apply,
+                                   enabled=window.storage.enabled)
         dialogs.append(view)
         view.show()
         application.processEvents()
@@ -175,6 +176,56 @@ def run(destination):
               and not window.has_pending_file_tasks() and window.storage.folders==ArchiveFolders(False,True,True))
         check('恢复后所有已归档视频匹配新目录',window.store.resolve(a).parent==root/'未收藏'/'6分'
               and window.store.resolve(b).parent==root/'未收藏'/'未评分')
+        from theme import apply_theme
+        apply_theme(window,'light')
+        enabled_view=dialog()
+        check('归档开关位于路径与分类条件上方',enabled_view.enable_archive.mapTo(enabled_view,enabled_view.enable_archive.rect().center()).y()
+              < enabled_view.path.mapTo(enabled_view,enabled_view.path.rect().center()).y()
+              < enabled_view.favorite.mapTo(enabled_view,enabled_view.favorite.rect().center()).y())
+        enabled_view.grab().save(str(output/'archive-enabled-light.png'))
+        enabled_view.enable_archive.click()
+        check('关闭归档使文件夹与分类条件置灰并保留选择',not enabled_view.path.isEnabled()
+              and not enabled_view.favorite.isEnabled() and enabled_view.favorite.isChecked())
+        enabled_view.grab().save(str(output/'archive-disabled-light.png'))
+        paths_before=window.store.query('SELECT * FROM paths ORDER BY path')
+        jobs_before=window.store.query('SELECT * FROM jobs ORDER BY id')
+        bookmark=window.player.get_time()
+        handle=window.player_view.video_handle()
+        save(enabled_view)
+        check('归档开关持久化关闭',not window.storage.enabled and not StorageSettings(window.store.directory).enabled)
+        check('关闭归档时视频继续播放且媒体宿主不变',window.current==a and window.player_view.video_handle()==handle
+              and wait(lambda:window.player.get_time()>bookmark+100))
+        check('关闭归档未改变现有路径与文件任务',window.store.query('SELECT * FROM paths ORDER BY path')==paths_before
+              and window.store.query('SELECT * FROM jobs ORDER BY id')==jobs_before)
+        window.set_rating(a,0)
+        window.classification.favorite(a,True)
+        check('关闭后已归档视频评分收藏只保存标记',not window.busy and window.store.video(a)['score']==0
+              and window.store.video(a)['star']==1 and window.store.resolve(a).parent==root/'未收藏'/'6分')
+        rows=list(window.store.tag_layout().values())
+        renamed=[dict(row,name='主题' if row['name']=='标签甲' else row['name'],
+                      parent='主题' if row.get('parent')=='标签甲' else row.get('parent')) for row in rows]
+        missing=window.store.resolve(c)
+        missing.unlink()
+        tags=window.classification.apply_tags(c,['主题'],renamed,prompt_score=False,renames={'标签甲':'主题'})
+        check('关闭后本地文件缺失仍可保存标签并全库重命名',wait(lambda:not tags.pending) and tags.outcome.succeeded
+              and json.loads(window.store.video(c)['tags'])==['主题'] and '标签甲' not in window.store.tag_layout())
+        check('关闭后标签结构改变保留全部原文件夹入口',window.store.query('SELECT * FROM paths ORDER BY path')==paths_before
+              and window.store.query('SELECT * FROM jobs ORDER BY id')==jobs_before)
+        check('关闭后未归档视频仍独立形成库',window.store.video(c)['in_library'] and not window.store.video(c)['archived'])
+        apply_theme(window,'dark')
+        reopened=dialog()
+        check('重开归档设置恢复关闭状态与分类条件',not reopened.enable_archive.isChecked()
+              and reopened.favorite.isChecked() and not reopened.path.isEnabled())
+        reopened.grab().save(str(output/'archive-disabled-dark.png'))
+        reopened.enable_archive.click()
+        reopened.path.setText(str(output/'重新启用归档'))
+        reopened.grab().save(str(output/'archive-enabled-dark.png'))
+        save(reopened)
+        check('重新启用只整理已归档记录，不触碰缺失的未归档文件',window.storage.enabled
+              and all(window.store.resolve(vid).is_relative_to(window.storage.root) for vid in (a,b))
+              and not window.store.video(c)['archived'] and not missing.exists())
+        check('重新启用按关闭期间的新标记与全局标签结构整理',window.store.resolve(a).parent==window.storage.root/'已收藏'/'0分'
+              and '主题' in window.store.tag_layout())
         report['success']=True
     except Exception:
         report['success']=False
