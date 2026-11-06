@@ -2,10 +2,10 @@
 from dataclasses import dataclass
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal, QPoint, QModelIndex, QPersistentModelIndex, QTimer
+from PySide6.QtCore import Qt, Signal, QPoint, QModelIndex, QPersistentModelIndex, QTimer, QItemSelection, QItemSelectionModel
 from PySide6.QtWidgets import (QFrame, QVBoxLayout, QHBoxLayout, QStackedWidget,
                                QListView, QAbstractItemView, QFileDialog)
-from application.library import LibrarySelection
+from application.library import LibrarySelection, LibrarySelectionGroup
 from library_views import DropList, FolderModel, VideoListModel, VideoDelegate, FOLDER_ROLE, LOCATION_ROLE
 from folder_navigation import FolderNavigation
 from ui import label, button
@@ -15,7 +15,8 @@ from catalog_delegate import CatalogDelegate
 
 @dataclass(frozen=True)
 class _FolderPosition:
-    selected: object
+    selected: tuple
+    current: object
     anchor: object
     offset: int
     scroll: int
@@ -115,6 +116,12 @@ class LibraryView(QFrame):
         self.clear_history_button = button('清空记录', self.historyClearRequested.emit, 'history', 'quiet')
         self.clear_history_button.setToolTip('清空“最近”里的播放记录')
         self.clear_history_button.hide()
+        self.batch_select_button = button('批量选择', self._toggle_batch, 'list', 'quiet')
+        self.batch_select_button.setObjectName('batchSelectButton')
+        self.batch_select_button.setCheckable(True)
+        self.batch_select_button.setToolTip('开启后左键选择多个文件；也支持 Ctrl、Shift 和 Ctrl+A')
+        self.batch_select_button.setAccessibleName('批量选择')
+        layout.addWidget(self.batch_select_button)
         layout.addWidget(self.cancel_button)
         layout.addWidget(self.remove_favorite)
         layout.addWidget(self.clear_history_button)
@@ -166,24 +173,26 @@ class LibraryView(QFrame):
         self.file_count.setVisible(mode == 'files')
         self.remove_favorite.setVisible(mode == 'stars')
         self.clear_history_button.setVisible(mode == 'videos')
+        self.batch_select_button.setVisible(mode == 'files')
         if persist:
             self._remember_preferences()
 
     @staticmethod
     def _sync_view(view, sync):
         model = view.model()
-        selected = model.key(view.currentIndex()) if view.selectionModel().hasSelection() else None
+        selected = tuple(model.key(index) for index in view.selectionModel().selectedIndexes())
+        current = model.key(view.currentIndex())
         anchor = QPersistentModelIndex(view.indexAt(QPoint(1, 1)))
         offset = view.visualRect(anchor).top() if anchor.isValid() else 0
         scroll = view.verticalScrollBar().value()
         sync()
-        if selected is not None:
-            restored = model.index_for_key(selected)
-            if not restored.isValid():
-                view.clearSelection()
-                view.setCurrentIndex(QModelIndex())
-            elif model.key(view.currentIndex()) != model.key(restored):
-                view.setCurrentIndex(restored)
+        surviving = QItemSelection()
+        for key in selected:
+            index = model.index_for_key(key)
+            if index.isValid():
+                surviving.select(index, index)
+        view.selectionModel().select(surviving, QItemSelectionModel.ClearAndSelect)
+        view.selectionModel().setCurrentIndex(model.index_for_key(current), QItemSelectionModel.NoUpdate)
         if anchor.isValid():
             view.scrollTo(QModelIndex(anchor), QAbstractItemView.PositionAtTop)
             view.verticalScrollBar().setValue(view.verticalScrollBar().value() - offset)
@@ -240,7 +249,7 @@ class LibraryView(QFrame):
         view, model = self.files, self.files.model()
         anchor = view.indexAt(QPoint(1, 1))
         self._folder_positions[self.current_folder] = _FolderPosition(
-            model.key(view.currentIndex()) if view.selectionModel().hasSelection() else None,
+            tuple(model.key(index) for index in view.selectionModel().selectedIndexes()), model.key(view.currentIndex()),
             model.key(anchor), view.visualRect(anchor).top() if anchor.isValid() else 0,
             view.verticalScrollBar().value())
 
@@ -260,6 +269,7 @@ class LibraryView(QFrame):
         old_model = self.files.model()
         model = FolderModel(snapshot, folder, self.controller.details, self.files)
         self.files.setModel(model)
+        self.files.selectionModel().selectionChanged.connect(self._selection_changed)
         if old_model is not None:
             old_model.deleteLater()
         self.current_folder = folder
@@ -268,14 +278,20 @@ class LibraryView(QFrame):
         self.files.doItemsLayout()
         position = self._folder_positions.get(folder)
         if position is not None:
-            selected = model.index_for_key(position.selected)
-            self.files.setCurrentIndex(selected)
+            selected = QItemSelection()
+            for key in position.selected:
+                index = model.index_for_key(key)
+                if index.isValid():
+                    selected.select(index, index)
+            self.files.selectionModel().select(selected, QItemSelectionModel.ClearAndSelect)
+            self.files.selectionModel().setCurrentIndex(model.index_for_key(position.current), QItemSelectionModel.NoUpdate)
             anchor = model.index_for_key(position.anchor)
             if anchor.isValid():
                 self.files.scrollTo(anchor, QAbstractItemView.PositionAtTop)
                 self.files.verticalScrollBar().setValue(self.files.verticalScrollBar().value() - position.offset)
             else:
                 self.files.verticalScrollBar().setValue(position.scroll)
+        self._selection_changed()
 
     def _directory_ready(self, outcome):
         if outcome.error:
@@ -295,6 +311,8 @@ class LibraryView(QFrame):
         if folder:
             self.browse_folder(folder)
             return
+        if self.files.batch_mode:
+            return
         vid = index.data(Qt.UserRole)
         if vid:
             self.videoRequested.emit(LibrarySelection(vid, self.controller.browsing, index.data(LOCATION_ROLE)))
@@ -303,16 +321,49 @@ class LibraryView(QFrame):
         index = view.indexAt(point)
         if not index.isValid() or not index.data(Qt.UserRole):
             return
-        view.setCurrentIndex(index)
+        if not view.selectionModel().isSelected(index):
+            view.selectionModel().select(index, QItemSelectionModel.ClearAndSelect)
+        view.selectionModel().setCurrentIndex(index, QItemSelectionModel.NoUpdate)
         video_id = index.data(Qt.UserRole)
         if mode == 'files':
-            selection = LibrarySelection(video_id, self.controller.browsing, index.data(LOCATION_ROLE))
+            selection = self.context_selection()
         elif mode == 'catalog':
             selection = self.controller.catalog_selection(video_id, allow_pending=True)
         else:
             selection = LibrarySelection(video_id)
         if selection is not None:
             self.mediaContextRequested.emit(selection, view.viewport().mapToGlobal(point))
+
+    def _toggle_batch(self, checked):
+        self.files.batch_mode = checked
+        if not checked and self.files.model() is not None:
+            selected = self.files.selectionModel().selectedIndexes()
+            current = self.files.currentIndex()
+            keep = current if current in selected else next(iter(selected), QModelIndex())
+            self.files.selectionModel().select(keep, QItemSelectionModel.ClearAndSelect)
+        self._selection_changed()
+
+    def _selection_changed(self):
+        count = len(self.selected_files())
+        text = '退出批量选择' if self.files.batch_mode else '批量选择'
+        self.batch_select_button.setText(text + (f' · 已选 {count} 项' if self.files.batch_mode or count > 1 else ''))
+
+    def selected_files(self):
+        selection = self.files.selectionModel()
+        indexes = sorted(selection.selectedIndexes(), key=lambda index: index.row()) if selection is not None else ()
+        result, seen = [], set()
+        for index in indexes:
+            video_id = index.data(Qt.UserRole)
+            if video_id and video_id not in seen:
+                seen.add(video_id)
+                result.append(LibrarySelection(video_id, self.controller.browsing, index.data(LOCATION_ROLE)))
+        return tuple(result)
+
+    def context_selection(self):
+        selected = self.selected_files() if self.mode == 'files' else ()
+        if len(selected) > 1:
+            return LibrarySelectionGroup(selected)
+        return selected[0] if selected else self.selection()
 
     def selection(self):
         view = self.files if self.mode == 'files' else self.lists[self.mode]

@@ -24,10 +24,10 @@ class TagChip(QPushButton):  # 本体统一选择，父标签箭头单独展开�
         self.setProperty('role', 'tagChip')
         self.setStyleSheet('QPushButton { border-radius:17px; padding:0 '+('28px' if self.has_expand else '0')+' 0 0; } QPushButton[implicitSelected="true"]:!checked { border-style:dashed; }')
         self.setCursor(Qt.PointingHandCursor)  # 明确可以点击。
-        self.setAcceptDrops(self.parent_tag)  # 只有明确设定的父标签接收子类。
-        self.setToolTip(name + '\n点击选择／取消；右键重命名／归类')
+        self.setAcceptDrops(self.parent_tag and editor.schema_editable)
+        self.setToolTip(name + ('\n点击选择／取消；右键重命名／归类' if editor.schema_editable else '\n点击选择／取消'))
         self.clicked.connect(lambda checked=False: editor.activate(name))
-        self.setContextMenuPolicy(Qt.CustomContextMenu)  # 类型修改统一从右键进入。
+        self.setContextMenuPolicy(Qt.CustomContextMenu if editor.schema_editable else Qt.PreventContextMenu)
         self.customContextMenuRequested.connect(lambda point: editor.menu(name, self.mapToGlobal(point)))  # 菜单绑定当前标签。
         if self.has_expand:
             self.arrow = QToolButton(self)
@@ -60,7 +60,7 @@ class TagChip(QPushButton):  # 本体统一选择，父标签箭头单独展开�
         super().mousePressEvent(event)  # 保留正常按钮按下反馈。
 
     def mouseMoveEvent(self, event):  # 普通标签可以直接拖入父标签，无需先选小类。
-        if self.start is not None and event.buttons() & Qt.LeftButton and (event.position().toPoint() - self.start).manhattanLength() >= QApplication.startDragDistance():  # 父标签和普通标签都能拖动，仍区分点击手势。
+        if self.editor.schema_editable and self.start is not None and event.buttons() & Qt.LeftButton and (event.position().toPoint() - self.start).manhattanLength() >= QApplication.startDragDistance():  # 父标签和普通标签都能拖动，仍区分点击手势。
             self.dragged, self.editor.dragging = True, True  # 拖动结束之前不重建源控件。
             mime = QMimeData()  # 使用独立内部标签格式。
             mime.setData(MIME, self.name.encode('utf-8'))  # 中文标签完整保留。
@@ -94,7 +94,7 @@ class ChildPanel(QFrame):  # 已由用户展开的子标签区域也可直接接
     def __init__(self, editor, name):  # 明确对应一个父标签。
         super().__init__()  # 使用外层内容布局管理。
         self.editor, self.name = editor, name  # 落点归属于当前层的父标签。
-        self.setAcceptDrops(True)  # 用户可把标签拖进展开后的空白区域。
+        self.setAcceptDrops(editor.schema_editable)
         self.setObjectName('childPanel')  # 用轻量背景区别父子区域。
 
     def dragEnterEvent(self, event):  # 接受本弹窗的有效标签。
@@ -109,9 +109,10 @@ class ChildPanel(QFrame):  # 已由用户展开的子标签区域也可直接接
 class TagEditor(QDialog):  # 参考图式胶囊标签卡，父类只在主动点击后展示子类。
     editingFinished = Signal()
 
-    def __init__(self, tags, schema, parent=None, *, baseline_schema=None, renames=None):  # 只编辑传入的标签草稿。
+    def __init__(self, tags, schema, parent=None, *, baseline_schema=None, renames=None, schema_editable=True):  # 只编辑传入的标签草稿。
         super().__init__(parent)  # 打开期间不强制暂停视频。
         self.schema = deepcopy(schema)  # 只有应用后才修改全局分类。
+        self.schema_editable = schema_editable
         baseline = schema if baseline_schema is None else baseline_schema
         self._origins = {(renames or {}).get(name, name): name for name in baseline
                          if (renames or {}).get(name, name) in schema}
@@ -304,13 +305,13 @@ class TagEditor(QDialog):  # 参考图式胶囊标签卡，父类只在主动点
         return True  # 允许落下，不自动展开目标父类。
 
     def allow_drop(self, event, parent):  # 只接受同一标签窗口内部的普通标签。
-        if event.source() is self and event.mimeData().hasFormat(MIME) and self.schema.get(parent, {}).get('is_parent'):  # 不接受资源管理器文件或其他窗口数据。
+        if self.schema_editable and event.source() is self and event.mimeData().hasFormat(MIME) and self.schema.get(parent, {}).get('is_parent'):  # 不接受资源管理器文件或其他窗口数据。
             event.acceptProposedAction()  # 只确认可以落下，不展开或移动。
         else:  # 无效来源不进行归类。
             event.ignore()  # 保持当前结构。
 
     def drop_tag(self, event, parent):  # 落下后才修改草稿父级。
-        if event.source() is self and event.mimeData().hasFormat(MIME):  # 再次验证内部来源。
+        if self.schema_editable and event.source() is self and event.mimeData().hasFormat(MIME):  # 再次验证内部来源。
             name = bytes(event.mimeData().data(MIME)).decode('utf-8')  # 恢复完整中文标签身份。
             if self.assign_parent(name, parent):  # 目录与数据库仍等待应用确认。
                 event.acceptProposedAction()  # 成功归类只更新这一项。
@@ -337,6 +338,8 @@ class TagEditor(QDialog):  # 参考图式胶囊标签卡，父类只在主动点
         return menu
 
     def menu(self, name, position):
+        if not self.schema_editable:
+            return
         menu = self.build_menu(name)
         menu.exec(position)
         menu.deleteLater()
@@ -442,7 +445,12 @@ class TagEditor(QDialog):  # 参考图式胶囊标签卡，父类只在主动点
         self.setMinimumSize(0, 0)
         self.buttons.hide()
         self.footer_hint.hide()
-        self.enable_management()
+        if self.schema_editable:
+            self.enable_management()
+        else:
+            self.title.hide()
+            self.entry.hide()
+            self.add_button.hide()
 
     def set_management(self, enabled):
         self.managing = enabled

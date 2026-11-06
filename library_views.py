@@ -3,7 +3,7 @@ from pathlib import Path
 from collections import Counter, defaultdict, deque
 from datetime import datetime
 import time
-from PySide6.QtCore import Qt, Signal, QAbstractListModel, QModelIndex, QSize, QRect, QRectF, QPointF
+from PySide6.QtCore import Qt, Signal, QAbstractListModel, QModelIndex, QSize, QRect, QRectF, QPointF, QEvent, QItemSelection, QItemSelectionModel
 from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QTextLayout, QTextOption
 from PySide6.QtWidgets import QApplication, QStyledItemDelegate, QStyle, QListView
 from ui import format_time
@@ -222,6 +222,11 @@ class FolderModel(QAbstractListModel):
     def rowCount(self, parent=QModelIndex()):
         return 0 if parent.isValid() else len(self.rows)
 
+    def flags(self, index):
+        if not index.isValid():
+            return Qt.NoItemFlags
+        return Qt.ItemIsEnabled | (Qt.ItemIsSelectable if index.data(Qt.UserRole) else Qt.NoItemFlags)
+
     def data(self, index, role=Qt.DisplayRole):
         if not index.isValid() or not 0 <= index.row() < self.rowCount():
             return None
@@ -315,11 +320,37 @@ class DropList(QListView):
     def __init__(self, can_import):
         super().__init__()
         self.can_import = can_import
+        self.batch_mode = False
+        self.setSelectionMode(QListView.ExtendedSelection)
         self.setAcceptDrops(True)
         self.setMouseTracking(True)
         self.setVerticalScrollMode(QListView.ScrollPerPixel)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setEditTriggers(QListView.NoEditTriggers)
+
+    def selectionCommand(self, index, event=None):
+        if not index.isValid():
+            return super().selectionCommand(index, event)
+        if index.isValid() and not index.data(Qt.UserRole):
+            return QItemSelectionModel.NoUpdate
+        if event is not None and event.type() == QEvent.MouseButtonPress:
+            if event.button() == Qt.RightButton:
+                return QItemSelectionModel.NoUpdate if self.selectionModel().isSelected(index) else QItemSelectionModel.ClearAndSelect
+            if self.batch_mode and event.button() == Qt.LeftButton and event.modifiers() == Qt.NoModifier:
+                return QItemSelectionModel.Toggle
+        if self.batch_mode and event is not None and event.type() == QEvent.MouseButtonRelease:
+            return QItemSelectionModel.NoUpdate
+        return super().selectionCommand(index, event)
+
+    def selectAll(self):
+        model, selected = self.model(), QItemSelection()
+        if model is None:
+            return
+        for number in range(model.rowCount()):
+            index = model.index(number, 0)
+            if index.data(Qt.UserRole):
+                selected.select(index, index)
+        self.selectionModel().select(selected, QItemSelectionModel.ClearAndSelect | QItemSelectionModel.Rows)
 
     def _drop_path(self, event):
         urls = event.mimeData().urls()

@@ -17,6 +17,8 @@
 | 模块 | 所有权与职责 |
 |---|---|
 | application/operations.py | 异步操作完成结果，以及提交草稿后继续用户动作的协调。 |
+| application/batch_actions.py | 冻结 LibrarySelectionGroup 中去重的视频 ID，先提交目标的既有草稿，再串行调用 Classification；标签添加／分支移除保留每个文件其他标签，已有父子选择规范化。BatchReport 明确已完成、剩余及失败身份；首个失败或取消后停止后续，批次 active 作为 UserActions／关闭屏障，按小批次调度避免大量同步操作阻塞事件循环。删除交给 Deletion.delete_many，不在窗口／UI 写业务循环。 |
+| batch_context_menu.py / batch_tag_editor.py | 文件页多选的原生右键菜单及进度／删除确认视图。复用 TagEditor 胶囊和行下展开、RatingEditor 五心；批量标签只选择已有标签及添加／移除意图，不在此修改全局结构。菜单关闭提交标签，后续评分／收藏等待保存成功。删除只确认一次、默认保留本地；停止仅终止后续文件，当前事务完成后显示已完成与剩余数量。 |
 | application/tag_drafts.py | 按视频 ID 管理标签基线、工作草稿、重命名映射和正在提交的值；成功才确认基线并将后续重命名重基到已提交名称，失败及恢复保留草稿。 |
 | media_context_menu.py | 四页共用的媒体右键菜单和编辑／确认视图；接收冻结的 LibrarySelection 及显式应用服务端口，等待草稿和任务屏障后收集输入。标签通过 TagDrafts.open_for 编辑指定 ID，评分／收藏／重命名／删除均走既有应用流程。标签和评分作为原生 QMenu 的 QWidgetAction 子菜单悬停展开，编辑内容与播放栏共用；整份菜单关闭才提交标签草稿，仅查看不写入，失败草稿可重开，后续评分或其他动作等待标签提交成功。重命名和删除确认的异步提交期间保留窗口，失败保留输入；点击文件夹或空白处不创建媒体菜单。删除默认仅清记录，勾选本地文件才请求回收；Ctrl+D 复用同一确认入口。 |
 | infrastructure/explorer.py | 接收经资料库身份解析的有效文件路径，以独立参数调用 Windows 资源管理器定位文件，不经过命令 shell。 |

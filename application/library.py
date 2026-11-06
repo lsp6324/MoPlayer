@@ -39,6 +39,11 @@ class LibrarySelection:
 
 
 @dataclass(frozen=True)
+class LibrarySelectionGroup:
+    items: tuple[LibrarySelection, ...]
+
+
+@dataclass(frozen=True)
 class _LibraryTask:
     cancel: Event
     operation: Operation

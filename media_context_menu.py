@@ -10,19 +10,26 @@ from rating_editor import RatingEditor
 from PySide6.QtGui import QColor
 from theme import theme_tokens
 from tag_editor import TagEditor
+from application.library import LibrarySelectionGroup
+from batch_context_menu import BatchContextMenu
 
 
 class MediaContextMenu(QObject):
     def __init__(self, parent, *, repository, drafts, classification, renaming, deletion,
-                 prepare, dismiss_popups, available, reveal):
+                 prepare, dismiss_popups, available, reveal, batch_actions=None):
         super().__init__(parent)
         self.repository, self.drafts = repository, drafts
         self.classification, self.renaming, self.deletion = classification, renaming, deletion
         self.prepare, self.dismiss_popups = prepare, dismiss_popups
         self.available, self.reveal = available, reveal
         self.active_menu, self.active_dialog = None, None
+        self.batch_menu = BatchContextMenu(parent, repository=repository, operations=batch_actions,
+            prepare=prepare, dismiss_popups=dismiss_popups, available=available)
 
     def open(self, selection, position):
+        if isinstance(selection, LibrarySelectionGroup):
+            self.batch_menu.open(selection, position)
+            return
         self._prepare(selection, lambda: self._open_ready(selection, position))
 
     def _open_ready(self, selection, position):
@@ -41,6 +48,8 @@ class MediaContextMenu(QObject):
                 menu.deleteLater()
 
     def build_menu(self, selection):
+        if isinstance(selection, LibrarySelectionGroup):
+            return self.batch_menu.build_menu(selection)
         video = self.repository.video(selection.video_id)
         if video is None:
             return None
@@ -71,6 +80,9 @@ class MediaContextMenu(QObject):
         return menu
 
     def confirm_delete(self, selection):
+        if isinstance(selection, LibrarySelectionGroup):
+            self.batch_menu.confirm_delete(selection)
+            return
         self._prepare(selection, lambda: self._delete(selection))
 
     def _prepare(self, selection, action):

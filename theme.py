@@ -77,6 +77,7 @@ QPushButton[role="tab"] { background:transparent; border:1px solid transparent; 
 QPushButton[role="tab"]:hover { color:$text; background:$hover; }
 QPushButton[role="tab"]:checked { color:$text_strong; background:$hover; }
 QPushButton[role="tab"]:focus { border-color:$accent_ring; }
+QPushButton#batchSelectButton:checked { color:$accent; background:$accent_soft; border-color:$accent_line; }
 QPushButton#playButton { border-radius:22px; padding:0; }
 QPushButton#playButton:disabled { background:$track; border-color:$track; }
 QPushButton[role="nav"],QPushButton[role="round"] { padding:0; }

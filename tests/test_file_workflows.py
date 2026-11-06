@@ -447,3 +447,56 @@ def test_current_delete_continues_original_playback_queue_not_browsed_selection(
     h.finish()
     assert operation.outcome.succeeded
     assert h.played == [(original.context, ('original', 1))]
+
+
+@pytest.mark.parametrize('delete_files', [True, False])
+def test_bulk_delete_current_last_uses_original_queue_once_and_waits_navigation(delete_files):
+    h = Harness()
+    original = h.target
+    h.next = Operation()
+    order, refreshes = [], []
+    def remove(vid):
+        order.append(vid)
+        h.submit_delete(vid)
+    h.deletion.submit = h.deletion.forget = remove
+    h.deletion.library.refresh_browsing = lambda: refreshes.append(True)
+    operation = h.deletion.delete_many(['a', 'b', 'a'], delete_files=delete_files)
+    assert h.policy.release_media
+    h.finish()
+    assert order == ['b', 'a'] and operation.pending and not h.played
+    assert h.deleted == {'a', 'b'} and h.tasks.completion is operation
+    h.next.finish(Outcome(Status.SUCCEEDED, ('original', 2)))
+    assert operation.outcome.succeeded and operation.outcome.value == ('b', 'a')
+    assert h.played == [(original.context, ('original', 2))]
+    assert refreshes == ([] if delete_files else [True])
+
+
+def test_bulk_delete_partial_failure_does_not_delete_current_or_play_next_selected():
+    h = Harness()
+    order = []
+    def remove(vid):
+        order.append(vid)
+        if vid == 'c':
+            raise OSError('injected recycle failure')
+        h.submit_delete(vid)
+    h.deletion.submit = remove
+    operation = h.deletion.delete_many(['a', 'b', 'c'], delete_files=True)
+    h.finish()
+    assert order == ['b', 'c'] and h.target.video_id == 'a' and not h.played
+    assert operation.outcome.status is Status.FAILED and operation.outcome.value == ('b',)
+    assert h.deleted == {'b'} and not h.marked
+
+
+def test_bulk_delete_noncurrent_stop_boundary_and_missing_old_identity():
+    h = Harness()
+    cancelled = []
+    def remove(vid):
+        h.submit_delete(vid)
+        cancelled.append(True)
+    h.deletion.forget = remove
+    h.deletion.library.refresh_browsing = lambda: None
+    operation = h.deletion.delete_many(['b', 'c'], cancelled=lambda: bool(cancelled))
+    assert not h.policy.release_media
+    h.finish()
+    assert operation.outcome.status is Status.CANCELLED and operation.outcome.value == ('b',)
+    assert h.target.video_id == 'a' and not h.played and 'c' in h.repo.rows

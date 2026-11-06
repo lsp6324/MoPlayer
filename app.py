@@ -2,7 +2,7 @@ import json  # 读取视频标签和诊断数据。
 import logging  # 记录可追踪的运行错误。
 import sys  # 区分源码和便携运行方式。
 from pathlib import Path  # 处理便携数据路径。
-if len(sys.argv) == 3 and sys.argv[1] in ('--ui-refresh-test', '--seek-notice-test', '--file-workflows-test', '--archive-settings-test', '--media-header-test', '--rename-test', '--continuous-classification-test', '--portable-layout-test', '--storage-test', '--accent-test', '--background-test', '--image-test', '--action-notice-test', '--catalog-test', '--media-menu-test'):
+if len(sys.argv) == 3 and sys.argv[1] in ('--ui-refresh-test', '--seek-notice-test', '--file-workflows-test', '--archive-settings-test', '--media-header-test', '--rename-test', '--continuous-classification-test', '--portable-layout-test', '--storage-test', '--accent-test', '--background-test', '--image-test', '--action-notice-test', '--catalog-test', '--media-menu-test', '--batch-selection-test'):
     # A windowed EXE has no stderr; keep explicit test failures reviewable.
     _test_output = Path(sys.argv[2]).absolute()
     _test_output.mkdir(parents=True, exist_ok=True)
@@ -15,7 +15,8 @@ from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication, QVBoxLayout, QPushButton, QMessageBox, QDialog, QListWidget, QListWidgetItem, QLineEdit, QComboBox, QAbstractSpinBox, QTextEdit, QPlainTextEdit
 from background_work import Work
 from thumbnail_cache import ThumbnailCache
-from application.library import LibraryController, LibrarySelection
+from application.library import LibraryController, LibrarySelection, LibrarySelectionGroup
+from application.batch_actions import BatchActions
 from infrastructure.library_scanner import LibraryScanner
 from infrastructure.thumbnails import ThumbnailService
 from infrastructure.image_loader import ImageLoader
@@ -73,7 +74,7 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
             refresh_allowed=lambda: not self.busy and not self.has_pending_file_tasks())
         self.library_watch = LibraryWatch(self.library_controller, self)
         self.playback = PlaybackSession()
-        self.user_actions = UserActions(before_action=lambda:self.file_tasks.completion or Operation.success())
+        self.user_actions = UserActions(before_action=lambda:self.batch_actions.active or self.file_tasks.completion or Operation.success())
         self.tag_drafts = TagDrafts(self.catalog,
             lambda vid, values: self.classification.apply_tags(vid, values.tags, list(values.schema.values()), prompt_score=False, renames=values.renames),
             lambda: self.current, lambda: not self.busy)
@@ -107,7 +108,10 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
             available=lambda: not self.busy, playback_target=self._playback_target,
             navigation_busy=self._navigation_busy, mark_deleting=self.thumbnail_service.mark_deleting,
             refresh_deleted=self.refresh_deleted, save=self.save, clear=self.clear_player,
-            start=self.start, notify=self._file_notice, forget=lambda vid: self.deleter.forget(vid))
+            start=self.start, notify=self._file_notice, forget=lambda vid: self.deleter.forget(vid),
+            video_exists=lambda vid: self.catalog.video(vid) is not None)
+        self.batch_actions = BatchActions(self.catalog, self.tag_drafts, self.classification, self.deletion,
+            schedule=lambda action: QTimer.singleShot(0, action), activity_changed=self.refresh_transport)
         self.recovery = Recovery(self.file_tasks, self.catalog, self.tag_drafts,
             recover_archive=lambda: self.archiver.recover(), recover_tags=lambda: self.tag_migration.recover(),
             tags_renamed=self.library_controller.rename_catalog_tags,
@@ -133,9 +137,10 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
         self.library_view.historyClearRequested.connect(self.clear_history)
         self.media_menu = MediaContextMenu(self, repository=self.catalog, drafts=self.tag_drafts,
             classification=self.classification, renaming=self.renaming, deletion=self.deletion,
+            batch_actions=self.batch_actions,
             prepare=lambda action: self.user_actions.request(action, self.player_view.options.flush_pending),
             dismiss_popups=self.player_view.options.dismiss,
-            available=lambda: not self.busy and not self.has_pending_file_tasks(), reveal=reveal_file)
+            available=lambda: not self.busy and not self.has_pending_file_tasks() and self.batch_actions.active is None, reveal=reveal_file)
         self.library_view.mediaContextRequested.connect(self.media_menu.open)
         self.setWindowIcon(QIcon(str(BUNDLE / 'assets/yunli.ico')))  # 窗口与任务栏使用同一云璃 Q 版图标。
         self.player.set_hwnd(self.player_view.video_handle())
@@ -181,7 +186,7 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
         return bool(self.catalog.pending_tasks())  # 仅查询内部固定表名。
 
     def storage_dialog(self, first_run=False):  # 右上角设置与首次引导共用入口。
-        if self.busy or self.has_pending_file_tasks():  # 不在文件任务执行或等待恢复时更改目标根目录。
+        if self.busy or self.batch_actions.active is not None or self.has_pending_file_tasks():  # 不在文件任务执行或等待恢复时更改目标根目录。
             self.message('请先等待文件任务完成，或通过“更多 → 文件任务”恢复，再设置存储路径。')  # 保留原任务位置。
             return False  # 不切换正在使用的归档器。
         return ArchiveSettingsDialog(self, root=self.storage.root, folders=self.storage.folders,
@@ -346,7 +351,7 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
             self.vlc.State.Error: PlaybackStatus.ERROR,
         }.get(state, PlaybackStatus.IDLE)
         self.player_view.present_transport(status, bool(self.current), self.file_tasks.media_released,
-                                           file_busy=self.busy, still=still)
+                                           file_busy=self.busy or self.batch_actions.active is not None, still=still)
 
     def refresh_title(self):
         video = self.catalog.video_details((self.current,)).get(self.current) if self.current else None
@@ -544,7 +549,12 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
         if self.busy and self.file_tasks.active is None:
             self.message('文件任务正在处理，请稍候。')
             return
-        selected = self.library_view.selection() if self.library_view.isVisible() and not self.player_view.fullscreen.active else None
+        selected = self.library_view.context_selection() if self.library_view.isVisible() and not self.player_view.fullscreen.active else None
+        if isinstance(selected, LibrarySelectionGroup):
+            if _target is None:
+                self.media_menu.confirm_delete(selected)
+                return
+            selected = None
         vid = _target or (selected.video_id if selected else None) or self.current
         if not vid:
             self.message('请先选中或播放一个视频。')
@@ -558,7 +568,7 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
 
 
     def favorite(self, toggle=False):
-        if self.current and not self.busy:
+        if self.current and not self.busy and self.batch_actions.active is None:
             star = self.catalog.video(self.current)['star']
             value = int(not star) if toggle else 1
             self.classification.favorite(self.current, value)
@@ -566,7 +576,7 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
 
     def rating_dialog(self, vid=None):
         vid = vid or self.current
-        if not vid or self.busy:
+        if not vid or self.busy or self.batch_actions.active is not None:
             return
         if vid == self.current:
             self.player_view.toggle_rating()
@@ -601,7 +611,7 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
             self.message({FileAction.NAMES: '正在恢复已归档视频的原文件名……',
                           FileAction.TAGS: '正在应用标签并同步相关视频……',
                           FileAction.ARCHIVE: '正在保存分类并整理目录……',
-                          FileAction.DELETE: '正在移入回收站……',
+                          FileAction.DELETE: '正在删除所选记录……',
                           FileAction.RECOVERY: '正在恢复未完成文件任务……'}[notice.action])
             return
         outcome = notice.outcome
@@ -741,6 +751,10 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
         self.work(install, completed)  # 网络、解压和 UAC 等待均不阻塞播放界面。
 
     def closeEvent(self, event):
+        if self.batch_actions.active is not None:
+            self.user_actions.request(lambda:QTimer.singleShot(0,self.close),self.player_view.options.flush_pending,closing=True)
+            event.ignore()
+            return
         if getattr(self, 'thumbnail_setup_pending', False):
             self.message('系统缩略图正在配置，请等待完成后退出。')
             event.ignore()
@@ -814,6 +828,9 @@ def main():  # 程序统一启动入口。
         return 1  # 报告失败退出码。
 
 if __name__ == '__main__':  # 仅直接运行时启动应用。
+    if len(sys.argv) == 3 and sys.argv[1] == '--batch-selection-test':
+        from verify_batch_selection import run
+        sys.exit(run(sys.argv[2]))
     if len(sys.argv) == 3 and sys.argv[1] == '--catalog-test':
         from verify_catalog import run
         sys.exit(run(sys.argv[2]))
