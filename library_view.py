@@ -81,7 +81,10 @@ class LibraryView(QFrame):
             self.lists[mode] = view
             self.stack.addWidget(view)
         for view in (self.files, *self.lists.values()):
-            view.setItemDelegate(VideoDelegate(thumbnails, view, current_video=current_video, theme_owner=theme_owner))
+            delegate = (VideoDelegate(thumbnails, view, current_video=current_video, theme_owner=theme_owner)
+                        if view is self.files else CatalogDelegate(thumbnails, view, current_video=current_video,
+                                                                   theme_owner=theme_owner, plain_unlisted=True))
+            view.setItemDelegate(delegate)
             thumbnails.changed.connect(view.viewport().update)
         self.catalog_panel = CatalogPanel(self, theme_owner=theme_owner)
         self.catalog_panel.list.setModel(VideoListModel(self.catalog_panel.list))

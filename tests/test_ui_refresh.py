@@ -57,6 +57,91 @@ def test_integrated_layout_and_quiet_feedback(window):
     assert window.player_view.control_row.center.isVisible()
 
 
+@pytest.mark.parametrize('mode', ['videos', 'stars'])
+@pytest.mark.parametrize('theme', ['light', 'dark'])
+def test_recent_and_favorite_members_render_the_same_card_as_library(window, mode, theme):
+    from PySide6.QtCore import QRect
+    from PySide6.QtGui import QColor, QImage, QPainter, QPixmap
+    from PySide6.QtWidgets import QStyleOptionViewItem
+    from library_views import VideoDelegate
+    apply_theme(window, theme)
+    window.store.execute('INSERT INTO tags VALUES(?)', ('子标签',))
+    window.store.execute('INSERT INTO tag_layout VALUES(?,?,?)', ('子标签', 'minor', 'existing'))
+    window.store.execute('UPDATE videos SET tags=?,score=0,star=1 WHERE id=?',
+                         (json.dumps(['子标签']), window.current))
+    controller, view = window.library_controller, window.library_view
+    controller.load_list(mode)
+    row = controller.list_rows(mode)[0]
+    assert row['in_library'] and row['tag_labels'] == ('existing › 子标签',)
+    index = view.lists[mode].model().index_for_id(window.current)
+    assert index.isValid()
+    thumb = QPixmap(140, 79)
+    thumb.fill(QColor('#836b34'))
+    window.thumbnails.request = Mock(return_value=thumb)
+    option = QStyleOptionViewItem()
+    option.rect, option.font = QRect(0, 0, 340, 96), view.font()
+
+    def render(delegate):
+        image = QImage(340, 96, QImage.Format_ARGB32)
+        image.fill(Qt.transparent)
+        painter = QPainter(image)
+        try:
+            delegate.paint(painter, option, index)
+        finally:
+            painter.end()
+        return image
+
+    rich = view.catalog_panel.list.itemDelegate()
+    simple = VideoDelegate(window.thumbnails, view.files, current_video=lambda: window.current, theme_owner=window)
+    assert render(view.lists[mode].itemDelegate()) == render(rich)
+    assert render(view.files.itemDelegate()) == render(simple)
+    assert render(rich) != render(simple)
+    # A metadata edit reaches the same existing row without losing selection.
+    view.lists[mode].setCurrentIndex(index)
+    from PySide6.QtTest import QSignalSpy
+    resets = QSignalSpy(view.lists[mode].model().modelReset)
+    window.store.execute('UPDATE videos SET score=9 WHERE id=?', (window.current,))
+    controller.refresh([window.current])
+    assert view.lists[mode].currentIndex().data(Qt.UserRole) == window.current and resets.count() == 0
+    assert render(view.lists[mode].itemDelegate()) == render(rich)
+
+
+def test_recent_unlisted_card_stays_simple_until_marked_and_keeps_library_style_after_clearing(window):
+    from PySide6.QtCore import QRect
+    from PySide6.QtGui import QImage, QPainter, QPixmap
+    from PySide6.QtWidgets import QStyleOptionViewItem
+    controller, view = window.library_controller, window.library_view
+    controller.load_list('videos')
+    model = view.lists['videos'].model()
+    index = model.index_for_id(window.current)
+    assert not index.data(Qt.UserRole + 1)['in_library']
+    thumb = QPixmap(140, 79)
+    thumb.fill(Qt.black)
+    window.thumbnails.request = Mock(return_value=thumb)
+    option = QStyleOptionViewItem()
+    option.rect, option.font = QRect(0, 0, 340, 96), view.font()
+
+    def render(delegate):
+        image = QImage(340, 96, QImage.Format_ARGB32)
+        image.fill(Qt.transparent)
+        painter = QPainter(image)
+        try:
+            delegate.paint(painter, option, index)
+        finally:
+            painter.end()
+        return image
+
+    recent, simple, rich = view.lists['videos'].itemDelegate(), view.files.itemDelegate(), view.catalog_panel.list.itemDelegate()
+    assert render(recent) == render(simple)
+    window.store.execute('UPDATE videos SET score=0 WHERE id=?', (window.current,))
+    controller.refresh([window.current])
+    assert render(recent) == render(rich) and render(recent) != render(simple)
+    window.store.execute('UPDATE videos SET score=NULL WHERE id=?', (window.current,))
+    controller.refresh([window.current])
+    assert index.data(Qt.UserRole + 1)['in_library']
+    assert render(recent) == render(rich) and render(recent) != render(simple)
+
+
 def test_single_video_drop_loads_parent_and_plays_selected_identity_after_save(window, tmp_path):
     from PySide6.QtCore import QMimeData, QUrl, QPointF
     from PySide6.QtGui import QDragEnterEvent, QDropEvent

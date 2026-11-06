@@ -2,7 +2,7 @@
 from PySide6.QtCore import Qt, QRect, QRectF, QSize
 from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath
 from PySide6.QtWidgets import QStyledItemDelegate, QStyle
-from library_views import DETAILS_ROLE, THUMB_VIEW, THUMB_ROW, THUMB_RADIUS
+from library_views import DETAILS_ROLE, THUMB_VIEW, THUMB_ROW, THUMB_RADIUS, VideoDelegate
 from media_badges import paint_capsule, paint_favorite
 from heart_rating import paint_hearts
 from theme import theme_tokens
@@ -10,10 +10,11 @@ from theme import theme_tokens
 
 class CatalogDelegate(QStyledItemDelegate):
     def __init__(self, thumbnails, parent, *, current_video, theme_owner,
-                 presentation=lambda: 'list', tile_size=lambda: QSize(140, 148)):
+                 presentation=lambda: 'list', tile_size=lambda: QSize(140, 148), plain_unlisted=False):
         super().__init__(parent)
         self.thumbnails, self.current_video, self.theme_owner = thumbnails, current_video, theme_owner
         self.presentation, self.tile_size = presentation, tile_size
+        self.plain = VideoDelegate(thumbnails, parent, current_video=current_video, theme_owner=theme_owner) if plain_unlisted else None
 
     def sizeHint(self, option, index):
         return self.tile_size() if self.presentation() == 'grid' else QSize(300, THUMB_ROW)
@@ -21,6 +22,9 @@ class CatalogDelegate(QStyledItemDelegate):
     def paint(self, painter, option, index):
         row = index.data(DETAILS_ROLE)
         if not row:
+            return
+        if self.plain is not None and not row.get('in_library'):
+            self.plain.paint(painter, option, index)
             return
         colors = theme_tokens(self.theme_owner)
         selected = bool(option.state & QStyle.State_Selected)

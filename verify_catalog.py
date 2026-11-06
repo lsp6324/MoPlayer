@@ -100,6 +100,48 @@ def run(destination):
                          for mode in ('videos', 'stars')]
         check('库列表卡片与文件最近收藏等高', catalog_height == file_height == 96
               and all(height == catalog_height for height in other_heights))
+        # Recent/favorites use the same card for library members, while an
+        # unmarked recent item and the file page retain the simple rendering.
+        unlisted_path = output / '仅播放，尚未入库.png'
+        image.save(str(unlisted_path))
+        unlisted = window.store.register(unlisted_path)
+        window.store.execute('UPDATE videos SET played=2 WHERE id=?', (unlisted,))
+        window.store.execute('UPDATE videos SET played=1 WHERE id=?', (ids[0],))
+        controller.load_list('videos')
+        controller.load_list('stars')
+        view.show_mode('videos')
+        check('最近页同时显示库记录和仅播放记录', wait(lambda: view.lists['videos'].model().rowCount() == 2))
+        window.thumbnails.request(ids[0])
+        window.thumbnails.request(unlisted)
+        assert wait(lambda: all(vid in window.thumbnails.images for vid in (ids[0], unlisted)))
+        card_option = QStyleOptionViewItem()
+        card_option.rect, card_option.font = panel.list.rect().adjusted(0, 0, 0, 0), panel.font()
+        card_option.rect.setHeight(96)
+        def render_card(delegate, index):
+            canvas = QImage(card_option.rect.size(), QImage.Format_ARGB32)
+            canvas.fill(Qt.transparent)
+            brush = QPainter(canvas)
+            try:
+                delegate.paint(brush, card_option, index)
+            finally:
+                brush.end()
+            return canvas
+        for mode, caption in (('videos', '最近'), ('stars', '收藏')):
+            view.show_mode(mode)
+            app.processEvents()
+            media_view = view.lists[mode]
+            member_index = media_view.model().index_for_id(ids[0])
+            check(caption+'中的库记录与库卡片逐像素一致', member_index.isValid()
+                  and render_card(media_view.itemDelegate(), member_index) == render_card(panel.list.itemDelegate(), member_index))
+            media_view.grab().save(str(output / ('recent-cards.png' if mode == 'videos' else 'favorite-cards.png')))
+        recent = view.lists['videos']
+        unlisted_index = recent.model().index_for_id(unlisted)
+        check('最近页未入库记录仍使用文件页简洁卡片', not unlisted_index.data(Qt.UserRole + 1)['in_library']
+              and render_card(recent.itemDelegate(), unlisted_index) == render_card(view.files.itemDelegate(), unlisted_index))
+        view.show_mode('files')
+        view.files.grab().save(str(output / 'files-simple-cards.png'))
+        view.show_mode('catalog')
+        assert wait(lambda: not controller.catalog_pending)
         check('筛选收进浮窗并让出列表高度', not panel.popup.isVisible() and panel.list.mapTo(panel, QPoint()).y() < 110)
         check('类型使用直接按钮', set(panel.popup.kind) == {'all', 'video', 'image'})
         apply_theme(window, 'dark')
