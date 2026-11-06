@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "moplayer"
+version = "0.1.0"
+description = "Windows portable media player and personal media library"
+requires-python = ">=3.12"
+dependencies = ["PySide6-Essentials==6.8.3", "python-vlc==3.0.21203"]
+
+[project.scripts]
+moplayer = "moplayer.app:cli"
+
+[tool.setuptools]
+packages = ["moplayer", "moplayer.application", "moplayer.infrastructure", "moplayer.gui", "tools", "tools.verify"]
+package-dir = { moplayer = "src/moplayer", tools = "tools" }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src", "."]

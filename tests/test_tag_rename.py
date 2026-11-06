@@ -1,0 +1,116 @@
+"""Global renames preserve references, identities and recoverable frozen jobs."""
+import json
+import pytest
+from moplayer.core import Store, Archiver, identity
+from moplayer.tag_migration import TagMigration
+
+
+@pytest.fixture
+def library(tmp_path):
+    store = Store(tmp_path / 'data')
+    archive = Archiver(store, tmp_path / 'archive')
+    migration = TagMigration(store, archive)
+    rows = [dict(name='风景', kind='major', parent=None),
+            dict(name='山川', kind='minor', parent='风景')]
+    ids, sources = [], []
+    for n in range(3):
+        source = tmp_path / f'{n}.mp4'
+        source.write_bytes(f'isolated rename {n}'.encode())
+        sources.append(source)
+        ids.append(store.register(source))
+    for vid in ids[:2]:
+        migration.submit(vid, 8, ['山川'], rows, defer_cleanup=True)
+    store.execute('UPDATE videos SET tags=?,star=1,position=123,played=456 WHERE id=?', ('["山川"]', ids[2]))
+    yield store, archive, migration, ids, sources
+    store.db.close()
+
+
+@pytest.mark.parametrize('source,target', [('风景', '自然'), ('山川', '群山')])
+def test_global_parent_or_child_rename_preserves_unarchived_files(library, source, target):
+    store, archive, migration, ids, paths = library
+    before = {vid: store.video(vid) for vid in ids}
+    identities = {vid: identity(store.resolve(vid)) for vid in ids}
+    layout = store.tag_layout()
+    renamed = []
+    for name, row in layout.items():
+        renamed.append(dict(row, name=target if name == source else name,
+                            parent=target if row.get('parent') == source else row.get('parent')))
+    current_tags = ['群山' if source == '山川' else '山川']
+    affected = migration.submit(ids[0], 8, current_tags, renamed, renames={source: target}, defer_cleanup=True)
+    assert set(affected) == set(ids)
+    for vid in ids:
+        assert json.loads(store.video(vid)['tags']) == current_tags
+        assert identity(store.resolve(vid)) == identities[vid]
+        for field in ('id', 'score', 'star', 'position', 'played', 'in_library', 'library_added_at', 'archived_at'):
+            assert store.video(vid)[field] == before[vid][field]
+    assert not store.video(ids[2])['archived'] and store.resolve(ids[2]) == paths[2]
+    assert source not in store.tag_layout() and target in store.tag_layout()
+    assert store.tag_layout()[current_tags[0]]['parent'] == ('自然' if source == '风景' else '风景')
+
+
+def test_interrupted_rename_replays_frozen_mapping_and_keeps_all_references(library, tmp_path):
+    store, archive, migration, ids, paths = library
+    layout = [dict(row, name='群山' if name == '山川' else name) for name, row in store.tag_layout().items()]
+    migration.fault = lambda stage: (_ for _ in ()).throw(OSError('interrupted')) if stage == 'migrating' else None
+    with pytest.raises(OSError):
+        migration.submit(ids[0], 8, ['群山'], layout, renames={'山川': '群山'}, defer_cleanup=True)
+    plan = json.loads(store.query('SELECT plan FROM hierarchy_jobs WHERE state<>"done"')[0]['plan'])
+    assert plan['renames'] == {'山川': '群山'}
+    assert TagMigration(store, Archiver(store, tmp_path / 'unrelated-root')).recover() == []
+    assert all(json.loads(store.video(vid)['tags']) == ['群山'] for vid in ids)
+    assert store.resolve(ids[2]) == paths[2] and not store.video(ids[2])['archived']
+    assert '群山' in store.tag_layout() and '山川' not in store.tag_layout()
+    assert all(str(store.resolve(vid)).startswith(str(archive.root)) for vid in ids[:2])
+
+
+def test_invalid_rename_does_not_create_a_job_or_change_records(library):
+    store, archive, migration, ids, paths = library
+    before = store.query('SELECT * FROM videos')
+    jobs = store.query('SELECT * FROM hierarchy_jobs')
+    with pytest.raises(ValueError):
+        migration.submit(ids[0], 8, ['山川'], list(store.tag_layout().values()), renames={'风景': '山川'})
+    assert store.query('SELECT * FROM videos') == before
+    assert store.query('SELECT * FROM hierarchy_jobs') == jobs
+
+
+def test_metadata_only_tags_need_no_archive_root_or_local_file_and_zero_enters_library(tmp_path):
+    store = Store(tmp_path/'data')
+    source = tmp_path/'source.mp4'
+    source.write_bytes(b'tags only')
+    vid = store.register(source)
+    source.unlink()
+    migration=TagMigration(store,Archiver(store,None))
+    migration.submit(vid,0,['标签'],[dict(name='标签',kind='major',parent=None)],metadata_only=True)
+    video=store.video(vid)
+    assert video['score']==0 and json.loads(video['tags'])==['标签'] and video['in_library']
+    assert not video['archived'] and video['archived_at'] is None
+    assert not store.query('SELECT * FROM jobs') and not store.query('SELECT * FROM cleanup_jobs')
+    assert not (tmp_path/'video').exists()
+    store.db.close()
+
+
+def test_metadata_only_rename_preserves_all_archived_links_and_recovers_frozen_mode(library,tmp_path):
+    store,archive,migration,ids,sources=library
+    before={vid:store.video(vid) for vid in ids}
+    paths=store.query('SELECT * FROM paths ORDER BY path')
+    identities={row['path']:identity(row['path']) for row in paths}
+    jobs=store.query('SELECT * FROM jobs')
+    def fail(state):
+        if state=='migrating': raise OSError('interrupted metadata')
+    migration.fault=fail
+    rows=[dict(name='风景',kind='major',parent=None),dict(name='群山',kind='minor',parent='风景')]
+    with pytest.raises(OSError):
+        migration.submit(ids[0],0,['群山'],rows,renames={'山川':'群山'},metadata_only=True)
+    frozen=json.loads(store.query('SELECT plan FROM hierarchy_jobs WHERE state<>"done"')[0]['plan'])
+    assert all(entry['metadata_only'] for entry in frozen['videos'])
+    restarted=TagMigration(store,Archiver(store,tmp_path/'changed-target'))
+    assert restarted.recover()==[]
+    assert store.query('SELECT * FROM paths ORDER BY path')==paths and store.query('SELECT * FROM jobs')==jobs
+    assert all(identity(path)==value for path,value in identities.items())
+    for vid in ids:
+        video=store.video(vid)
+        assert json.loads(video['tags'])==['群山']
+        for field in ('archived','archived_at','library_added_at','star','position','played','original_name'):
+            assert video[field]==before[vid][field]
+        assert video['score']==(0 if vid==ids[0] else before[vid]['score'])
+    assert not (tmp_path/'changed-target').exists()

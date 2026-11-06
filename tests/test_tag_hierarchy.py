@@ -2,9 +2,9 @@ import json  # 检查全局批次和标签元数据。
 import threading  # 验证扫描登记不能穿插文件迁移提交。
 from pathlib import Path  # 检查被迁移的旧入口是否已清理。
 import pytest  # 参数化校验危险结构与中断恢复。
-from core import Store, Archiver, identity, validate_layout, archive_name  # 使用真实路径、硬链接和永久身份实现。
-from tag_migration import TagMigration  # 验证跨多个视频的全局迁移。
-from video_delete import DeletionManager  # 检查全局迁移与删除互斥保护。
+from moplayer.core import Store, Archiver, identity, validate_layout, archive_name  # 使用真实路径、硬链接和永久身份实现。
+from moplayer.tag_migration import TagMigration  # 验证跨多个视频的全局迁移。
+from moplayer.video_delete import DeletionManager  # 检查全局迁移与删除互斥保护。
 
 def schema(parent='绝区零'):  # 创建两个独立标签和一个父子分类。
     return [{'name': parent, 'kind': 'major', 'parent': None}, {'name': '爱丽丝', 'kind': 'minor', 'parent': parent}, {'name': '黑丝', 'kind': 'major', 'parent': None}]  # 使用用户示例中的名称。
@@ -29,15 +29,15 @@ def test_global_hierarchy_and_rating(tmp_path):  # 全部相关视频同步路�
     affected = TagMigration(store, archive).submit(vids[0], 8, ['绝区零', '爱丽丝', '黑丝'], schema())  # 一次确认修改全局角色归属。
     assert set(affected) == set(vids)  # 不只更新当前视频。
     for vid, score, original in zip(vids, [8, 9], ['abc-123.mp4', 'second.mp4']):  # 两条视频保持自己的评分和原名。
-        name = f'{score}分 绝区零（爱丽丝） 黑丝 {original}'  # 文件名父子合并且不重复大类。
+        name = original  # 文件名独立于父子分类。
         paths = [archive.root / f'{score}分' / '绝区零' / '爱丽丝' / name, archive.root / f'{score}分' / '黑丝' / name]  # 小类嵌套，独立标签保持原层级。
         assert all(path.exists() and identity(path) == entities[vid] for path in paths)  # 同卷迁移没有复制或换实体。
         assert paths[0].stat().st_nlink == 2  # 同时勾选父子不多创建父级根入口。
         assert store.video(vid)['star'] == 1 and store.video(vid)['position'] == 1234  # 历史收藏和进度不变。
         assert json.loads(store.video(vid)['tags']) == ['爱丽丝', '黑丝']  # 父级由全局关系隐含保存。
-    assert not any(Path(path).exists() for path in old_paths)  # 原平级入口已在新入口安全后清理。
+    assert all(not Path(path).exists() for path in old_paths if '爱丽丝' in Path(path).parts and '绝区零' not in Path(path).parts)  # 原平级入口已在新入口安全后清理。
     archive.submit(vids[0], 10, ['爱丽丝', '黑丝'])  # 后续 R 评分沿用全局层级。
-    assert store.resolve(vids[0]).name == '10分 绝区零（爱丽丝） 黑丝 abc-123.mp4'  # 评分不能把小类恢复为平级。
+    assert store.resolve(vids[0]).name == 'abc-123.mp4' and store.resolve(vids[0]).parent.parent.name == '绝区零'  # 评分不能把小类恢复为平级。
 
 def test_reparent_and_independent(tmp_path):  # 小类换父级和恢复独立大类均同步所有视频。
     store, archive, vids = library(tmp_path)  # 创建两条相关记录。
@@ -45,7 +45,7 @@ def test_reparent_and_independent(tmp_path):  # 小类换父级和恢复独立�
     manager.submit(vids[0], 8, ['爱丽丝', '黑丝'], schema())  # 首次建立角色归属。
     new_schema = schema('新大类') + [{'name': '绝区零', 'kind': 'major', 'parent': None}]  # 移动角色到另一个大类。
     manager.submit(vids[0], 8, ['爱丽丝', '黑丝'], new_schema)  # 再次确认全局变更。
-    assert all('新大类（爱丽丝）' in store.resolve(vid).name for vid in vids)  # 所有包含该小类的视频同步改名。
+    assert all((archive.root/f"{store.video(vid)['score']}分"/'新大类'/'爱丽丝'/store.video(vid)['original_name']).exists() for vid in vids)  # 所有包含该小类的视频同步目录。
     new_schema[1] = {'name': '爱丽丝', 'kind': 'major', 'parent': None}  # 明确恢复为独立大类。
     manager.submit(vids[0], 8, ['爱丽丝', '黑丝'], new_schema)  # 迁移回单层入口。
     assert all('（' not in store.resolve(vid).name for vid in vids)  # 不残留旧父级文件名前缀。
@@ -60,7 +60,7 @@ def test_batch_interruption_recovery(tmp_path):  # 第一条完成后中断仍�
     assert all(store.resolve(vid).exists() for vid in vids)  # 两个视频始终可定位。
     assert TagMigration(store, archive).recover() == []  # 新进程从持久计划继续。
     assert store.tag_layout()['爱丽丝']['parent'] == '绝区零'  # 所有文件成功后才提交公共关系。
-    assert all('绝区零（爱丽丝）' in store.resolve(vid).name for vid in vids)  # 剩余视频也完成。
+    assert all((archive.root/f"{store.video(vid)['score']}分"/'绝区零'/'爱丽丝'/store.video(vid)['original_name']).exists() for vid in vids)  # 剩余视频也完成。
 
 def test_child_archive_failure_recovery(tmp_path):  # 单视频建立新入口后失败仍能恢复整个批次。
     store, archive, vids = library(tmp_path)  # 创建两个既有归档视频。
@@ -93,7 +93,7 @@ def test_invalid_layout(rows):  # 错误结构必须在文件操作前被拒绝�
 def test_multiple_children_name():  # 多个子类合并在同一大类括号内。
     rows = schema() + [{'name': '角色2', 'kind': 'minor', 'parent': '绝区零'}]  # 添加第二个角色。
     layout = validate_layout(rows)  # 固定有效的两级结构。
-    assert archive_name('xxx.mp4', 8, ['绝区零', '爱丽丝', '角色2', '黑丝'], layout) == '8分 绝区零（爱丽丝、角色2） 黑丝 xxx.mp4'  # 不重复显示父级且保留全部选择。
+    assert archive_name('xxx.mp4') == 'xxx.mp4'  # 分类不再写入文件名。
 
 def test_pending_batch_protects_file_operations(tmp_path):  # 部分迁移时禁止其他归档或删除覆盖恢复意图。
     store, archive, vids = library(tmp_path)  # 创建真实旧版平级入口。

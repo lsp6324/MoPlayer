@@ -1,6 +1,8 @@
 import time  # 避免周期进度保存干扰暂停确认场景。
 from PySide6.QtWidgets import QApplication  # 运行真实窗口控件与播放状态显示。
-from app import Window, vlc  # 调用生产定时器和 VLC 状态定义。
+from moplayer.app import Window  # 调用生产定时器和 VLC 状态定义。
+from moplayer.runtime import load_vlc
+vlc = load_vlc()
 
 def test_reload_waits_for_pause_acknowledgement(tmp_path):  # 暂停命令发出后，内核尚在播放时不能结束恢复状态。
     application = QApplication.instance() or QApplication([])  # 控件图标需要实际 GUI 应用对象。
@@ -23,16 +25,17 @@ def test_reload_waits_for_pause_acknowledgement(tmp_path):  # 暂停命令发出
         def set_pause(self, paused):  # 模拟异步命令送达。
             self.requests.append(paused)  # 内核状态保持 Playing 直到下一轮显式确认。
     delayed = DelayedPlayer()  # 替身只控制内核状态，不替换生产 tick 逻辑。
-    window.player, window.resume, window.resume_paused = delayed, 500, True  # 模拟分类重载需要恢复到暂停状态。
-    window.last_save = time.monotonic()  # 当前轮无需周期保存。
+    window.player = delayed
+    window.playback.begin(500, True)  # 模拟分类重载需要恢复到暂停状态。
+    window.playback.last_save = time.monotonic()  # 当前轮无需周期保存。
     try:  # 失败也恢复并释放实际窗口。
         window.tick()  # 正式代码发出 seek 与 pause 请求。
-        assert delayed.requests == [1] and window.resume == 500  # 请求未确认前，连续操作仍能读取正确暂停意图。
+        assert delayed.requests == [1] and window.playback.resume.position == 500  # 请求未确认前，连续操作仍能读取正确暂停意图。
         window.tick()  # 再一轮内核仍报告 Playing。
-        assert window.resume == 500 and window.resume_paused is True  # 不因为短暂播放状态丢失目标。
+        assert window.playback.resume.position == 500 and window.playback.resume.paused is True  # 不因为短暂播放状态丢失目标。
         delayed.state = vlc.State.Paused  # 模拟异步暂停真正完成。
         window.tick()  # 正式代码收到实际状态确认。
-        assert window.resume is None  # 只有确认后才允许普通进度保存和后续状态判断。
+        assert window.playback.resume is None  # 只有确认后才允许普通进度保存和后续状态判断。
     finally:  # 不让测试替身影响窗口关闭。
         window.player, window.current = original, None  # 真实 VLC 对象负责最终释放。
         window.close()  # 清理事件过滤器和播放器定时器。
