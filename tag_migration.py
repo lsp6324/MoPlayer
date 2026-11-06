@@ -15,7 +15,7 @@ class TagMigration:  # 在现有逐视频归档日志之上协调全局分类迁
         if self.fault:  # 故障注入只用于隔离验收。
             self.fault(state)  # 正式运行不会主动中断。
 
-    def submit(self, vid, score, tags, rows, *, defer_cleanup=False):  # 明确确认后才创建全库迁移意图。
+    def submit(self, vid, score, tags, rows, *, defer_cleanup=False, renames=None):  # 明确确认后才创建全库迁移意图。
         with self.archiver.lock, self.lock, self.store.file_lock:  # 与归档设置保持相同锁顺序。
             if self.store.query('SELECT id FROM archive_setting_jobs WHERE state<>"done"'):
                 raise RuntimeError('有未完成的归档设置整理，请先恢复。')
@@ -25,13 +25,19 @@ class TagMigration:  # 在现有逐视频归档日志之上协调全局分类迁
                 raise RuntimeError('有未完成文件任务，请先通过“文件任务”恢复。')  # 已完成的中间状态仍由日志保护。
             layout = validate_layout(rows)  # 全部小类必须有有效的大类父级。
             old = self.store.tag_layout()  # 保存当前已确认的全局关系。
+            renames = dict(renames or {})
+            if (any(source not in old or target not in layout for source, target in renames.items())
+                    or len({target.casefold() for target in renames.values()}) != len(renames)
+                    or any(target in old and target != source and target not in renames for source, target in renames.items())):
+                raise ValueError('标签重命名无效或与已有标签重名。')
             removed = set(old) - set(layout)  # 草稿中删除的标签需要从所有视频移除。
             entries = []  # 收集当前视频与结构确实发生变化的其他视频。
             for video in self.store.query('SELECT * FROM videos'):  # 未归档且不是当前视频的记录无需移动。
                 previous = json.loads(video['tags'])  # 保留其他视频原有选择以判断全局删除影响。
-                chosen = [name for name in (tags if video['id'] == vid else previous) if name not in removed]  # 全局移除已删除标签，保留其他选择。
+                chosen = list(tags) if video['id'] == vid else [renames.get(name, name) for name in previous]
+                chosen = [name for name in chosen if name not in removed]  # 重命名替换引用，真正删除的标签才移除。
                 metadata_only = video['id'] != vid and not video['archived']  # 未归档的其他视频只更新元数据。
-                if video['id'] != vid and (chosen == previous if metadata_only else chosen == previous and tag_parts(previous, old) == tag_parts(chosen, layout)):  # 不为无关视频创建迁移任务。
+                if video['id'] != vid and chosen == previous and tag_parts(previous, old) == tag_parts(chosen, layout):  # 路径展示变化也需要刷新未归档记录。
                     continue  # 保留无关视频的磁盘入口和播放数据。
                 target_score = score if video['id'] == vid else video['score']  # 全局分类迁移不改变其他视频的评分。
                 for name in chosen:  # 在创建批次之前验证每个被选择的路径片段。
@@ -46,6 +52,8 @@ class TagMigration:  # 在现有逐视频归档日志之上协调全局分类迁
             if not any(entry['video'] == vid for entry in entries):  # 当前身份已被外部删除时不得作用于其他视频。
                 raise FileNotFoundError('当前视频记录已不存在，未提交标签修改。')  # 保留原全局结构。
             plan = {'layout': list(layout.values()), 'videos': entries, 'current': vid, 'archive_root': str(self.archiver.root), 'archive_folders': self.archiver.folders.to_dict()}  # 冻结根目录，重启后不使用后来修改的设置。
+            if renames:
+                plan['renames'] = renames
             if defer_cleanup:
                 plan['defer_cleanup']=True
             job = uuid.uuid4().hex  # 分配本次迁移身份。
