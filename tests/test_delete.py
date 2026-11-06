@@ -110,3 +110,57 @@ def test_pending_archive_blocks_delete(tmp_path):  # 未完成归档不能被删
     with pytest.raises(RuntimeError, match='未完成归档'):  # 删除必须等待归档先恢复。
         DeletionManager(store, recycle).submit(vid)  # 不触碰尚被归档保护的文件。
     assert path.exists() and not list(recycled.iterdir())  # 所有来源数据都保留。
+
+
+def test_forget_keeps_all_hard_links_and_removes_only_this_record(tmp_path):
+    store, source, path, vid, recycled, recycle = setup(tmp_path)
+    linked = source / 'linked.mp4'
+    os.link(path, linked)
+    store.register(linked)
+    other = source / 'other.mp4'
+    other.write_bytes(b'other')
+    other_id = store.register(other)
+    store.execute('UPDATE videos SET score=7,star=1,tags=?,played=9,position=12000 WHERE id=?', ('["test"]', vid))
+    DeletionManager(store, lambda path: pytest.fail('Metadata removal must not recycle')).forget(vid)
+    assert path.read_bytes() == linked.read_bytes() == b'original-video'
+    assert not store.query('SELECT * FROM videos WHERE id=?', (vid,))
+    assert not store.query('SELECT * FROM paths WHERE id=?', (vid,))
+    assert store.video(other_id) and other.exists() and not list(recycled.iterdir())
+
+
+def test_forget_recovery_retains_mode_and_rolls_back_metadata_on_failure(tmp_path):
+    store, source, path, vid, recycled, recycle = setup(tmp_path)
+    store.execute('CREATE TRIGGER fail_forget BEFORE DELETE ON videos BEGIN SELECT RAISE(ABORT,"forget failed"); END')
+    with pytest.raises(Exception, match='forget failed'):
+        DeletionManager(store, recycle).forget(vid)
+    assert store.video(vid) and store.query('SELECT * FROM paths WHERE id=?', (vid,))
+    assert path.exists() and not list(recycled.iterdir())
+    store.execute('DROP TRIGGER fail_forget')
+    manager = DeletionManager(store, lambda path: pytest.fail('Recovery must retain metadata-only mode'))
+    assert manager.recover() == []
+    assert path.exists() and not store.query('SELECT * FROM videos WHERE id=?', (vid,))
+
+
+def test_forget_missing_or_replaced_file_never_touches_replacement(tmp_path):
+    store, source, path, vid, recycled, recycle = setup(tmp_path)
+    path.rename(source / 'original.mp4')
+    path.write_bytes(b'replacement')
+    DeletionManager(store, recycle).forget(vid)
+    assert path.read_bytes() == b'replacement' and not list(recycled.iterdir())
+
+
+def test_pending_deletion_cannot_be_reinterpreted_as_another_mode(tmp_path):
+    store, source, path, vid, recycled, recycle = setup(tmp_path)
+    def fail(stage):
+        raise RuntimeError('interrupted')
+    with pytest.raises(RuntimeError):
+        DeletionManager(store, recycle, fault=fail).forget(vid)
+    with pytest.raises(RuntimeError, match='仅删除记录'):
+        DeletionManager(store, recycle).submit(vid)
+    assert DeletionManager(store, recycle).recover() == [] and path.exists()
+    vid = store.register(path)
+    with pytest.raises(RuntimeError):
+        DeletionManager(store, recycle, fault=fail).submit(vid)
+    with pytest.raises(RuntimeError, match='本地文件删除'):
+        DeletionManager(store, recycle).forget(vid)
+    assert path.exists()

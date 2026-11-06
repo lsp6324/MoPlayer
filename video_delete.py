@@ -72,6 +72,9 @@ class DeletionManager:  # 用持久任务协调文件回收和元数据提交。
                 raise RuntimeError('有未完成的标签结构迁移，请先在文件任务中恢复。')  # 不破坏跨视频迁移的恢复计划。
             pending = self.store.query('SELECT id FROM deletion_jobs WHERE video=? AND state<>"done" ORDER BY updated LIMIT 1', (vid,))  # 同一视频失败后继续原计划。
             if pending:  # 不为重试创建重复任务。
+                plan = json.loads(self.store.query('SELECT plan FROM deletion_jobs WHERE id=?', (pending[0]['id'],))[0]['plan'])
+                if plan.get('delete_files', True) is False:
+                    raise RuntimeError('此视频有未完成的仅删除记录任务，请先恢复。')
                 return self.run(pending[0]['id'])  # 按逐入口记录恢复。
             if self.store.query('SELECT id FROM jobs WHERE video=? AND state<>"done"', (vid,)):  # 避免删除尚在归档日志保护中的内容。
                 raise RuntimeError('此视频有未完成归档，请先通过任务列表恢复。')  # 不删除归档的最后安全入口。
@@ -97,6 +100,33 @@ class DeletionManager:  # 用持久任务协调文件回收和元数据提交。
             self.store.execute('INSERT INTO deletion_jobs VALUES(?,?,?,?,?,?)', (job, vid, 'planned', json.dumps(plan, ensure_ascii=False), None, time.time()))  # 首次文件操作前先保存计划。
             return self.run(job)  # 正式处理回收和数据库提交。
 
+    def forget(self, vid):
+        """Forget this identity and its metadata without touching local files."""
+        with self.lock, self.store.file_lock:
+            for table in ('archive_setting_jobs', 'hierarchy_jobs'):
+                if self.store.query(f'SELECT id FROM {table} WHERE state<>"done"'):
+                    raise RuntimeError('有未完成的全局文件任务，请先恢复。')
+            pending = self.store.query('SELECT * FROM deletion_jobs WHERE video=? AND state<>"done" ORDER BY updated LIMIT 1', (vid,))
+            if pending:
+                if json.loads(pending[0]['plan']).get('delete_files', True):
+                    raise RuntimeError('此视频有未完成的本地文件删除任务，请先恢复。')
+                return self.run(pending[0]['id'])
+            if self.store.query('SELECT id FROM jobs WHERE video=? AND state<>"done"', (vid,)):
+                raise RuntimeError('此视频有未完成的文件任务，请先恢复。')
+            record = self.store.video(vid)
+            plan = {'video': vid, 'record': record, 'paths': [], 'delete_files': False}
+            job = uuid.uuid4().hex
+            self.store.execute('INSERT INTO deletion_jobs VALUES(?,?,?,?,?,?)',
+                               (job, vid, 'planned', json.dumps(plan, ensure_ascii=False), None, time.time()))
+            return self.run(job)
+
+    def _commit(self, job, plan):
+        with self.store.lock, self.store.db:
+            self.store.db.execute('DELETE FROM paths WHERE id=?', (plan['video'],))
+            self.store.db.execute('DELETE FROM videos WHERE id=?', (plan['video'],))
+            self.store.db.execute('UPDATE cleanup_jobs SET state="done",error=NULL,updated=? WHERE video=?', (time.time(), plan['video']))
+            self.store.db.execute('UPDATE deletion_jobs SET state="done",error=NULL,updated=? WHERE id=?', (time.time(), job))
+
     def run(self, job):  # 幂等恢复中断或部分完成的删除任务。
         with self.lock, self.store.file_lock:  # 恢复也与路径发现共用文件锁。
             row = self.store.query('SELECT * FROM deletion_jobs WHERE id=?', (job,))[0]  # 按持久任务读取状态。
@@ -105,6 +135,10 @@ class DeletionManager:  # 用持久任务协调文件回收和元数据提交。
                 return plan  # 返回原审计记录。
             try:  # 任意失败都保留任务和尚存元数据。
                 self.checkpoint(job, plan, 'planned')  # 统一从已保存的路径状态继续。
+                if plan.get('delete_files', True) is False:
+                    self._commit(job, plan)
+                    logging.info('仅删除软件记录 %s，保留本地文件', plan['video'])
+                    return plan
                 for entry in plan['paths']:  # 每次只处理一个受身份校验保护的入口。
                     if entry['state'] != 'pending':  # 已回收入口不重复操作。
                         if Path(entry['path']).exists():  # 用户恢复的入口或新同名文件不能被悄悄丢弃元数据。
@@ -122,11 +156,7 @@ class DeletionManager:  # 用持久任务协调文件回收和元数据提交。
                 self.checkpoint(job, plan, 'files_recycled')  # 所有登记入口完成后才移除元数据。
                 if any(Path(item['path']).exists() for item in self.store.query('SELECT path FROM paths WHERE id=?', (plan['video'],))):  # 防止并发登记的新入口被遗漏。
                     raise OSError('仍有登记入口存在，保留元数据并停止提交。')  # 不把部分删除伪报为完成。
-                with self.store.lock, self.store.db:  # 文件已回收时，数据库删除一次性提交。
-                    self.store.db.execute('DELETE FROM paths WHERE id=?', (plan['video'],))  # 不删除后来绑定到其他 ID 的路径。
-                    self.store.db.execute('DELETE FROM videos WHERE id=?', (plan['video'],))  # 同步移除历史、收藏、评分和标签关系。
-                    self.store.db.execute('UPDATE cleanup_jobs SET state="done",error=NULL,updated=? WHERE video=?',(time.time(),plan['video']))
-                    self.store.db.execute('UPDATE deletion_jobs SET state="done",error=NULL,updated=? WHERE id=?', (time.time(), job))  # 任务完成与元数据删除保持原子性。
+                self._commit(job, plan)  # 文件已回收时，数据库删除一次性提交。
                 logging.info('视频已移至回收站 %s 共 %s 个入口', plan['video'], len(plan['paths']))  # 不记录虚假的成功状态。
                 return plan  # 返回显示所需的名字和入口数。
             except Exception as error:  # 其他程序占用、磁盘或数据库故障均可重试。
