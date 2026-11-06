@@ -107,10 +107,12 @@ class ChildPanel(QFrame):  # 已由用户展开的子标签区域也可直接接
         self.editor.drop_tag(event, self.name)  # 避免两套不同的分类行为。
 
 class TagEditor(QDialog):  # 参考图式胶囊标签卡，父类只在主动点击后展示子类。
-    def __init__(self, tags, schema, parent=None):  # 只编辑传入的标签草稿。
+    def __init__(self, tags, schema, parent=None, *, baseline_schema=None, renames=None, target_name=None):  # 只编辑传入的标签草稿。
         super().__init__(parent)  # 打开期间不强制暂停视频。
         self.schema = deepcopy(schema)  # 只有应用后才修改全局分类。
-        self._origins = {name: name for name in schema}
+        baseline = schema if baseline_schema is None else baseline_schema
+        self._origins = {(renames or {}).get(name, name): name for name in baseline
+                         if (renames or {}).get(name, name) in schema}
         self.selected = set(tags)  # 读取当前视频已有标签。
         for name in self.selected:  # 兼容尚未进入公共字典的旧标签。
             self.schema.setdefault(name, {'name': name, 'kind': 'major', 'parent': None, 'is_parent': False})  # 普通根标签可以直接点击选择。
@@ -150,6 +152,12 @@ class TagEditor(QDialog):  # 参考图式胶囊标签卡，父类只在主动点
         self.search.setFixedWidth(160)  # 不挤占胶囊区域。
         header.addWidget(self.search)  # 顶部只保留一个辅助操作。
         layout.addLayout(header)  # 与主标签区分隔。
+        if target_name:
+            target = QLabel(target_name)
+            target.setTextFormat(Qt.PlainText)
+            target.setWordWrap(True)
+            target.setToolTip(target_name)
+            layout.addWidget(target)
         self.scroll = QScrollArea()  # 多标签时只滚动胶囊区域。
         self.scroll.setWidgetResizable(True)  # 宽度变化时自动换行。
         self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)  # 不产生横向滚动条。
@@ -416,8 +424,9 @@ class TagEditor(QDialog):  # 参考图式胶囊标签卡，父类只在主动点
             return  # 暂不应用。
         super().accept()  # 成功后继续原来的全局迁移和自动评分流程。
 
-    def enable_management(self):
-        self.setStyleSheet('QFrame#tagCard { border:none; background:transparent; } QScrollArea { border:none; background:transparent; } QPushButton { padding:5px 10px; }')
+    def enable_management(self, *, embedded=True):
+        if embedded:
+            self.setStyleSheet('QFrame#tagCard { border:none; background:transparent; } QScrollArea { border:none; background:transparent; } QPushButton { padding:5px 10px; }')
         self.title.setObjectName('tagManager')
         self.title.setProperty('role', 'quiet')
         self.title.toggled.connect(self.set_management)

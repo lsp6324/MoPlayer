@@ -85,6 +85,9 @@ def run(destination):
         check('文件页载入独立样本', wait(lambda: not loaded.pending) and loaded.outcome.succeeded)
         browsing = window.library_controller.browsing
         view = window.library_view
+        # Loading completes before a queued layout/show pass on some desktops.
+        assert wait(lambda: any(control.isVisible() and control.property('current')
+                                for control in view.folder_navigation.findChildren(QPushButton)))
         root_button = next(control for control in view.folder_navigation.findChildren(QPushButton)
                            if control.isVisible() and control.property('current'))
         drive_button = next(control for control in view.folder_navigation.findChildren(QPushButton)

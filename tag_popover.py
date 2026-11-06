@@ -36,7 +36,8 @@ class TagPanel(HoverPanel):
             self.content.removeWidget(self.editor)
             self.editor.deleteLater()
         self.video_id = draft.video_id
-        self.editor = TagEditor(draft.values.tags, draft.values.schema, self.body)
+        self.editor = TagEditor(draft.values.tags, draft.values.schema, self.body,
+                                baseline_schema=draft.baseline.schema, renames=draft.values.renames)
         self.editor.setWindowFlags(Qt.Widget)
         self.editor.setAttribute(Qt.WA_TranslucentBackground, False)
         self.editor.setMinimumSize(0, 0)

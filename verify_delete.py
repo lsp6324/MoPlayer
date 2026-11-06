@@ -7,7 +7,7 @@ import time  # 等待异步文件任务与播放状态。
 from pathlib import Path  # 所有样例均放入指定隔离目录。
 from PySide6.QtCore import Qt, QThreadPool  # 驱动组合快捷键与等待任务结束。
 from PySide6.QtTest import QTest  # 发送真实鼠标和键盘事件。
-from PySide6.QtWidgets import QApplication, QLineEdit, QDialog  # 检查文本和弹窗优先规则。
+from PySide6.QtWidgets import QApplication, QLineEdit, QDialog, QCheckBox, QDialogButtonBox
 from core import scan, Archiver  # 验证正式上下文与多标签归档。
 
 def run(destination, *, recycle=None):  # 默认核对真实回收站；测试可显式注入保留文件的回收器。
@@ -49,8 +49,17 @@ def run(destination, *, recycle=None):  # 默认核对真实回收站；测试�
         if not result:  # 不继续扩大失败后的文件操作范围。
             raise AssertionError(name)  # 让进程返回失败状态。
     def press():  # 从视频表面发送真实 Ctrl+D。
+        if window.has_pending_file_tasks():
+            if window.media_menu.active_dialog is not None:
+                window.media_menu.active_dialog.reject()
+            window.recovery.retry()
+            return
         window.player_view.surface.setFocus()  # 避免测试输入框影响后续按键。
         QTest.keyClick(window.player_view.surface, Qt.Key_D, Qt.ControlModifier)  # 经过生产事件过滤器。
+        dialog = window.media_menu.active_dialog
+        assert dialog is not None
+        dialog.findChild(QCheckBox, 'deleteLocalFiles').setChecked(True)
+        dialog.findChild(QDialogButtonBox).button(QDialogButtonBox.Ok).click()
     try:  # 出错仍保存验收结果并安全关闭。
         window.load_folder(str(samples))  # 通过异步导入建立浏览树。
         check('异步导入四条样例', wait(lambda: window.library_controller.browsing is not None))  # 等待完整快照。

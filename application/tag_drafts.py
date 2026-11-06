@@ -46,7 +46,9 @@ class TagDrafts:
         return any(draft.operation is not None for draft in self._drafts.values())
 
     def open_current(self):
-        video_id = self.current_video()
+        return self.open_for(self.current_video())
+
+    def open_for(self, video_id):
         if not video_id or not self.can_edit():
             return None
         draft = self._drafts.get(video_id)
@@ -55,6 +57,12 @@ class TagDrafts:
             draft = TagDraft(video_id, values.copy(), values.copy())
             self._drafts[video_id] = draft
         return draft
+
+    def discard(self, video_id):
+        draft = self._drafts.get(video_id)
+        if draft is not None and draft.operation is not None:
+            raise RuntimeError('Cannot discard a tag draft while it is saving')
+        self._drafts.pop(video_id, None)
 
     def update(self, video_id, values):
         if video_id in self._drafts:

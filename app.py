@@ -2,7 +2,7 @@ import json  # 读取视频标签和诊断数据。
 import logging  # 记录可追踪的运行错误。
 import sys  # 区分源码和便携运行方式。
 from pathlib import Path  # 处理便携数据路径。
-if len(sys.argv) == 3 and sys.argv[1] in ('--ui-refresh-test', '--seek-notice-test', '--file-workflows-test', '--archive-settings-test', '--media-header-test', '--rename-test', '--continuous-classification-test', '--portable-layout-test', '--storage-test', '--accent-test', '--background-test', '--image-test', '--action-notice-test', '--catalog-test'):
+if len(sys.argv) == 3 and sys.argv[1] in ('--ui-refresh-test', '--seek-notice-test', '--file-workflows-test', '--archive-settings-test', '--media-header-test', '--rename-test', '--continuous-classification-test', '--portable-layout-test', '--storage-test', '--accent-test', '--background-test', '--image-test', '--action-notice-test', '--catalog-test', '--media-menu-test'):
     # A windowed EXE has no stderr; keep explicit test failures reviewable.
     _test_output = Path(sys.argv[2]).absolute()
     _test_output.mkdir(parents=True, exist_ok=True)
@@ -15,7 +15,7 @@ from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication, QVBoxLayout, QPushButton, QMessageBox, QDialog, QListWidget, QListWidgetItem, QLineEdit, QComboBox, QAbstractSpinBox, QTextEdit, QPlainTextEdit
 from background_work import Work
 from thumbnail_cache import ThumbnailCache
-from application.library import LibraryController
+from application.library import LibraryController, LibrarySelection
 from infrastructure.library_scanner import LibraryScanner
 from infrastructure.thumbnails import ThumbnailService
 from infrastructure.image_loader import ImageLoader
@@ -34,6 +34,8 @@ from application.recovery import Recovery
 from application.file_results import FileAction, PlaybackTarget
 from infrastructure.library_repository import LibraryRepository
 from infrastructure.library_watch import LibraryWatch
+from infrastructure.explorer import reveal_file
+from media_context_menu import MediaContextMenu
 from core import Store, Archiver, media_kind
 from video_delete import DeletionManager  # 以可恢复任务回收全部登记入口。
 from tag_migration import TagMigration  # 以可恢复批次同步全局标签层级。
@@ -103,7 +105,7 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
             available=lambda: not self.busy, playback_target=self._playback_target,
             navigation_busy=self._navigation_busy, mark_deleting=self.thumbnail_service.mark_deleting,
             refresh_deleted=self.refresh_deleted, save=self.save, clear=self.clear_player,
-            start=self.start, notify=self._file_notice)
+            start=self.start, notify=self._file_notice, forget=lambda vid: self.deleter.forget(vid))
         self.recovery = Recovery(self.file_tasks, self.catalog, self.tag_drafts,
             recover_archive=lambda: self.archiver.recover(), recover_tags=lambda: self.tag_migration.recover(),
             tags_renamed=self.library_controller.rename_catalog_tags,
@@ -127,6 +129,12 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
         self.library_view.videoRequested.connect(self.open_library_video)
         self.library_view.unfavoriteRequested.connect(self.remove_library_favorite)
         self.library_view.historyClearRequested.connect(self.clear_history)
+        self.media_menu = MediaContextMenu(self, repository=self.catalog, drafts=self.tag_drafts,
+            classification=self.classification, renaming=self.renaming, deletion=self.deletion,
+            prepare=lambda action: self.user_actions.request(action, self.player_view.options.flush_pending),
+            dismiss_popups=self.player_view.options.dismiss,
+            available=lambda: not self.busy and not self.has_pending_file_tasks(), reveal=reveal_file)
+        self.library_view.mediaContextRequested.connect(self.media_menu.open)
         self.setWindowIcon(QIcon(str(BUNDLE / 'assets/yunli.ico')))  # 窗口与任务栏使用同一云璃 Q 版图标。
         self.player.set_hwnd(self.player_view.video_handle())
         self.player.audio_set_volume(80)
@@ -504,6 +512,7 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
         self.thumbnail_service.mark_deleted(vids)
         self.library_controller.exclude(vids, self.context)
         for vid in vids:
+            self.tag_drafts.discard(vid)
             self.thumbnails.images.pop(vid, None)
             self.thumbnails.errors.pop(vid, None)
             try:
@@ -540,7 +549,7 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
             context = (self.context, self.location)
         elif context is None and selected and selected.video_id == vid and selected.context is not None:
             context = (selected.context, selected.location)
-        self.user_actions.request(lambda: self.deletion.delete(vid, context), self.player_view.options.flush_pending)
+        self.media_menu.confirm_delete(LibrarySelection(vid, context[0] if context else None, context[1] if context else None))
 
 
     def favorite(self, toggle=False):
@@ -603,7 +612,7 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
             if notice.action is FileAction.TAGS:
                 self.message(f'标签已应用，已同步 {notice.count} 个视频。')
             elif notice.action is FileAction.NEXT:
-                self.message('已移入回收站，正在播放下一个视频。' if notice.count else '已移入回收站，没有下一个视频，播放已停止。')
+                self.message('已删除记录，正在播放下一个视频。' if notice.count else '已删除记录，没有下一个视频，播放已停止。')
             elif notice.action is FileAction.RECOVERY and not notice.continuing:
                 self.message('文件任务恢复完成。')
         if notice.score_video is not None:
@@ -699,8 +708,8 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
 
 
     def help_dialog(self):  # 显示核心交互和部署说明。
-        self.message('Ctrl+D：选中视频优先，否则删除当前视频；移入回收站后自动播放下一条，末尾停止。')  # 帮助关闭后仍显示新增快捷键说明。
-        QMessageBox.information(self, 'MoPlayer 使用说明', f'拖入一个文件夹，双击视频播放。\n空格：播放/暂停；X/Z：下一个/上一个；左方向键/A：后退5秒；右方向键/D：快进5秒。\nEnter：切换仅视频全屏；鼠标移动显示控制栏；Esc：优先关闭弹窗，其次恢复原布局。\nQ：标签确认后归档；R：整数评分；W：仅添加收藏；Ctrl+D：移入回收站后播放下一条。\n归档根目录：{self.storage.root or "未设置，请在右上角设置中选择"}\n归档期间安全释放并重载视频，保持进度、暂停状态与原播放顺序。\n数据保存在程序旁 data 目录；启动不会恢复目录或自动播放。\n资源管理器缩略图取决于系统缩略图提供程序，详见交付说明。')  # 说明四个进度键并区分 D 与 Ctrl+D。
+        self.message('Ctrl+D：确认删除选中或当前视频的软件记录；可勾选同时回收本地文件。')
+        QMessageBox.information(self, 'MoPlayer 使用说明', f'拖入一个文件夹，双击视频播放。\n空格：播放/暂停；X/Z：下一个/上一个；左方向键/A：后退5秒；右方向键/D：快进5秒。\nEnter：切换仅视频全屏；鼠标移动显示控制栏；Esc：优先关闭弹窗，其次恢复原布局。\nQ：标签确认后归档；R：整数评分；W：仅添加收藏；Ctrl+D：确认删除软件记录，可选同时回收本地文件。\n归档根目录：{self.storage.root or "未设置，请在右上角设置中选择"}\n归档期间安全释放并重载视频，保持进度、暂停状态与原播放顺序。\n数据保存在程序旁 data 目录；启动不会恢复目录或自动播放。\n资源管理器缩略图取决于系统缩略图提供程序，详见交付说明。')  # 说明四个进度键并区分 D 与 Ctrl+D。
 
     def explorer_thumbnail_dialog(self):  # 为资源管理器的视频缩略图提供一次性启用与修复入口。
         if getattr(self, 'thumbnail_setup_pending', False):  # 避免同时运行多个组件配置任务。
@@ -802,6 +811,9 @@ def main():  # 程序统一启动入口。
 if __name__ == '__main__':  # 仅直接运行时启动应用。
     if len(sys.argv) == 3 and sys.argv[1] == '--catalog-test':
         from verify_catalog import run
+        sys.exit(run(sys.argv[2]))
+    if len(sys.argv) == 3 and sys.argv[1] == '--media-menu-test':
+        from verify_media_menu import run
         sys.exit(run(sys.argv[2]))
     if len(sys.argv) == 3 and sys.argv[1] == '--live-library-test':
         from verify_live_library import run

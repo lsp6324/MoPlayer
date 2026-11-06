@@ -16,6 +16,8 @@
 |---|---|
 | application/operations.py | 异步操作完成结果，以及提交草稿后继续用户动作的协调。 |
 | application/tag_drafts.py | 按视频 ID 管理标签基线、工作草稿、重命名映射和正在提交的值；成功才确认基线并将后续重命名重基到已提交名称，失败及恢复保留草稿。 |
+| media_context_menu.py | 四页共用的媒体右键菜单和编辑／确认视图；接收冻结的 LibrarySelection 及显式应用服务端口，等待草稿和任务屏障后收集输入。标签通过 TagDrafts.open_for 编辑指定 ID，评分／收藏／重命名／删除均走既有应用流程；异步提交期间保留窗口，失败保留输入，点击文件夹或空白处不创建媒体菜单。删除默认仅清记录，勾选本地文件才请求回收；Ctrl+D 复用同一确认入口。 |
+| infrastructure/explorer.py | 接收经资料库身份解析的有效文件路径，以独立参数调用 Windows 资源管理器定位文件，不经过命令 shell。 |
 | application/tag_labels.py | 纯父子路径和展示标签推导；卡片、标题、筛选及管理搜索统一使用“父 › 子”表示，祖先与后代重复选择不重复展示。持久选择仍使用原标签名。 |
 | tag_editor.py | 标签草稿的选择、搜索、拖放及展开视图；胶囊本体与独立箭头分别表达选择和展开。展开集合与滚动只属于视图，不改变持久选择。TagPanel 经 PlayerView 接收按钮键盘意图，避免落入全局播放快捷键。 |
 | tag_flow.py | 仅依赖 Qt 的共享 FlowLayout，统一测量与放置胶囊行及其下方子区，递归支持嵌套；标签管理和库筛选共用，不持有选择、草稿、筛选规则或业务引用。 |
@@ -30,7 +32,7 @@
 | application/archive_configuration.py | 归档设置提交、文件任务准入及全库结果刷新，不访问具体文件、设置文件或 Qt。 |
 | infrastructure/archive_configuration.py | 用 archive_setting_jobs 冻结新根目录、目录依据、标签结构和全部已归档视频，重放既有 Archiver 子任务；所有视频完成后原子保存配置并切换有效规则。 |
 | archive_settings_dialog.py / storage_settings.py | 前者只展示归档设置草稿并调用应用端口；后者读取旧配置默认值、原子保存 root 与 archive_folders 并校验根目录能力，不再持有 UI 或窗口业务引用。 |
-| application/deletion.py | 稳定 ID 删除目标、异步目录准备、删除屏障清理及删除后的可取消导航。 |
+| application/deletion.py | 稳定 ID 删除目标、异步目录准备、删除屏障清理及删除后的可取消导航。delete_files=false 直接调用注入的 forget，不依赖文件仍可定位；删除当前项后仍按固定播放上下文继续，非当前项不释放媒体。仅删记录完成后刷新文件页，保留文件可重新作为未标记记录列出。 |
 | application/recovery.py | 固定待恢复记录，保持服务恢复顺序，根据实际数据库记录刷新/排除视频；成功后对账草稿。 |
 | application/file_results.py | FileNotice、播放上下文快照与完成交付协议；状态刷新结束后才完成依赖操作，刷新异常不会误放行换片。 |
 | application/playback.py | 播放会话中的续播、未确认跳转、终态和进度持久化规则。 |

@@ -417,3 +417,33 @@ def test_rejected_reentrant_task_cannot_unpublish_the_running_completion():
     assert h.tasks.completion.pending
     h.finish()
     assert first.outcome.succeeded and h.visible['b']=='b' and h.tasks.completion is None
+
+
+@pytest.mark.parametrize('video_id', ['a', 'b'])
+def test_record_only_deletion_skips_path_preparation_and_preserves_other_playback(video_id):
+    h = Harness()
+    refreshed = []
+    h.deletion.library.refresh_browsing = lambda: refreshed.append(True)
+    h.deletion.forget = h.submit_delete
+    operation = h.deletion.delete(video_id, delete_files=False)
+    assert h.preparation.pending and len(h.queue) == 1
+    assert h.policy.release_media == (video_id == 'a')
+    h.finish()
+    assert operation.outcome.succeeded and video_id in h.deleted and refreshed
+    assert video_id not in h.repo.rows
+    if video_id == 'b':
+        assert h.target.video_id == 'a' and not h.played
+    else:
+        assert h.played == [(h.target.context, ('original', 1))]
+
+
+@pytest.mark.parametrize('delete_files', [True, False])
+def test_current_delete_continues_original_playback_queue_not_browsed_selection(delete_files):
+    h = Harness()
+    original = h.target
+    h.deletion.library.refresh_browsing = lambda: None
+    h.deletion.forget = h.submit_delete
+    operation = h.deletion.delete('a', (object(), ('different-browser-queue', 99)), delete_files=delete_files)
+    h.finish()
+    assert operation.outcome.succeeded
+    assert h.played == [(original.context, ('original', 1))]

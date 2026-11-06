@@ -1285,6 +1285,11 @@ def test_sidebar_delete_freezes_selected_id_without_playing(window, tmp_path):
     window.play_path = Mock()
     original = window.current
     window.delete_video()
+    from PySide6.QtWidgets import QCheckBox, QDialogButtonBox
+    dialog = window.media_menu.active_dialog
+    assert dialog is not None and not window.busy and not tasks
+    dialog.findChild(QCheckBox, 'deleteLocalFiles').setChecked(True)
+    dialog.findChild(QDialogButtonBox).button(QDialogButtonBox.Ok).click()
     assert window.busy and window.current == original and len(tasks) == 1
     function, ready = tasks.pop()
     # Changing selection during the scan cannot retarget the requested delete.
@@ -1420,3 +1425,207 @@ def test_recent_tab_offers_confirmed_history_clearing(window, monkeypatch):
     monkeypatch.setattr(QMessageBox, 'exec', lambda box: QMessageBox.Yes)
     window.clear_history()
     assert window.library_controller.list_rows('videos') == []
+
+
+@pytest.fixture
+def context_target(window, tmp_path):
+    from core import Snapshot
+    path = tmp_path / '右键 目标.mp4'
+    path.write_bytes(b'context target')
+    video_id = window.store.register(path)
+    window.store.execute('UPDATE videos SET score=4,star=1,played=2,position=5000 WHERE id=?', (video_id,))
+    window.thumbnails.request = lambda vid: None
+    root = str(tmp_path)
+    snapshot = Snapshot(root, {root: ([], [(window.current, 'sample.mp4'), (video_id, path.name)])})
+    window.library_controller.adopt_snapshot(snapshot)
+    return video_id, path
+
+
+def context_action(window, video_id, caption):
+    from application.library import LibrarySelection
+    menu = window.media_menu.build_menu(LibrarySelection(video_id))
+    action = next(action for action in menu.actions() if action.text() == caption)
+    action.trigger()
+    return menu
+
+
+def context_wait(predicate):
+    deadline = time.monotonic() + 6
+    while time.monotonic() < deadline:
+        QApplication.processEvents()
+        if predicate():
+            return True
+        QTest.qWait(10)
+    return False
+
+
+@pytest.mark.parametrize('mode', ['files', 'catalog', 'videos', 'stars'])
+def test_all_pages_context_menu_freezes_clicked_identity_and_has_exactly_six_actions(window, context_target, mode):
+    from PySide6.QtTest import QSignalSpy
+    video_id, path = context_target
+    panel = window.library_view
+    panel.mediaContextRequested.disconnect(window.media_menu.open)
+    requested = QSignalSpy(panel.mediaContextRequested)
+    panel.show_mode(mode)
+    view = panel.files if mode == 'files' else panel.lists[mode]
+    assert context_wait(lambda: view.model().index_for_id(video_id).isValid()) if mode != 'files' else True
+    model = view.model()
+    index = next(model.index(n, 0) for n in range(model.rowCount()) if model.index(n, 0).data(Qt.UserRole) == video_id)
+    view.scrollTo(index)
+    QApplication.processEvents()
+    current = window.current
+    view.customContextMenuRequested.emit(view.visualRect(index).center())
+    assert requested.count() == 1
+    selection = requested.at(0)[0]
+    assert selection.video_id == video_id and window.current == current
+    menu = window.media_menu.build_menu(selection)
+    actions = [action for action in menu.actions() if not action.isSeparator()]
+    assert [action.text() for action in actions] == ['取消收藏', '编辑标签…', '评分…', '重命名…', '删除…', '在资源管理器中打开']
+    view.clearSelection()
+    actions[0].trigger()
+    assert window.catalog.video(video_id)['star'] == 0 and window.current == current
+    assert window.catalog.video(current)['star'] == 0
+
+
+def test_context_rating_and_explorer_use_clicked_target_without_playing_it(window, context_target):
+    from score_editor import ScoreEditor
+    video_id, path = context_target
+    current = window.current
+    window.play_path = Mock()
+    context_action(window, video_id, '评分…')
+    dialog = window.media_menu.active_dialog
+    assert isinstance(dialog, ScoreEditor) and dialog.value == 4
+    dialog.choose(0)
+    assert window.catalog.video(video_id)['score'] == 0 and window.catalog.video(current)['score'] is None
+    window.media_menu.reveal = Mock()
+    context_action(window, video_id, '在资源管理器中打开')
+    window.media_menu.reveal.assert_called_once_with(path)
+    assert window.current == current and not window.play_path.called
+
+
+def test_context_tag_failure_keeps_target_draft_and_dialog_then_can_retry(window, context_target):
+    from PySide6.QtWidgets import QDialogButtonBox
+    from application.operations import Outcome, Status
+    video_id, path = context_target
+    current = window.current
+    pending = Operation()
+    window.classification.apply_tags = Mock(return_value=pending)
+    context_action(window, video_id, '编辑标签…')
+    dialog = window.media_menu.active_dialog
+    dialog.chips['existing'].click()
+    dialog.buttons.button(QDialogButtonBox.Ok).click()
+    assert not dialog.isEnabled() and window.classification.apply_tags.call_args.args[0] == video_id
+    pending.finish(Outcome(Status.FAILED, error=PermissionError('save failed')))
+    assert dialog.isVisible() and dialog.isEnabled() and 'save failed' in dialog.hint.text()
+    assert window.tag_drafts.open_for(video_id).dirty and window.current == current
+    window.classification.apply_tags = Mock(return_value=Operation.success())
+    dialog.buttons.button(QDialogButtonBox.Ok).click()
+    assert window.media_menu.active_dialog is None
+    assert window.classification.apply_tags.call_args.args[:2] == (video_id, ['existing'])
+    assert not window.tag_drafts.open_for(video_id).dirty and path.exists()
+
+
+def test_context_rename_uses_original_identity_and_keeps_invalid_input_open(window, context_target):
+    from PySide6.QtWidgets import QDialogButtonBox, QLineEdit
+    video_id, path = context_target
+    current = window.current
+    window.play_path = Mock()
+    context_action(window, video_id, '重命名…')
+    dialog = window.media_menu.active_dialog
+    field = dialog.findChild(QLineEdit, 'mediaRenameField')
+    controls = dialog.findChild(QDialogButtonBox)
+    field.setText('invalid/name.mp4')
+    controls.button(QDialogButtonBox.Save).click()
+    assert dialog.isVisible() and path.exists()
+    field.setText('改名后的文件.mp4')
+    controls.button(QDialogButtonBox.Save).click()
+    assert context_wait(lambda: window.media_menu.active_dialog is None)
+    assert not path.exists() and window.catalog.resolve(video_id) == path.with_name('改名后的文件.mp4')
+    assert window.catalog.video(video_id)['id'] == video_id and window.current == current and not window.play_path.called
+
+
+def test_context_delete_confirmation_defaults_to_records_and_cancel_changes_nothing(window, context_target):
+    from PySide6.QtWidgets import QCheckBox, QDialogButtonBox
+    video_id, path = context_target
+    current = window.current
+    context_action(window, video_id, '删除…')
+    dialog = window.media_menu.active_dialog
+    assert not dialog.findChild(QCheckBox, 'deleteLocalFiles').isChecked()
+    dialog.findChild(QDialogButtonBox).button(QDialogButtonBox.Cancel).click()
+    assert path.exists() and window.catalog.video(video_id)['score'] == 4
+    window.deleter.recycle = Mock(side_effect=AssertionError('Must keep local files'))
+    context_action(window, video_id, '删除…')
+    dialog = window.media_menu.active_dialog
+    assert not dialog.findChild(QCheckBox, 'deleteLocalFiles').isChecked()
+    dialog.findChild(QDialogButtonBox).button(QDialogButtonBox.Ok).click()
+    assert context_wait(lambda: window.media_menu.active_dialog is None and not window.library_controller.refresh_pending)
+    assert window.catalog.video(video_id) is None and path.read_bytes() == b'context target'
+    assert not window.deleter.recycle.called and window.current == current
+    # A retained disk file can still appear as a fresh, unmarked file-page row.
+    rows = window.store.query('SELECT * FROM videos WHERE name=?', (path.name,))
+    assert rows and all(row['score'] is None and row['star'] == 0 and row['tags'] == '[]' and not row['in_library'] for row in rows)
+
+
+def test_context_delete_local_option_recycles_all_registered_links_only(window, context_target, tmp_path):
+    import os
+    from PySide6.QtWidgets import QCheckBox, QDialogButtonBox
+    video_id, path = context_target
+    linked = tmp_path / '另一个入口.mp4'
+    os.link(path, linked)
+    assert window.store.register(linked) == video_id
+    recycled = tmp_path / 'recycled'
+    recycled.mkdir()
+    window.deleter.recycle = lambda target: target.rename(recycled / target.name)
+    current = window.current
+    context_action(window, video_id, '删除…')
+    dialog = window.media_menu.active_dialog
+    dialog.findChild(QCheckBox, 'deleteLocalFiles').setChecked(True)
+    dialog.findChild(QDialogButtonBox).button(QDialogButtonBox.Ok).click()
+    assert context_wait(lambda: window.media_menu.active_dialog is None)
+    assert not path.exists() and not linked.exists() and window.catalog.video(video_id) is None
+    assert len(list(recycled.iterdir())) == 2 and window.current == current
+
+
+
+def test_context_pending_editor_rejects_escape_until_save_finishes(window, context_target):
+    from PySide6.QtWidgets import QDialogButtonBox
+    from application.operations import Outcome, Status
+    video_id, path = context_target
+    pending = Operation()
+    window.classification.apply_tags = Mock(return_value=pending)
+    context_action(window, video_id, '编辑标签…')
+    dialog = window.media_menu.active_dialog
+    dialog.chips['existing'].click()
+    dialog.buttons.button(QDialogButtonBox.Ok).click()
+    QTest.keyClick(dialog, Qt.Key_Escape)
+    dialog.close()
+    assert window.media_menu.active_dialog is dialog and dialog.isVisible()
+    pending.finish(Outcome(Status.SUCCEEDED))
+    assert window.media_menu.active_dialog is None
+
+
+
+def test_context_action_waits_for_current_draft_and_does_not_retarget_selection(window, context_target):
+    from application.operations import Outcome, Status
+    video_id, path = context_target
+    pending = Operation()
+    window.player_view.options.flush_pending = lambda: pending
+    context_action(window, video_id, '取消收藏')
+    assert window.catalog.video(video_id)['star'] == 1
+    window.library_view.files.clearSelection()
+    pending.finish(Outcome(Status.SUCCEEDED))
+    assert window.catalog.video(video_id)['star'] == 0 and window.catalog.video(window.current)['star'] == 0
+
+
+def test_file_folder_and_empty_space_do_not_open_media_menu(window, tmp_path):
+    from core import Snapshot
+    from PySide6.QtTest import QSignalSpy
+    root, child = str(tmp_path), str(tmp_path / 'child')
+    window.library_controller.adopt_snapshot(Snapshot(root, {root: ([child], []), child: ([], [])}))
+    view = window.library_view
+    view.mediaContextRequested.disconnect(window.media_menu.open)
+    requested = QSignalSpy(view.mediaContextRequested)
+    QApplication.processEvents()
+    view.files.customContextMenuRequested.emit(view.files.visualRect(view.files.model().index(0, 0)).center())
+    view.files.customContextMenuRequested.emit(QPoint(12, view.files.viewport().height() - 1))
+    assert requested.count() == 0

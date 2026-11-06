@@ -164,3 +164,19 @@ def test_pending_deletion_cannot_be_reinterpreted_as_another_mode(tmp_path):
     with pytest.raises(RuntimeError, match='本地文件删除'):
         DeletionManager(store, recycle).forget(vid)
     assert path.exists()
+
+
+
+def test_forget_cancels_retired_entry_cleanup_without_deleting_it(tmp_path):
+    from core import identity
+    from infrastructure.archive_cleanup import ArchiveCleanup
+    store, source, path, vid, recycled, recycle = setup(tmp_path)
+    retired = source / 'retired.mp4'
+    os.link(path, retired)
+    info = retired.stat()
+    store.execute('INSERT INTO cleanup_jobs VALUES(?,?,?,?,?,?,?,?,?)',
+                  ('retired', vid, str(retired), identity(retired), info.st_size, info.st_mtime_ns, 'pending', None, 0))
+    DeletionManager(store, recycle).forget(vid)
+    assert ArchiveCleanup(store).drain() == 0
+    assert retired.exists() and path.exists()
+    assert store.query('SELECT state FROM cleanup_jobs')[0]['state'] == 'done'

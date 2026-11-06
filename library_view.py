@@ -27,6 +27,7 @@ class LibraryView(QFrame):
     videoRequested = Signal(object)
     unfavoriteRequested = Signal(str)
     historyClearRequested = Signal()
+    mediaContextRequested = Signal(object, object)
 
     def __init__(self, controller, thumbnails, current_video, theme_owner, *, preferences=None):
         super().__init__(theme_owner)
@@ -103,6 +104,9 @@ class LibraryView(QFrame):
         self.catalog_panel.viewChanged.connect(lambda mode: self._remember_preferences())
         self.catalog_panel.openRequested.connect(self._open_catalog)
         self.catalog_panel.retryRequested.connect(lambda: self.controller.query_catalog(self.catalog_panel.filters))
+        for mode, view in (('files', self.files), *self.lists.items()):
+            view.setContextMenuPolicy(Qt.CustomContextMenu)
+            view.customContextMenuRequested.connect(lambda point, mode=mode, view=view: self._media_context(view, mode, point))
         layout.addWidget(self.stack, 1)
         self.cancel_button = button('取消扫描', lambda: controller.cancel(), role='quiet')
         self.cancel_button.hide()
@@ -294,6 +298,21 @@ class LibraryView(QFrame):
         vid = index.data(Qt.UserRole)
         if vid:
             self.videoRequested.emit(LibrarySelection(vid, self.controller.browsing, index.data(LOCATION_ROLE)))
+
+    def _media_context(self, view, mode, point):
+        index = view.indexAt(point)
+        if not index.isValid() or not index.data(Qt.UserRole):
+            return
+        view.setCurrentIndex(index)
+        video_id = index.data(Qt.UserRole)
+        if mode == 'files':
+            selection = LibrarySelection(video_id, self.controller.browsing, index.data(LOCATION_ROLE))
+        elif mode == 'catalog':
+            selection = self.controller.catalog_selection(video_id, allow_pending=True)
+        else:
+            selection = LibrarySelection(video_id)
+        if selection is not None:
+            self.mediaContextRequested.emit(selection, view.viewport().mapToGlobal(point))
 
     def selection(self):
         view = self.files if self.mode == 'files' else self.lists[self.mode]

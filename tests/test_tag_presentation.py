@@ -182,3 +182,18 @@ def test_saved_rename_rebases_a_newer_draft_to_the_committed_name():
     first.finish(Outcome(Status.SUCCEEDED))
     assert draft.baseline.tags == ['拍摄'] and draft.values.tags == ['影像']
     assert draft.values.renames == {'拍摄': '影像'} and draft.dirty
+
+
+
+def test_reopened_target_editor_preserves_pending_rename_and_new_tag_origins():
+    app = QApplication.instance() or QApplication([])
+    schema = deepcopy(SCHEMA)
+    schema['自然'] = dict(schema.pop('风景'), name='自然')
+    schema['山川']['parent'] = '自然'
+    schema['新标签'] = dict(name='新标签', parent=None, is_parent=False)
+    editor = TagEditor(['新标签'], schema, baseline_schema=SCHEMA, renames={'风景': '自然'})
+    assert editor.renames == {'风景': '自然'}
+    assert editor.rename_tag('新标签', '另一个新标签')
+    assert editor.renames == {'风景': '自然'}
+    editor.deleteLater()
+    app.processEvents()

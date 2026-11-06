@@ -61,14 +61,15 @@ class HeartButton(QAbstractButton):  # 一颗心的左右两半分别对应一�
         painter.drawPath(path)  # 保留整颗心的清晰外轮廓。
 
 class ScoreEditor(QDialog):  # 五颗心仍兼容零分与独立未评分状态。
-    def __init__(self, video, parent=None):  # 绑定打开时的视频身份。
+    def __init__(self, video, parent=None, *, submit=None, show_name=False):  # 绑定打开时的视频身份。
         super().__init__(parent)  # 不强制暂停播放。
+        self.submit = submit
         self.colors = theme_tokens(parent) if parent else LIGHT_TOKENS
         self.value, self.preview = video['score'], None  # 实际分数与悬停预览分离。
         self.setWindowTitle('视频评分')  # 保留系统可识别的弹窗名称。
         self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)  # 使用参考图中的轻量卡片。
         self.setAttribute(Qt.WA_TranslucentBackground)  # 圆角外侧保持透明。
-        self.setFixedSize(360, 150)  # 五颗心无需占用原十按钮网格的空间。
+        self.setFixedSize(360, 180 if show_name else 150)  # 右键编辑时标明操作目标。
         root = QVBoxLayout(self)  # 白卡片填满弹窗。
         root.setContentsMargins(0, 0, 0, 0)  # 去掉系统窗体留白。
         card = QFrame()  # 白底圆角容器。
@@ -78,6 +79,11 @@ class ScoreEditor(QDialog):  # 五颗心仍兼容零分与独立未评分状态�
         self.setStyleSheet(Template('#scoreCard { background:$surface_plain; border:1px solid $line; border-radius:13px; } QLabel { color:$text_mid; background:transparent; border:none; font-size:15px; } QPushButton { background:transparent; border:none; color:$text_dim; padding:3px; font-size:14px; } QPushButton:hover { color:$accent; }').substitute(**self.colors))
         layout = QVBoxLayout(card)  # 上方五颗心，下方零分、读数和清除。
         layout.setContentsMargins(18, 17, 18, 15)  # 使用均匀的卡片边距。
+        if show_name:
+            target = QLabel(self.fontMetrics().elidedText(video['name'], Qt.ElideMiddle, 324))
+            target.setTextFormat(Qt.PlainText)
+            target.setToolTip(video['name'])
+            layout.addWidget(target)
         row = QHBoxLayout()  # 五颗心等间距排列。
         row.setSpacing(10)  # 保留足够的左右半颗点击间隔。
         self.hearts = [HeartButton(self, number) for number in range(1, 6)]  # 只创建五颗心形控件。
@@ -108,4 +114,7 @@ class ScoreEditor(QDialog):  # 五颗心仍兼容零分与独立未评分状态�
 
     def choose(self, value):  # 点击半颗、零分或清除后一次提交。
         self.value = value  # 交给原评分与归档同步逻辑处理。
-        self.accept()  # 不增加额外确认步骤。
+        if self.submit is None:
+            self.accept()  # 不增加额外确认步骤。
+        else:
+            self.submit(value)
