@@ -37,7 +37,7 @@
 | infrastructure/library_preferences.py | 原子保存 data/library.json 中的筛选排序、列表/网格视图与当前页面，校验损坏输入。启动只采用筛选与视图，页面字段不决定打开哪一页；恢复不播放、不扫描。 |
 | catalog_panel.py / catalog_filter_popup.py / catalog_delegate.py / media_badges.py | 第一者持有工具栏、结果数、排序、列表/网格切换、已选条件摘要和库行视图，搜索合并计时也在此；第二者是筛选浮窗，只发出筛选值、重置与关闭意图，不查询存储或读取媒体；其 FilterTagChoices 持有独立的展开集合，胶囊选择与箭头展开分离，使用 tag_flow 行下布局，搜索结果按完整路径平铺，展开只调整布局和滚动，不发筛选值；已选摘要仍使用平铺 TagChoices。第三者按当前排布绘制已准备的库行，列表尺寸复用 library_views 的 THUMB_ROW / THUMB_VIEW / THUMB_RADIUS，与文件、最近、收藏页保持相同卡片比例；第四者向库行及 MediaHeader 提供相同胶囊和收藏绘制，评分复用 heart_rating。 |
 | infrastructure/library_repository.py | 面向应用和 UI 的视频、收藏、进度、目录及任务查询/写入；集中使用 SQL。所有视频行经 presented() 统一带出 kind、原始 tag_names 和层级 tag_labels，使最近／收藏加载不会让库丢展示字段；原始名用于匹配，完整路径用于展示。 |
-| infrastructure/library_scanner.py | 将既有扫描及 Snapshot 导航规则适配为资料库应用接口；统一拖放候选校验，执行前重新检查文件并固定视频身份，单视频扫描父目录。格式沿用 core.EXTENSIONS，不改变扫描、身份或播放顺序。 |
+| infrastructure/library_scanner.py | 将既有扫描及 Snapshot 导航规则适配为资料库应用接口；统一拖放候选校验，执行前重新检查文件并固定视频身份，单视频扫描父目录。directory 仅枚举指定层并登记直接媒体，DirectorySnapshot 保留未读取子目录及既有一层同级播放边界；refresh_snapshot 按快照类型选择单层或既有递归刷新，单层目录删除后退到现存父级。格式、身份及实际切片规则沿用 core，不改底层扫描。 |
 | infrastructure/library_watch.py | Qt 目录监听、400ms 通知合并、失败/忙碌重试；监听扫描内目录及根的最近现存父级，2 秒探测根和未成功监听的目录以补偿遗漏。只请求控制器刷新，不读控件或拥有浏览/播放快照。关闭时停止监听和调度。 |
 | infrastructure/thumbnails.py | 缩略图磁盘缓存、FFmpeg 子进程和文件任务期间的暂停/删除屏障，不访问控件。 |
 | infrastructure/image_loader.py | QImageReader 读取静态图片：应用 EXIF 方向、按长边降采样；由调用方放到工作线程，不接触控件、播放状态或数据库。 |
@@ -46,7 +46,7 @@
 | appearance.BackgroundCanvas / background_region.py | 画布拥有背景像素、强度与全窗裁切；BackgroundRegion 只通过注入的绘制端口呈现同一画布局部，供原生视频宿主上方的空闲区域使用，不查询存储或媒体。背景变更刷新主题透明角色，尺寸变更仅使空闲区重绘，不移动/重建视频宿主。 |
 | appearance.py / appearance_dialog.py / theme.py | Appearance 原子保存背景、主题和强调色；AppearanceDialog 拥有编辑草稿、预览、保存失败保留及取消还原，通过显式 UI 回调连接；theme 统一推导普通/全屏强调色，不在各视图另写固定强调色。 |
 | library_view.py | 左侧资料库的分页、当前目录及各目录的选择/滚动位置；浏览已扫描目录仅更换可见投影，向窗口表达导入、打开视频、取消收藏等意图，不访问具体数据库或文件服务。文件页装配 VideoDelegate；最近／收藏装配 CatalogDelegate，其 plain_unlisted 配置仅依据已准备行的 in_library 为未入库记录回退到 VideoDelegate，已入库记录与库共用绘制，不查询或镜像成员状态。 |
-| folder_navigation.py | 独立路径导航组件；导入根边界内的上一级、可点击路径、长路径折叠菜单与提示，只发目录意图，不持有资料库或播放对象。根按钮保留完整路径，绘制时从中间省略以保留盘符及末尾目录；子目录从末尾省略。无障碍名称和悬停保持完整文本，不用截断文本反复改变布局尺寸。 |
+| folder_navigation.py | 独立路径导航组件；提供从磁盘／共享根开始的上一级、可点击路径、长路径折叠菜单与提示，只发目录意图，不持有资料库或播放对象。盘符独立且始终保留，只有到实际根才禁用上一级。无障碍名称和悬停保持原文本，不用截断文本反复改变布局尺寸。 |
 | library_views.py / thumbnail_cache.py / background_work.py | 单目录 FolderModel、最近/收藏 VideoListModel 与行绘制、保留拖放的 DropList、Qt 图像缓存、工作线程结果交付。FolderModel 的可见行保留快照原索引，绘制只读取模型准备好的元数据。 |
 | player_view.py | 播放区控件、元数据展示、时间轴展示、浮层与全屏 UI 装配；接收 PlayerInfo / PlaybackStatus 与进度，发出操作意图，不读数据库或具体播放器。 |
 | action_notice.py | 播放区右上角的非交互操作回执，复用 FloatingSurface；只接收标题、详情和强调色，持有 2000ms 展示计时及定位，避开可见全屏标题，不读业务数据。 |
@@ -80,7 +80,7 @@
 - 文件页拖放经 DropList 的单 URL / 本地路径检查与注入的 can_import 端口后表达路径意图；窗口通过 UserActions 等待保存，再调用 LibraryController.import_path。它与 load_folder 共用浏览任务、稳定 ID 定位及完成结果，不增加另一组扫描状态。文件夹拖放不主动播放，单视频加载父目录并续播目标；显式拖放任务被后续播放选择取消，纯文件夹选择器浏览仍独立于播放。执行时目标消失、扫描失败或身份不匹配均不替换旧目录/播放。
 - 浏览快照与窗口的播放快照分开。主动选片取消旧的待播放请求和导航，但纯目录浏览可继续；文件任务与关闭取消全部资料库任务。最近/收藏打开和删除按稳定 ID 捕获意图，异步期间的列表重排、换页或取消选择不会改变目标。
 - `LibraryView` 拥有左侧控件、当前目录与各目录的选择/滚动锚点。FolderModel 只投影当前目录，文件夹在前、视频在后，全部卡片保持同一左边距；视频位置通过 LOCATION_ROLE 保留原快照逻辑索引，硬链接同 ID 的多个入口仍可独立选择。最近/收藏沿用 VideoListModel。模型通过插入、删除、移动和 dataChanged 通知更新，元数据刷新不清空列表，删除不重排播放快照；分页分别保留选择和滚动锚点。
-- 目录双击、路径和上一级仅切换已扫描快照的可见投影，不调用扫描器、保存草稿或播放器。导入根为返回边界，新扫描清除旧目录展示历史；有请求视频时，LibraryChange.location 提供一次性初始定位，由视图显示目标所在目录，控制器不拥有当前浏览目录。原 TreeModel/DropTree 及目录树样式已删除，不保留兼容别名或另一套树形状态。
+- 目录双击、路径和上一级在已加载快照内只切换可见投影；未知目录由 LibraryController.browse_directory 调用注入的单层扫描端口，沿用 browse 任务槽的取消和过期保护，遵守文件任务准入，失败保留原视图。目录结果以 directory 事件交付，视图保留各目录选择／滚动；不保存草稿、不触发播放、不记为新导入。路径可返回到磁盘／共享根，显式导入仍清除旧展示历史，并由 LibraryChange.location 提供一次性初始定位。原 TreeModel/DropTree 及目录树样式已删除，不保留兼容别名或另一套树形状态。
 - 磁盘变化单独调用 LibraryController.refresh_browsing，复用资料库工作调度，后台任务不显示前台扫描控件；同一刷新合并，主动导入取消旧刷新。控制器按旧浏览对象及文件任务准入检查晚到结果，只发布 contents 和新的浏览快照，不写导入历史、不修改播放快照、不请求播放。刷新期间较新的元数据保留，普通进度/评分刷新只有数据库实际名称变化时才改条目名称，避免将磁盘外部改名显示恢复成旧名。
 - FolderModel 的入口键与 LOCATION_ROLE 分离；同 ID 多硬链接按名称区分入口，唯一身份的外部改名保留现有行键。文件/子目录变化以增删移动及 dataChanged 发布，复用最近/收藏的行协调规则，不重置模型。删除入口不猜测选择另一个硬链接；回到目录时按入口身份和名称恢复选择。当前目录删除后沿路径回到仍存在的祖先，导入根删除时为空列表，重建后自动恢复。无法完整读取时保留原可见内容并重试，通知失败不弹模态框。
 - 结束后的进度统一为零；连续相对跳转基于尚未确认的目标累加。窗口关闭、换片与周期保存使用同一进度策略。

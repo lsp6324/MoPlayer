@@ -13,6 +13,7 @@ class _PathButton(QPushButton):
         super().__init__(name, parent)
         self.setProperty('role', 'breadcrumb')
         self.setProperty('current', current)
+        self.setProperty('root', root)
         self.setToolTip(path)
         self.setAccessibleName(name)
         self.elide_mode = Qt.ElideMiddle if root else Qt.ElideRight
@@ -54,21 +55,18 @@ class FolderNavigation(QWidget):
         self.path.setSpacing(2)
         row.addLayout(self.path, 1)
 
-    def set_path(self, root, folder):
+    def set_path(self, folder):
         paths = []
-        current, boundary = Path(folder), Path(root)
+        current = Path(folder)
         while True:
             paths.append(current)
-            if current == boundary:
-                break
             if current.parent == current:
-                raise ValueError('浏览位置不在导入目录内。')
+                break
             current = current.parent
-        self._segments = tuple((str(path) if path == boundary else path.name or str(path), str(path))
-                               for path in reversed(paths))
+        self._segments = tuple((path.name or str(path), str(path)) for path in reversed(paths))
         self.setToolTip(str(folder))
         self.up.setEnabled(len(paths) > 1)
-        self.up.setToolTip('返回上一级' if len(paths) > 1 else '已到导入目录')
+        self.up.setToolTip('返回上一级' if len(paths) > 1 else '已到磁盘根目录')
         self._plan = None
         self._reflow()
 

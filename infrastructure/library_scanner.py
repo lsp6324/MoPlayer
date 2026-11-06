@@ -4,7 +4,11 @@ import os
 import stat
 
 from application.library import NavigationStep
-from core import EXTENSIONS, ScanRequired, Snapshot, scan
+from core import EXTENSIONS, ScanRequired, Snapshot, scan, natural
+
+
+class DirectorySnapshot(Snapshot):
+    """One loaded directory; children are listed but read only when opened."""
 
 
 class LibraryScanner:
@@ -13,6 +17,70 @@ class LibraryScanner:
 
     def scan(self, folder, cancel):
         return scan(folder, self.store, cancel)
+
+    def directory(self, folder, cancel):
+        root = Path(folder).absolute()
+        if cancel.is_set():
+            raise InterruptedError('目录读取已取消')
+        children, files, errors = [], [], []
+        # Opening the requested directory must succeed before publishing it.
+        # Never recurse into its children, including when root is a drive.
+        with os.scandir(root) as iterator:
+            entries = sorted(iterator, key=lambda entry: natural(entry.name))
+        for entry in entries:
+            if cancel.is_set():
+                raise InterruptedError('目录读取已取消')
+            try:
+                info = entry.stat(follow_symlinks=False)
+                if getattr(info, 'st_file_attributes', 0) & 0x400 or entry.is_symlink():
+                    continue
+                if stat.S_ISDIR(info.st_mode):
+                    children.append(entry.path)
+                elif stat.S_ISREG(info.st_mode) and Path(entry.name).suffix.lower() in EXTENSIONS:
+                    files.append((self.store.register(entry.path), entry.name))
+            except InterruptedError:
+                raise
+            except OSError as error:
+                errors.append(f'{entry.path}: {error}')
+        # Preserve the existing one-level sibling playback boundary. Only
+        # directory names are read here; their media remain unloaded.
+        siblings = []
+        if root.parent != root:
+            try:
+                with os.scandir(root.parent) as iterator:
+                    for entry in iterator:
+                        if cancel.is_set():
+                            raise InterruptedError('目录读取已取消')
+                        try:
+                            info = entry.stat(follow_symlinks=False)
+                            if stat.S_ISDIR(info.st_mode) and not getattr(info, 'st_file_attributes', 0) & 0x400 and not entry.is_symlink():
+                                siblings.append(entry.path)
+                        except OSError:
+                            continue
+            except InterruptedError:
+                raise
+            except OSError:
+                pass
+        if cancel.is_set():
+            raise InterruptedError('目录读取已取消')
+        snapshot = DirectorySnapshot(str(root), {str(root): (children, files)},
+                                     sorted(siblings, key=lambda path: natural(Path(path).name)))
+        return snapshot, errors
+
+    def refresh_snapshot(self, snapshot, cancel):
+        if not isinstance(snapshot, DirectorySnapshot):
+            return self.refresh(snapshot.root, cancel)
+        folder = Path(snapshot.root)
+        while True:
+            try:
+                refreshed, errors = self.directory(folder, cancel)
+                if errors:
+                    raise OSError('目录暂时无法完整读取：' + errors[0])
+                return refreshed
+            except FileNotFoundError:
+                if folder.parent == folder:
+                    raise
+                folder = folder.parent
 
     def refresh(self, folder, cancel):
         root = Path(folder)

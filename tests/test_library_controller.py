@@ -55,6 +55,12 @@ class Scanner:
     def refresh(self, folder, cancel):
         return self.scan(folder, cancel)[0]
 
+    def refresh_snapshot(self, snapshot, cancel):
+        return self.refresh(snapshot.root, cancel)
+
+    def directory(self, folder, cancel):
+        return self.scan(folder, cancel)
+
     def can_import(self, path):
         return path in ('A', 'B', 'C', '/library/b.mp4', '/library/c.mp4')
 
@@ -380,3 +386,49 @@ def test_clear_history_empties_recent_but_keeps_metadata_and_favorites():
     assert [row['id'] for row in library.list_rows('stars')] == ['a']
     assert repo.rows['a']['score'] == 8 and repo.rows['a']['star'] == 1
     assert all(row['played'] == 0 for row in repo.rows.values())
+
+
+def test_directory_browse_does_not_remember_an_import_or_change_playback_snapshot():
+    library, repo, scanner, tasks = controller()
+    playback = scanner.snapshots['A']
+    library.adopt_snapshot(playback)
+    changes = []
+    library.subscribe(changes.append)
+    request = library.browse_directory('B')
+    finish(tasks.pop())
+    assert request.outcome.succeeded and library.browsing is scanner.snapshots['B']
+    assert not repo.history and playback.folders == {'A': ([], [('a', 'a.mp4')])}
+    assert any(change.kind == 'directory' for change in changes)
+
+
+def test_directory_navigation_latest_wins_and_failure_keeps_previous_view():
+    library, repo, scanner, tasks = controller()
+    library.adopt_snapshot(scanner.snapshots['A'])
+    first = library.browse_directory('B')
+    latest = library.browse_directory('C')
+    finish(tasks[1])
+    finish(tasks[0])
+    assert first.outcome.status is Status.CANCELLED and latest.outcome.succeeded
+    assert library.browsing is scanner.snapshots['C'] and not repo.history
+    failed = library.browse_directory('missing')
+    finish(tasks[-1])
+    assert failed.outcome.status is Status.FAILED and library.browsing is scanner.snapshots['C']
+
+
+def test_directory_browse_obeys_file_task_admission_and_keeps_newer_metadata():
+    library, repo, scanner, tasks = controller()
+    library.adopt_snapshot(scanner.snapshots['A'])
+    library.refresh_allowed = lambda: False
+    assert library.browse_directory('B').outcome.status is Status.FAILED and not tasks
+    library.refresh_allowed = lambda: True
+    operation = library.browse_directory('B')
+    work, ready = tasks[-1]
+    value = work()
+    repo.rows['b']['position'] = 15000
+    library.refresh(['b'])
+    ready(value, None)
+    assert operation.outcome.succeeded and library.details['b']['position'] == 15000
+    operation = library.browse_directory('C')
+    library.refresh_allowed = lambda: False
+    finish(tasks[-1])
+    assert operation.outcome.status is Status.CANCELLED and library.browsing is scanner.snapshots['B']

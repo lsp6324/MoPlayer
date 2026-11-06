@@ -223,6 +223,30 @@ class LibraryController:
         """An explicit drop may select a video; superseded imports cannot play."""
         return self._browse(lambda cancel: self.scanner.scan_import(path, cancel), playback_request=True)
 
+    def browse_directory(self, folder):
+        """Read one directory outside the loaded tree, independently of play."""
+        if not self.refresh_allowed():
+            return Operation.completed(Outcome(Status.FAILED, error=RuntimeError('文件任务正在处理，请稍后浏览。')))
+        self.cancel('refresh')
+        baseline_details = dict(self.details)
+
+        def work(cancel):
+            snapshot, errors = self.scanner.directory(folder, cancel)
+            ids = (vid for _, files in snapshot.folders.values() for vid, _ in files)
+            return snapshot, tuple(errors), self.repository.video_details(ids)
+
+        def publish(value):
+            if not self.refresh_allowed():
+                raise InterruptedError('文件任务开始，目录浏览已取消。')
+            snapshot, errors, details = value
+            self.details.update((vid, row) for vid, row in details.items()
+                                if self.details.get(vid) == baseline_details.get(vid))
+            self.browsing = snapshot
+            self._changed('directory')
+            return BrowseResult(snapshot, errors)
+
+        return self._run('browse', work, publish)
+
     def _browse(self, scan, *, playback_request):
         self.cancel('refresh')
         def work(cancel):
@@ -251,7 +275,7 @@ class LibraryController:
         baseline_details = dict(self.details)
 
         def work(cancel):
-            snapshot = self.scanner.refresh(baseline.root, cancel)
+            snapshot = self.scanner.refresh_snapshot(baseline, cancel)
             ids = (vid for _, files in snapshot.folders.values() for vid, _ in files)
             return snapshot, self.repository.video_details(ids)
 

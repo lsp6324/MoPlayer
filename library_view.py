@@ -61,6 +61,10 @@ class LibraryView(QFrame):
         self.folder_navigation = FolderNavigation(self)
         self.folder_navigation.requested.connect(self.browse_folder)
         layout.addWidget(self.folder_navigation)
+        self.folder_error = label('', 'muted')
+        self.folder_error.setWordWrap(True)
+        self.folder_error.hide()
+        layout.addWidget(self.folder_error)
         self.stack = QStackedWidget()
         self.files = DropList(controller.can_import)
         self.files.setToolTip('双击文件夹进入，双击视频播放；也可拖入文件夹或单个视频')
@@ -154,6 +158,7 @@ class LibraryView(QFrame):
             tab.setChecked(key == mode)
         self.stack.setCurrentWidget(self.files if mode == 'files' else self.catalog_panel if mode == 'catalog' else self.lists[mode])
         self.folder_navigation.setVisible(mode == 'files')
+        self.folder_error.setVisible(mode == 'files' and bool(self.folder_error.text()))
         self.file_count.setVisible(mode == 'files')
         self.remove_favorite.setVisible(mode == 'stars')
         self.clear_history_button.setVisible(mode == 'videos')
@@ -195,6 +200,12 @@ class LibraryView(QFrame):
                 index = self.files.model().index_for_location(change.location)
                 self.files.setCurrentIndex(index)
                 self.files.scrollTo(index)
+            self.folder_error.clear()
+            self.folder_error.hide()
+        elif change.kind == 'directory':
+            self._remember_folder()
+            self.current_folder = None
+            self.browse_folder(snapshot.root)
         elif change.kind == 'contents':
             folder = self.current_folder or snapshot.root
             while folder not in snapshot.folders and folder != snapshot.root:
@@ -204,7 +215,6 @@ class LibraryView(QFrame):
             else:
                 self._sync_view(self.files, lambda: self.files.model().sync(snapshot, self.controller.details, ()))
             self._update_count()
-            self._folder_positions = {path: position for path, position in self._folder_positions.items() if path in snapshot.folders}
         elif snapshot is not None and change.video_ids:
             self._sync_view(self.files, lambda: self.files.model().sync(snapshot, self.controller.details, change.video_ids))
             self._update_count()
@@ -232,7 +242,15 @@ class LibraryView(QFrame):
 
     def browse_folder(self, folder):
         snapshot = self.controller.browsing
-        if snapshot is None or folder not in snapshot.folders or folder == self.current_folder:
+        if snapshot is None:
+            return
+        if folder not in snapshot.folders:
+            self.controller.browse_directory(folder).on_finished(self._directory_ready)
+            return
+        self.controller.cancel('browse')
+        self.folder_error.clear()
+        self.folder_error.hide()
+        if folder == self.current_folder:
             return
         self._remember_folder()
         old_model = self.files.model()
@@ -241,7 +259,7 @@ class LibraryView(QFrame):
         if old_model is not None:
             old_model.deleteLater()
         self.current_folder = folder
-        self.folder_navigation.set_path(snapshot.root, folder)
+        self.folder_navigation.set_path(folder)
         self._update_count()
         self.files.doItemsLayout()
         position = self._folder_positions.get(folder)
@@ -254,6 +272,14 @@ class LibraryView(QFrame):
                 self.files.verticalScrollBar().setValue(self.files.verticalScrollBar().value() - position.offset)
             else:
                 self.files.verticalScrollBar().setValue(position.scroll)
+
+    def _directory_ready(self, outcome):
+        if outcome.error:
+            self.folder_error.setText('无法打开目录：' + str(outcome.error))
+        elif outcome.succeeded:
+            errors = outcome.value.errors
+            self.folder_error.setText(f'已跳过 {len(errors)} 个无法访问的条目。' if errors else '')
+        self.folder_error.setVisible(self.mode == 'files' and bool(self.folder_error.text()))
 
     def _update_count(self):
         snapshot = self.controller.browsing

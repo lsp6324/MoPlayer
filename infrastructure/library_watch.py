@@ -33,7 +33,7 @@ class LibraryWatch(QObject):
             return None
 
     def _library_changed(self, change):
-        if not self._closed and change.kind in ('folder', 'contents'):
+        if not self._closed and change.kind in ('folder', 'directory', 'contents'):
             self._bind()
             self.poll.start()
 

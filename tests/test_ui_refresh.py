@@ -234,7 +234,7 @@ def test_folder_browse_uses_flat_rows_and_does_not_change_playback(window, tmp_p
     window.library_controller.adopt_snapshot(snapshot)
     QApplication.processEvents()
     assert panel.current_folder == root and panel.files.model().rowCount() == 2
-    assert not panel.folder_navigation.up.isEnabled()
+    assert panel.folder_navigation.up.isEnabled()
     left = panel.files.visualRect(panel.files.model().index(1, 0)).left()
     for folder in (child, leaf):
         index = panel.files.model().index(0, 0)
@@ -261,7 +261,7 @@ def test_short_folder_breadcrumb_remains_readable_after_layout(window, tmp_path)
     QApplication.processEvents()
     navigation = window.library_view.folder_navigation
     current = next(control for control in navigation.findChildren(QPushButton) if control.property('current'))
-    assert current.text() == root
+    assert current.text() == '样例'
     option = QStyleOptionButton()
     current.initStyleOption(option)
     available = current.style().subElementRect(QStyle.SE_PushButtonContents, option, current).width()
@@ -280,10 +280,91 @@ def test_same_named_import_folders_show_their_drive_in_breadcrumbs(window):
         QApplication.processEvents()
         current = next(control for control in navigation.findChildren(QPushButton)
                        if control.isVisible() and control.property('current'))
-        captions.append(current.text())
-        assert current.text().startswith(drive) and '学习资料' in current.text()
-        assert current.toolTip() == root and not navigation.up.isEnabled()
+        drive_button = next(control for control in navigation.findChildren(QPushButton)
+                            if control.isVisible() and control.property('root'))
+        captions.append(drive_button.text())
+        assert drive_button.text().startswith(drive) and current.text() == '学习资料'
+        assert current.toolTip() == root and navigation.up.isEnabled()
     assert captions[0] != captions[1]
+
+
+def test_drive_breadcrumb_targets_disk_root_and_up_stops_only_there(window, tmp_path):
+    from pathlib import Path
+    from core import Snapshot
+    from PySide6.QtWidgets import QPushButton
+    from PySide6.QtTest import QSignalSpy
+    root = str(tmp_path / '导入目录')
+    window.library_controller.adopt_snapshot(Snapshot(root, {root: ([], [])}))
+    QApplication.processEvents()
+    navigation = window.library_view.folder_navigation
+    navigation.requested.disconnect(window.library_view.browse_folder)
+    requested = QSignalSpy(navigation.requested)
+    drive = next(control for control in navigation.findChildren(QPushButton)
+                 if control.isVisible() and control.property('root'))
+    QTest.mouseClick(drive, Qt.LeftButton)
+    assert requested.at(0)[0] == Path(root).anchor
+    QTest.mouseClick(navigation.up, Qt.LeftButton)
+    assert requested.at(1)[0] == str(Path(root).parent)
+    navigation.set_path(Path(root).anchor)
+    assert not navigation.up.isEnabled()
+
+
+def test_browse_outside_import_and_enter_sibling_preserves_playback_history_and_selection(window, tmp_path, monkeypatch):
+    from library_views import FOLDER_ROLE
+    root, sibling = tmp_path / '导入', tmp_path / '其他'
+    root.mkdir()
+    sibling.mkdir()
+    (root / 'A.mp4').write_bytes(b'root')
+    (sibling / 'B.mp4').write_bytes(b'sibling')
+    deep = sibling / '深层'
+    deep.mkdir()
+    (deep / '不应扫描.mp4').write_bytes(b'deep')
+    window.thumbnails.request = lambda vid: None
+    def wait(predicate):
+        deadline = time.monotonic() + 6
+        while time.monotonic() < deadline:
+            QApplication.processEvents()
+            if predicate():
+                return True
+            QTest.qWait(10)
+        return False
+    loaded = window.load_folder(str(root))
+    assert wait(lambda: not loaded.pending) and loaded.outcome.succeeded
+    view = window.library_view
+    view.files.setCurrentIndex(view.files.model().index(0, 0))
+    selected = view.files.currentIndex().data(Qt.UserRole)
+    playback = (window.current, window.context, window.location)
+    monkeypatch.setattr(window.library_controller.scanner, 'scan', lambda *args: pytest.fail('Navigation must not import recursively'))
+    view.folder_navigation.up.click()
+    assert wait(lambda: view.current_folder == str(tmp_path))
+    assert set(window.library_controller.browsing.folders) == {str(tmp_path)}
+    assert str(window.library_controller.last_folder()) == str(root)
+    model = view.files.model()
+    index = next(model.index(n, 0) for n in range(model.rowCount()) if model.index(n, 0).data(FOLDER_ROLE) == str(sibling))
+    view.files.doubleClicked.emit(index)
+    assert wait(lambda: view.current_folder == str(sibling))
+    assert set(window.library_controller.browsing.folders) == {str(sibling)}
+    assert not window.store.query('SELECT * FROM videos WHERE name=?', ('不应扫描.mp4',))
+    view.browse_folder(str(root))
+    assert wait(lambda: view.current_folder == str(root))
+    assert view.files.currentIndex().data(Qt.UserRole) == selected
+    assert (window.current, window.context, window.location) == playback
+    assert str(window.library_controller.last_folder()) == str(root)
+
+
+def test_inaccessible_directory_keeps_current_view_and_shows_inline_error(window, tmp_path, monkeypatch):
+    from core import Snapshot
+    root = str(tmp_path)
+    window.library_controller.adopt_snapshot(Snapshot(root, {root: ([], [])}))
+    def denied(*args):
+        raise PermissionError('no access')
+    monkeypatch.setattr(window.library_controller.scanner, 'directory', denied)
+    window.library_view.browse_folder(str(tmp_path.parent))
+    deadline = time.monotonic() + 4
+    while window.library_controller.scanning and time.monotonic() < deadline:
+        QTest.qWait(10)
+    assert window.library_view.current_folder == root
+    assert 'no access' in window.library_view.folder_error.text() and window.library_view.folder_error.isVisible()
 
 
 def test_folder_return_restores_selection_scroll_and_metadata_refresh_preserves_rows(window, tmp_path):
@@ -340,12 +421,12 @@ def test_deep_breadcrumbs_fold_and_allow_ancestor_navigation(window, tmp_path):
     navigation.setFixedWidth(260)
     QApplication.processEvents()
     overflow = next(control for control in navigation.findChildren(QPushButton) if control.menu() and control.isVisible())
-    assert overflow.menu().actions()[3].toolTip() == str(paths[3])
+    action = next(action for action in overflow.menu().actions() if action.toolTip() == str(paths[3]))
     assert navigation.toolTip() == str(paths[-1])
     for control in navigation.findChildren(QPushButton):
         if control.isVisible():
             assert control.geometry().right() < navigation.width()
-    overflow.menu().actions()[3].trigger()
+    action.trigger()
     assert panel.current_folder == str(paths[3])
 
 
