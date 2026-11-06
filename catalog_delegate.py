@@ -87,8 +87,9 @@ class CatalogDelegate(QStyledItemDelegate):
         for number, tag in enumerate(tags):
             rest = len(tags) - number
             reserve = painter.fontMetrics().horizontalAdvance(f'+{rest - 1}') + 26 if rest > 1 else 0
-            width_tag = min(120, painter.fontMetrics().horizontalAdvance(tag) + 20, available - reserve)
-            if width_tag < 48:
+            natural_width = painter.fontMetrics().horizontalAdvance(tag) + 20
+            width_tag = min(120, natural_width, available - reserve)
+            if width_tag < min(48, natural_width):
                 paint_capsule(painter, QRectF(x, tags_y, min(available, 42), 20), f'+{rest}', colors)
                 break
             paint_capsule(painter, QRectF(x, tags_y, width_tag, 20), tag, colors)

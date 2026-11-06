@@ -221,6 +221,34 @@ def test_rows_without_prepared_display_fields_still_paint(panel):
     assert QApplication.instance() is not None
 
 
+@pytest.mark.parametrize('tag', ['风景', '摄影', 'A'])
+@pytest.mark.parametrize('mode', ['list', 'grid'])
+def test_short_single_tag_shows_its_name_instead_of_overflow(panel, monkeypatch, tag, mode):
+    from PySide6.QtCore import QRect
+    from PySide6.QtGui import QImage, QPainter
+    from PySide6.QtWidgets import QStyleOptionViewItem
+    import catalog_delegate
+    captions = []
+    draw = catalog_delegate.paint_capsule
+    def capture(painter, rect, text, colors):
+        captions.append(text)
+        draw(painter, rect, text, colors)
+    monkeypatch.setattr(catalog_delegate, 'paint_capsule', capture)
+    panel.set_view(mode)
+    panel.list.model().sync([dict(id='short', name='电影.png', kind='image', star=0,
+        score=None, tag_labels=(tag,), tag_names=(tag,))])
+    rect = QRect(0, 0, 292, 96) if mode == 'list' else QRect(0, 0, 140, 148)
+    image = QImage(rect.size(), QImage.Format_ARGB32)
+    painter = QPainter(image)
+    try:
+        option = QStyleOptionViewItem()
+        option.rect, option.font = rect, panel.font()
+        panel.list.itemDelegate().paint(painter, option, panel.list.model().index(0, 0))
+    finally:
+        painter.end()
+    assert captions == [tag]
+
+
 def test_narrow_card_keeps_a_hierarchy_label_before_the_overflow_count(panel, monkeypatch):
     from PySide6.QtCore import QRect
     from PySide6.QtGui import QImage, QPainter
@@ -243,7 +271,7 @@ def test_narrow_card_keeps_a_hierarchy_label_before_the_overflow_count(panel, mo
     finally:
         painter.end()
     assert labels[0][0] == '自然风光 › 山川' and labels[0][1] >= 48
-    assert labels[-1][0] == '+1'
+    assert labels[-1][0] in ('+1', '摄影')
 
 
 def test_score_input_shows_and_edits_the_current_threshold():
