@@ -459,7 +459,7 @@ def test_tag_input_native_dispatch_and_add_does_not_select(window):
     assert editor.chosen() == ['existing']
     panel.dismiss()
     window.classification.apply_tags.assert_called_once()
-    assert window.classification.apply_tags.call_args.kwargs == {'prompt_score': False}
+    assert window.classification.apply_tags.call_args.kwargs == {'prompt_score': False, 'renames': {}}
     assert window.classification.apply_tags.call_args.args[0] == window.current
 
 

@@ -156,6 +156,19 @@ def test_tag_search_does_not_filter_media_and_reset_keeps_sort_and_view(panel):
     assert panel.filters == CatalogFilter(sort='added_desc') and panel.list.presentation == 'grid'
 
 
+def test_hierarchy_paths_are_visible_in_filter_chips_and_summary_without_losing_typed_search(panel):
+    panel.present_schema({'风景': {}, '山川': {'parent': '风景'}, '雪山': {'parent': '山川'}})
+    panel.change(tags=('雪山',))
+    assert panel.popup.tags.chips['雪山'].text() == '风景 › 山川 › 雪山'
+    assert '风景 › 山川 › 雪山' in ' '.join(panel.summary.chips)
+    panel.popup.search.setText('风景')
+    assert set(panel.popup.tags.chips) == {'风景', '山川', '雪山'}
+    panel.search.setText('尚未提交的文件名')
+    panel.present_schema({'自然': {}, '山川': {'parent': '自然'}, '雪山': {'parent': '山川'}})
+    assert panel.search.text() == '尚未提交的文件名'
+    assert '自然 › 山川 › 雪山' in ' '.join(panel.summary.chips)
+
+
 def test_grid_hides_the_scrollbar_until_content_actually_overflows(panel):
     """An empty or short library must not show a scrollbar in grid view."""
     panel.set_view('grid')
@@ -206,6 +219,31 @@ def test_rows_without_prepared_display_fields_still_paint(panel):
         finally:
             painter.end()
     assert QApplication.instance() is not None
+
+
+def test_narrow_card_keeps_a_hierarchy_label_before_the_overflow_count(panel, monkeypatch):
+    from PySide6.QtCore import QRect
+    from PySide6.QtGui import QImage, QPainter
+    from PySide6.QtWidgets import QStyleOptionViewItem
+    import catalog_delegate
+    labels = []
+    draw = catalog_delegate.paint_capsule
+    def capture(painter, rect, text, colors):
+        labels.append((text, rect.width()))
+        draw(painter, rect, text, colors)
+    monkeypatch.setattr(catalog_delegate, 'paint_capsule', capture)
+    panel.list.model().sync([dict(id='hierarchy', name='电影.png', kind='image', star=0,
+        score=None, tag_labels=('自然风光 › 山川', '摄影'), tag_names=('山川', '摄影'))])
+    image = QImage(292, 96, QImage.Format_ARGB32)
+    painter = QPainter(image)
+    try:
+        option = QStyleOptionViewItem()
+        option.rect, option.font = QRect(0, 0, 292, 96), panel.font()
+        panel.list.itemDelegate().paint(painter, option, panel.list.model().index(0, 0))
+    finally:
+        painter.end()
+    assert labels[0][0] == '自然风光 › 山川' and labels[0][1] >= 48
+    assert labels[-1][0] == '+1'
 
 
 def test_score_input_shows_and_edits_the_current_threshold():

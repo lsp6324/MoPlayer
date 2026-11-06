@@ -10,7 +10,8 @@ class Classification:
     def __init__(self, tasks, repository, submit_tags, submit_archive, *,
                  available, ensure_storage, refresh, notify,
                  favorite_folders=lambda: False, submit_favorite=None,
-                 archive_locations=lambda video_id: ()):
+                 archive_locations=lambda video_id: (), tags_renamed=lambda renames: None):
+        self.tags_renamed = tags_renamed
         self.archive_locations = archive_locations
         self.favorite_folders, self.submit_favorite = favorite_folders, submit_favorite
         self.tasks, self.repository = tasks, repository
@@ -18,8 +19,8 @@ class Classification:
         self.available, self.ensure_storage = available, ensure_storage
         self.refresh, self.notify = refresh, notify
 
-    def apply_tags(self, video_id, tags, schema, prompt_score=True):
-        tags, schema = deepcopy(tags), deepcopy(schema)
+    def apply_tags(self, video_id, tags, schema, prompt_score=True, *, renames=None):
+        tags, schema, renames = deepcopy(tags), deepcopy(schema), deepcopy(renames or {})
         if not self.available() or not self.ensure_storage() or not self.available():
             return Operation.cancelled()
         video = self.repository.video(video_id)
@@ -29,11 +30,14 @@ class Classification:
         schema_before = deepcopy(self.repository.tag_values(video_id).schema)
         score = video['score']
         self.notify(FileNotice(FileAction.TAGS))
-        source = self.tasks.run(lambda: self.submit_tags(video_id, score, tags, schema),
+        submit = (lambda: self.submit_tags(video_id, score, tags, schema, renames=renames)) if renames else (lambda: self.submit_tags(video_id, score, tags, schema))
+        source = self.tasks.run(submit,
                                 policy=FileTaskPolicy(release_media=False))
         def reconcile(outcome):
             if outcome.status is Status.CANCELLED:
                 return FileNotice(FileAction.TAGS, outcome)
+            if outcome.succeeded and renames:
+                self.tags_renamed(renames)
             ids = tuple(outcome.value or (row['id'] for row in self.repository.videos('archived')))
             self.refresh(ids)
             return self._receipt(FileAction.TAGS, outcome, video_id, before, schema_before=schema_before, count=len(ids),

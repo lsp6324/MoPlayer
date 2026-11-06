@@ -83,11 +83,12 @@ class CatalogDelegate(QStyledItemDelegate):
         paint_hearts(painter, row.get('score'), (QRectF(hearts_x + n * step, favorite_y + 4, step - 1, step - 1) for n in range(5)),
                      colors['accent'], colors['line_strong'], 1)
         x, available = left, width
-        tags = row.get('tag_names') or ()
+        tags = row.get('tag_labels') or row.get('tag_names') or ()
         for number, tag in enumerate(tags):
             rest = len(tags) - number
-            width_tag = min(100, painter.fontMetrics().horizontalAdvance(tag) + 20)
-            if width_tag > available or (rest > 1 and width_tag + 40 > available):
+            reserve = painter.fontMetrics().horizontalAdvance(f'+{rest - 1}') + 26 if rest > 1 else 0
+            width_tag = min(120, painter.fontMetrics().horizontalAdvance(tag) + 20, available - reserve)
+            if width_tag < 48:
                 paint_capsule(painter, QRectF(x, tags_y, min(available, 42), 20), f'+{rest}', colors)
                 break
             paint_capsule(painter, QRectF(x, tags_y, width_tag, 20), tag, colors)

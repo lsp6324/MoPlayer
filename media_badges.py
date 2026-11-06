@@ -10,7 +10,7 @@ def paint_capsule(painter, rect, text, colors):
     painter.drawRoundedRect(rect, rect.height() / 2, rect.height() / 2)
     painter.setPen(QColor(colors['accent']))
     painter.drawText(rect.adjusted(10, 0, -10, 0), Qt.AlignVCenter | Qt.AlignLeft,
-                     painter.fontMetrics().elidedText(text, Qt.ElideRight, int(rect.width() - 20)))
+                     painter.fontMetrics().elidedText(text, Qt.ElideMiddle, int(rect.width() - 20)))
 
 
 def paint_favorite(painter, x, y, starred, colors):

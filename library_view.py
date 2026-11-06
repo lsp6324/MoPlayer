@@ -211,6 +211,9 @@ class LibraryView(QFrame):
         self._catalog_status()
 
     def _catalog_status(self):
+        if self.catalog_panel.filters != self.controller.catalog_filter:
+            self.catalog_panel.present_filter(self.controller.catalog_filter)
+            self._remember_preferences()
         self.catalog_panel.present_status(len(self.controller.catalog_ids), self.controller.catalog_total,
                                           self.controller.catalog_pending, self.controller.catalog_error)
 

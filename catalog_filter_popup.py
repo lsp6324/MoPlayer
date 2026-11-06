@@ -4,6 +4,7 @@ from PySide6.QtGui import QColor, QIntValidator
 from PySide6.QtWidgets import (QFrame, QWidget, QVBoxLayout, QHBoxLayout,
                                QScrollArea, QLineEdit, QSizePolicy)
 from application.catalog import CatalogFilter, natural_name
+from application.tag_labels import tag_label, tag_path
 from heart_rating import HeartRating
 from ui import label, button, icon
 
@@ -14,10 +15,12 @@ class TagChoices(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.chips = {}
+        self.labels = {}
         self.setMinimumWidth(0)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
-    def present(self, names, selected):
+    def present(self, names, selected, labels=None):
+        self.labels = labels or {}
         if tuple(self.chips) != tuple(names):
             for chip in self.chips.values():
                 chip.hide()
@@ -38,11 +41,12 @@ class TagChoices(QWidget):
     def arrange(self):
         width, x, y = max(1, self.width()), 0, 0
         for name, chip in self.chips.items():
-            size = min(width, 190, max(48, chip.fontMetrics().horizontalAdvance(name) + 28))
+            text = self.labels.get(name, name)
+            size = min(width, 280, max(48, chip.fontMetrics().horizontalAdvance(text) + 28))
             if x and x + size > width:
                 x, y = 0, y + 34
             chip.setGeometry(x, y, size, 28)
-            chip.setText(chip.fontMetrics().elidedText(name, Qt.ElideRight, size - 24))
+            chip.setText(chip.fontMetrics().elidedText(text, Qt.ElideMiddle, size - 24))
             chip.show()
             x += size + 6
         self.setFixedHeight(y + 28 if self.chips else 0)
@@ -198,7 +202,7 @@ class CatalogFilterPopup(QFrame):
         self.no_tags.setChecked(filters.untagged)
         count = len(filters.tags) + int(filters.untagged)
         self.tag_summary.setText(f'标签 · 已选 {count}' if count else '标签')
-        selected = (*filters.tags, *(('无标签',) if filters.untagged else ()))
+        selected = (*(tag_label(name, schema) for name in filters.tags), *(('无标签',) if filters.untagged else ()))
         self.tag_description.setText(('同时包含：' if filters.tag_mode == 'and' else '包含任意一个：') + (' 且 ' if filters.tag_mode == 'and' else ' 或 ').join(selected) if selected else '未选标签时，不限制标签')
         self.refresh_tags()
 
@@ -218,13 +222,10 @@ class CatalogFilterPopup(QFrame):
     def refresh_tags(self):
         search = self.search.text().casefold()
         names = sorted(set(self.schema) | set(self.filters.tags), key=natural_name)
-        self.tags.present([name for name in names if search in name.casefold()], self.filters.tags)
+        self.tags.present([name for name in names if search in tag_label(name, self.schema).casefold()], self.filters.tags,
+                          {name: tag_label(name, self.schema) for name in names})
         for name, chip in self.tags.chips.items():
-            chain, seen, parent = [name], {name}, self.schema.get(name, {}).get('parent')
-            while parent and parent not in seen:
-                chain.insert(0, parent)
-                seen.add(parent)
-                parent = self.schema.get(parent, {}).get('parent')
+            chain = tag_path(name, self.schema)
             chip.setToolTip(' / '.join(chain) + ('\n包含子标签' if self.schema.get(name, {}).get('is_parent') else ''))
 
     def show_for(self, anchor):

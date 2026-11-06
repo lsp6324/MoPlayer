@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 
 from application.tag_drafts import TagValues
+from application.tag_labels import tag_labels
 from core import media_kind
 
 
@@ -22,15 +23,16 @@ class LibraryRepository:
         rows = self.store.query('SELECT * FROM videos WHERE id=?', (video_id,))
         return rows[0] if rows else None
 
-    @staticmethod
-    def presented(rows):
+    def presented(self, rows):
         """Attach the display fields every list row needs, from one record.
 
         kind and tag_names are derived, so no consumer may depend on which
         query happened to write them last; a raw SELECT row alone is enough.
         """
+        schema = self.store.tag_layout() if rows else {}
         return [dict(row, kind=media_kind(row['name']),
-                     tag_names=tuple(json.loads(row['tags'] or '[]'))) for row in rows]
+                     tag_names=tuple(json.loads(row['tags'] or '[]')),
+                     tag_labels=tag_labels(json.loads(row['tags'] or '[]'), schema)) for row in rows]
 
     def videos(self, mode):
         condition = {'videos': 'played>0', 'stars': 'star=1', 'archived': 'archived=1',

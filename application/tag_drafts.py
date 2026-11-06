@@ -1,6 +1,6 @@
 """Tag drafts survive views, cancellation and failed asynchronous submissions."""
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol
 
 from core import validate_layout
@@ -11,6 +11,7 @@ from application.operations import Operation, Outcome, Status
 class TagValues:
     tags: list[str]
     schema: dict
+    renames: dict = field(default_factory=dict)
 
     def copy(self):
         return deepcopy(self)
@@ -76,7 +77,14 @@ class TagDrafts:
         def completed(outcome):
             draft.operation = None
             if outcome.succeeded:
-                draft.baseline = values
+                applied = values.renames
+                draft.baseline = TagValues(values.tags, values.schema)
+                current = draft.values
+                current.renames = {
+                    applied.get(source, source): current.renames.get(source, source)
+                    for source in applied.keys() | current.renames.keys()
+                    if current.renames.get(source, source) in current.schema
+                    and current.renames.get(source, source) != applied.get(source, source)}
             operation.finish(outcome)
 
         try:
@@ -98,3 +106,5 @@ class TagDrafts:
             draft = self._drafts.get(video_id)
             if draft is not None and draft.operation is None:
                 draft.baseline = self.repository.tag_values(video_id).copy()
+                if TagValues(draft.values.tags, draft.values.schema) == draft.baseline:
+                    draft.values.renames.clear()

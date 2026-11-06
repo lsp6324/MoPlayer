@@ -118,6 +118,11 @@ class LibraryController:
         operation.on_finished(finished)
         return operation
 
+    def rename_catalog_tags(self, renames):
+        """Keep selected tag predicates attached to a confirmed global rename."""
+        self.catalog_filter = self.catalog_filter.updated(
+            tags=tuple(dict.fromkeys(renames.get(name, name) for name in self.catalog_filter.tags)))
+
     def catalog_selection(self, video_id, *, allow_pending=False):
         if (self.catalog_pending and not allow_pending) or video_id not in self.catalog_ids:
             return None

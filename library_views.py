@@ -182,7 +182,7 @@ class VideoListModel(QAbstractListModel):
                 kind = '图片' if row['kind'] == 'image' else '视频'
                 favorite = '已收藏' if row['star'] else '未收藏'
                 score = '未评分' if row['score'] is None else f"{row['score']} 分"
-                return '\n'.join((row['name'], ' · '.join(row['tag_names']), f'{kind} · {favorite} · {score}',
+                return '\n'.join((row['name'], ' · '.join(row.get('tag_labels', row['tag_names'])), f'{kind} · {favorite} · {score}',
                                   '入库日期：'+stamp, row.get('unavailable', ''))).strip()
             return row['name']
         return None

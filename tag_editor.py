@@ -1,8 +1,9 @@
 from copy import deepcopy  # 草稿不直接修改全局分类。
 from PySide6.QtCore import Qt, QRect, QSize, QPoint, QMimeData, QTimer  # 实现胶囊换行、内部拖放与视口保持。
 from PySide6.QtGui import QDrag  # 使用原生拖动手势归类标签。
-from PySide6.QtWidgets import QApplication, QDialog, QVBoxLayout, QHBoxLayout, QLayout, QWidget, QFrame, QScrollArea, QLabel, QLineEdit, QPushButton, QDialogButtonBox, QMenu  # 构建参考图式的简洁标签卡片。
+from PySide6.QtWidgets import QApplication, QDialog, QVBoxLayout, QHBoxLayout, QLayout, QWidget, QFrame, QScrollArea, QLabel, QLineEdit, QPushButton, QDialogButtonBox, QMenu, QInputDialog  # 构建参考图式的简洁标签卡片。
 from core import natural, validate_tag, validate_layout, canonical_tags, tag_chain  # 共用任意层级的标签路径与循环校验。
+from application.tag_labels import tag_label
 
 MIME = 'application/x-moplayer-tag'  # 只接受本标签窗口内部的数据。
 
@@ -66,12 +67,14 @@ class TagChip(QPushButton):  # 普通标签点击选择，父标签点击展开�
         row = editor.schema[name]  # 从当前草稿读取标签类型。
         self.parent_tag = bool(row.get('is_parent'))  # 普通根标签不再冒充父类。
         arrow = (' ▾' if name in editor.expanded else ' ▸') if self.parent_tag else ''  # 只展示用户已经主动展开的父标签。
-        text = self.fontMetrics().elidedText(name, Qt.ElideRight, 350) + arrow  # 超长标签通过悬停查看全名。
+        label = tag_label(name, editor.schema) if editor.search.text().strip() else name
+        children = sum(row.get('parent') == name for row in editor.schema.values())
+        text = self.fontMetrics().elidedText(label, Qt.ElideMiddle, 350) + arrow + (f' · {children} 子标签' if self.parent_tag else '')
         self.setText(text)  # 胶囊内部只保留标签名称和必要的折叠标记。
         self.setFixedSize(self.fontMetrics().horizontalAdvance(text) + 28, 34)  # 文字长度决定胶囊宽度。
         self.setCheckable(True)  # 蓝色状态表示该标签或其子类已被选择。
         self.setProperty('role', 'tagChip')
-        self.setStyleSheet('QPushButton { border-radius:17px; padding:0; }')  # 直接为胶囊指定淡蓝色选中填充，避免外层透明背景样式覆盖。
+        self.setStyleSheet('QPushButton { border-radius:17px; padding:0; } QPushButton[implicitSelected="true"]:!checked { border-style:dashed; }')
         self.setCursor(Qt.PointingHandCursor)  # 明确可以点击。
         self.setAcceptDrops(self.parent_tag)  # 只有明确设定的父标签接收子类。
         self.setToolTip(name + ('\n点击显示或收起子标签；右键可选择父标签本身' if self.parent_tag else '\n点击选择；右键设为父标签或移出父标签'))  # 不显示额外的类型下拉框。
@@ -135,6 +138,7 @@ class TagEditor(QDialog):  # 参考图式胶囊标签卡，父类只在主动点
     def __init__(self, tags, schema, parent=None):  # 只编辑传入的标签草稿。
         super().__init__(parent)  # 打开期间不强制暂停视频。
         self.schema = deepcopy(schema)  # 只有应用后才修改全局分类。
+        self._origins = {name: name for name in schema}
         self.selected = set(tags)  # 读取当前视频已有标签。
         for name in self.selected:  # 兼容尚未进入公共字典的旧标签。
             self.schema.setdefault(name, {'name': name, 'kind': 'major', 'parent': None, 'is_parent': False})  # 普通根标签可以直接点击选择。
@@ -143,6 +147,7 @@ class TagEditor(QDialog):  # 参考图式胶囊标签卡，父类只在主动点
                 self.schema[row['parent']]['is_parent'] = True  # 不丢失真实父子关系。
         self.managing, self.delete_selection = False, set()
         self.expanded, self.chips = set(), {}  # 初次打开不展开任何父标签。
+        self.parent_choices = {}
         self.dragging, self.pending_refresh, self.serial = False, False, 0  # 拖动结束后再安全更新布局。
         self.setWindowTitle('标签管理')  # 与参考图的标题一致。
         self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)  # 使用简洁白色圆角卡片。
@@ -191,7 +196,7 @@ class TagEditor(QDialog):  # 参考图式胶囊标签卡，父类只在主动点
         self.hint.hide()  # 默认界面不堆叠多行说明。
         layout.addWidget(self.hint)  # 提示保持就地显示。
         footer = QHBoxLayout()  # 简单说明与确认操作放在底部。
-        self.footer_hint = QLabel('右键设为父标签，拖动归类')
+        self.footer_hint = QLabel('箭头展开子标签 · 虚线表示已选子标签 · 右键重命名／归类')
         footer.addWidget(self.footer_hint)  # 交互提示使用具体操作。
         footer.addStretch()  # 操作按钮靠右。
         self.buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)  # 仍然集中确认，避免每次点击移动视频。
@@ -218,10 +223,22 @@ class TagEditor(QDialog):  # 参考图式胶囊标签卡，父类只在主动点
             for name, chip in self.chips.items():
                 chip.setChecked(name in self.delete_selection)
             self.delete_button.setEnabled(bool(self.delete_selection))
+            for control in self.parent_choices.values():
+                control.setEnabled(False)
             return
         parents = {parent for name in self.selected if name in self.schema for parent in tag_chain(name, self.schema)[:-1]}  # 多层子标签隐含选中所有祖先。
         for name, chip in self.chips.items():  # 同步根标签与展开后的子标签。
-            chip.setChecked(name in self.selected or name in parents)  # 父标签不用自动展开来显示选中状态。
+            chip.setChecked(name in self.selected)
+            chip.setProperty('implicitSelected', name in parents and name not in self.selected)
+            chip.style().unpolish(chip)
+            chip.style().polish(chip)
+            state = '本级已选' if name in self.selected else '本级未选；包含已选子标签' if name in parents else '未选'
+            chip.setToolTip(tag_label(name, self.schema) + '\n' + state + ('\n点击展开子标签；本级选择在展开区或右键菜单中操作' if chip.parent_tag else '\n点击选择；右键重命名／归类'))
+        for name, control in self.parent_choices.items():
+            implicit = name in parents and name not in self.selected
+            control.setEnabled(not implicit)
+            control.setText('已由子标签包含' if implicit else '选择本级标签')
+            control.setChecked(name in self.selected)
 
     def rebuild(self):  # 结构变化只更新胶囊布局，保留展开集合和滚动位置。
         if self.dragging:  # 拖动来源控件不能在原生拖动循环中销毁。
@@ -239,18 +256,18 @@ class TagEditor(QDialog):  # 参考图式胶囊标签卡，父类只在主动点
         body = QVBoxLayout(content)  # 根标签在上，主动展开的子类区在下。
         body.setContentsMargins(0, 10, 0, 8)  # 胶囊区域与标题保持适量距离。
         self.chips = {}  # 不保留旧控件指针。
+        self.parent_choices = {}
         root_area = QWidget()  # 普通标签与父标签均显示为胶囊。
         root_flow = FlowLayout(root_area)  # 根据宽度自然换行。
         query = self.search.text().strip().casefold()  # 搜索不影响分类或选择。
-        roots = [name for name, row in self.schema.items() if not row.get('parent')]  # 只有实际根标签出现在根区域。
+        roots = [name for name, row in self.schema.items() if query or not row.get('parent')]
         for name in sorted(roots, key=natural):  # 根标签沿用自然排序。
-            matches = query in name.casefold() or any(query in child.casefold() and name in tag_chain(child, self.schema)[:-1] for child in self.schema)  # 搜索任意深度子孙只保留祖先入口，不主动展开。
+            matches = not query or query in tag_label(name, self.schema).casefold()
             if matches:  # 不匹配标签暂时隐藏。
                 chip = TagChip(self, name)  # 每个根标签都是可点击胶囊。
                 root_flow.addWidget(chip)  # 不创建目录树或右侧类型列。
                 self.chips[name] = chip  # 供选择状态更新使用。
-        body.addWidget(root_area)  # 根区域始终放在最上方。
-        for name in sorted(self.expanded, key=natural):  # 仅展示用户主动点击过的父标签。
+        for name in sorted(self.expanded if not query else (), key=natural):  # 搜索直接展示完整路径，不改变展开集合。
             if name not in self.schema or not self.schema[name].get('is_parent'):  # 删除或取消父类后不显示子区。
                 continue  # 不隐式改变其他父类状态。
             panel = ChildPanel(self, name)  # 展开后可将标签拖进子区。
@@ -263,7 +280,15 @@ class TagEditor(QDialog):  # 参考图式胶囊标签卡，父类只在主动点
                 back.setFixedHeight(30)  # 使用轻量导航按钮。
                 back.clicked.connect(lambda checked=False, target=parent: self.activate(target))  # 返回只展开上一层。
                 navigation.addWidget(back)  # 放在完整路径标题之前。
-            navigation.addWidget(QLabel(' / '.join(tag_chain(name, self.schema))), 1)  # 显示当前子区所在层级。
+            navigation.addWidget(QLabel('子标签 · ' + tag_label(name, self.schema)), 1)
+            own = QPushButton('选择本级标签')
+            own.setCheckable(True)
+            own.setAutoDefault(False)
+            own.setFixedHeight(30)
+            own.clicked.connect(lambda checked=False, target=name: self.select_parent(target))
+            own.setToolTip('选择父标签本身；子标签会隐含包含父级，不会自动全选子标签')
+            navigation.addWidget(own)
+            self.parent_choices[name] = own
             panel_layout.addLayout(navigation)  # 每次只渲染一个父类的直接子标签。
             area = QWidget()  # 子标签也使用同样胶囊样式。
             flow = FlowLayout(area)  # 多个子标签自动换行。
@@ -276,6 +301,9 @@ class TagEditor(QDialog):  # 参考图式胶囊标签卡，父类只在主动点
             if not flow.count():  # 空父标签仍然有清晰落点。
                 panel_layout.addWidget(QLabel('将标签拖到这里'))  # 不自动添加无关子类。
             body.addWidget(panel)  # 不显示没有主动展开的其他父类。
+        if self.expanded and not query:
+            body.addWidget(QLabel('全部根标签'))
+        body.addWidget(root_area)
         body.addStretch()  # 内容不足时不把胶囊高度拉大。
         self.scroll.setWidget(content)  # 用新的布局替换原内容。
         self.update_selection()  # 恢复根标签与子标签的选择颜色。
@@ -292,6 +320,7 @@ class TagEditor(QDialog):  # 参考图式胶囊标签卡，父类只在主动点
             return
         if self.schema[name].get('is_parent'):  # 父类展开是明确的用户操作。
             self.expanded = set() if name in self.expanded else {name}  # 打开新父类时自动收起原父类。
+            self.scroll.verticalScrollBar().setValue(0)
             self.rebuild()  # 不自动展开所有父类。
         else:  # 普通标签和子标签都可直接选择。
             self.selected.symmetric_difference_update({name})  # 再次点击即取消。
@@ -328,10 +357,14 @@ class TagEditor(QDialog):  # 参考图式胶囊标签卡，父类只在主动点
                 return  # 不执行默认源控件删除。
         event.ignore()  # 未成功时保留原归属。
 
-    def menu(self, name, position):  # 类型和移出操作从右键进入。
+    def build_menu(self, name):
         menu = QMenu(self)  # 不在每个标签右侧放常驻控件。
+        menu.addAction('重命名标签…', lambda: self.prompt_rename(name))
+        menu.addSeparator()
         if self.schema[name].get('is_parent'):  # 父类本身也可作为独立标签选择。
-            menu.addAction('取消选中父标签' if name in self.selected else '选中父标签', lambda: self.select_parent(name))  # 展开动作与独立选择分开。
+            implicit = name not in self.selected and any(name in tag_chain(child, self.schema)[:-1] for child in self.selected if child in self.schema)
+            action = menu.addAction('本级已由子标签包含' if implicit else '取消选中父标签' if name in self.selected else '选中父标签', lambda: self.select_parent(name))
+            action.setEnabled(not implicit)
             menu.addAction('取消父标签', lambda: self.set_parent(name, False))  # 有子类时会提示先移出。
         else:  # 普通标签可以一键成为父标签。
             menu.addAction('设为父标签', lambda: self.set_parent(name, True))  # 不需要类型下拉框。
@@ -341,10 +374,54 @@ class TagEditor(QDialog):  # 参考图式胶囊标签卡，父类只在主动点
         if targets:  # 父标签也能通过右键归入其他父标签。
             submenu = menu.addMenu('移入父标签')  # 与直接拖动使用同一安全入口。
             for parent in sorted(targets, key=natural):  # 按名称自然排序。
-                submenu.addAction(parent, lambda checked=False, target=parent: self.assign_parent(name, target))  # 固定本次目标。
+                submenu.addAction(tag_label(parent, self.schema), lambda checked=False, target=parent: self.assign_parent(name, target))
         menu.addSeparator()  # 将全局删除和普通归类操作区分开。
         menu.addAction('删除标签', lambda: self.delete_tag(name))  # 删除仍是草稿，应用后才同步所有视频。
-        menu.exec(position)  # 菜单打开期间由原规则优先处理输入。
+        return menu
+
+    def menu(self, name, position):
+        menu = self.build_menu(name)
+        menu.exec(position)
+        menu.deleteLater()
+
+    def prompt_rename(self, name):
+        value, accepted = QInputDialog.getText(self, '重命名标签', '新标签名（保存后同步所有文件的引用）', QLineEdit.Normal, name)
+        if accepted:
+            self.rename_tag(name, value)
+
+    @property
+    def renames(self):
+        return {origin: name for name, origin in self._origins.items() if origin and origin != name}
+
+    def confirm_saved(self):
+        self._origins = {name: name for name in self.schema}
+
+    def rename_tag(self, name, value):
+        try:
+            value = validate_tag(value)
+            if name not in self.schema:
+                raise ValueError('标签已不存在。')
+            if any(other != name and other.casefold() == value.casefold() for other in self.schema):
+                raise ValueError('标签已存在，不能重名。')
+            if value == name:
+                return True
+            row = self.schema.pop(name)
+            row['name'] = value
+            self.schema[value] = row
+            self._origins[value] = self._origins.pop(name, None)
+            for child in self.schema.values():
+                if child.get('parent') == name:
+                    child['parent'] = value
+            for selection in (self.selected, self.expanded, self.delete_selection):
+                if name in selection:
+                    selection.remove(name)
+                    selection.add(value)
+            self.message('')
+            self.rebuild()
+            return True
+        except ValueError as error:
+            self.message(str(error))
+            return False
 
     def select_parent(self, name):  # 父类独立选择无需展开全部子类。
         self.selected.symmetric_difference_update({name})  # 明确选择或取消父标签本身。
@@ -360,6 +437,7 @@ class TagEditor(QDialog):  # 参考图式胶囊标签卡，父类只在主动点
             if row.get('parent') == name:  # 保留子节点原有父标签身份。
                 row.update(parent=parent, kind='minor' if parent else 'major')  # 删除根父标签时子标签变为根节点。
         del self.schema[name]  # 从待应用的全局字典删除该标签。
+        self._origins.pop(name, None)
         self.selected.discard(name)  # 当前视频不再选择已删除的标签。
         self.expanded.discard(name)  # 不自动展开提升后的子标签。
         self.message('')  # 明确全局影响且允许取消草稿。
@@ -371,6 +449,7 @@ class TagEditor(QDialog):  # 参考图式胶囊标签卡，父类只在主动点
             if name.casefold() in {tag.casefold() for tag in self.schema}:  # 不创建大小写重复标签。
                 raise ValueError('标签已存在。')  # 用户可以直接选择已有胶囊。
             self.schema[name] = {'name': name, 'kind': 'major', 'parent': None, 'is_parent': False}  # 新标签先作为普通可选胶囊。
+            self._origins[name] = None
             # Adding to the catalog does not select the tag for this video.
             self.entry.clear()  # 支持连续新增。
             self.message('')  # 清除旧错误提示。

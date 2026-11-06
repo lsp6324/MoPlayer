@@ -3,6 +3,7 @@ from PySide6.QtCore import Qt, Signal, QTimer, QPoint, QSize, QPersistentModelIn
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLineEdit,
                                QComboBox, QListView, QAbstractItemView)
 from application.catalog import CatalogFilter
+from application.tag_labels import tag_label
 from catalog_filter_popup import CatalogFilterPopup, TagChoices
 from ui import label, button, icon
 from theme import theme_tokens
@@ -196,6 +197,10 @@ class CatalogPanel(QWidget):
         self.sort.setCurrentIndex(self.sort.findData(filters.sort))
         self.sort.blockSignals(False)
         self.popup.present(filters, self.schema)
+        self.present_summaries()
+
+    def present_summaries(self):
+        filters = self.filters
         self._summaries = {}
         if filters.score != 'all':
             text = '未评分' if filters.score == 'none' else f"{'≥' if filters.score_mode == 'gte' else '='} {filters.score} 分"
@@ -204,7 +209,7 @@ class CatalogPanel(QWidget):
             self._summaries[('已收藏' if filters.favorite == 'yes' else '未收藏') + ' ×'] = 'favorite'
         if filters.kind != 'all':
             self._summaries[('视频' if filters.kind == 'video' else '图片') + ' ×'] = 'kind'
-        selected = (*filters.tags, *(('无标签',) if filters.untagged else ()))
+        selected = (*(tag_label(name, self.schema) for name in filters.tags), *(('无标签',) if filters.untagged else ()))
         if selected:
             caption = (' 且 ' if filters.tag_mode == 'and' else ' 或 ').join(selected)
             self._summaries['标签：' + caption + ' ×'] = 'tags'
@@ -224,6 +229,7 @@ class CatalogPanel(QWidget):
         if schema != self.schema:
             self.schema = schema
             self.popup.present(self.filters, schema)
+            self.present_summaries()
 
     def toggle_filters(self):
         if self.popup.isVisible():

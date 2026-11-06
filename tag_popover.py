@@ -23,7 +23,7 @@ class TagPanel(HoverPanel):
 
     def capture(self):
         if self.editor is not None:
-            self.drafts.update(self.video_id, TagValues(self.editor.chosen(), self.editor.schema))
+            self.drafts.update(self.video_id, TagValues(self.editor.chosen(), self.editor.schema, self.editor.renames))
 
     def load_tags(self):
         self.capture()
@@ -51,7 +51,7 @@ class TagPanel(HoverPanel):
         if self.editor is not None and self.editor.dragging:
             self.close_timer.start()
             return
-        popup = QApplication.activePopupWidget()
+        popup = QApplication.activePopupWidget() or QApplication.activeModalWidget()
         if popup is not None and owned_by(popup, self.editor):
             self.close_timer.start()
             return
@@ -64,10 +64,15 @@ class TagPanel(HoverPanel):
         except ValueError as error:
             self.editor.message(str(error))
             return Operation.completed(Outcome(Status.FAILED, error=error))
-        if operation.pending and self.editor is not None:
-            editor = self.editor
+        editor = self.editor
+        if operation.pending and editor is not None:
             editor.setEnabled(False)
-            operation.on_finished(lambda outcome: editor.setEnabled(True) if self.editor is editor else None)
+        def completed(outcome):
+            if editor is not None and self.editor is editor:
+                editor.setEnabled(True)
+                if outcome.succeeded:
+                    editor.confirm_saved()
+        operation.on_finished(completed)
         return operation
 
     def hideEvent(self, event):

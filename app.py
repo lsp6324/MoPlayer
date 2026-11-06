@@ -73,7 +73,7 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
         self.playback = PlaybackSession()
         self.user_actions = UserActions(before_action=lambda:self.file_tasks.completion or Operation.success())
         self.tag_drafts = TagDrafts(self.catalog,
-            lambda vid, values: self.classification.apply_tags(vid, values.tags, list(values.schema.values()), prompt_score=False),
+            lambda vid, values: self.classification.apply_tags(vid, values.tags, list(values.schema.values()), prompt_score=False, renames=values.renames),
             lambda: self.current, lambda: not self.busy)
         self.file_tasks = FileTasks(lambda function, callback: self.work(function, callback),
                                     self._begin_file_task, self._end_file_task, self.has_pending_file_tasks,
@@ -91,11 +91,12 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
             available=lambda: not self.busy, refresh=self._refresh_file_records,
             restore_names=lambda: self.archive_configuration_service.restore_original_names(), notify=self._file_notice)
         self.classification = Classification(self.file_tasks, self.catalog,
-            lambda vid, score, tags, schema: self.tag_migration.submit(vid, score, tags, schema, defer_cleanup=True),
+            lambda vid, score, tags, schema, **options: self.tag_migration.submit(vid, score, tags, schema, defer_cleanup=True, **options),
             lambda vid, score, tags: self.archiver.submit(vid, score, tags, defer_cleanup=True),
             available=lambda: not self.busy, ensure_storage=self.ensure_storage,
             refresh=self._refresh_file_records, notify=self._file_notice,
             archive_locations=lambda vid: self.catalog.archive_locations(vid, self.storage.root),
+            tags_renamed=self.library_controller.rename_catalog_tags,
             favorite_folders=lambda: self.storage.folders.favorite,
             submit_favorite=lambda vid, score, tags, value: self.archiver.submit(vid, score, tags, favorite=value, defer_cleanup=True))
         self.deletion = Deletion(self.file_tasks, self.library_controller, lambda vid: self.deleter.submit(vid),
@@ -105,6 +106,7 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
             start=self.start, notify=self._file_notice)
         self.recovery = Recovery(self.file_tasks, self.catalog, self.tag_drafts,
             recover_archive=lambda: self.archiver.recover(), recover_tags=lambda: self.tag_migration.recover(),
+            tags_renamed=self.library_controller.rename_catalog_tags,
             recover_deletions=lambda: self.deleter.recover(), available=lambda: not self.busy,
             playback_target=self._playback_target, mark_deleting=self.thumbnail_service.mark_deleting,
             refresh=self._refresh_file_records, refresh_deleted=self.refresh_deleted,
@@ -334,8 +336,8 @@ class Window(ChromeWindow):  # 主界面和播放协调层。
                                            file_busy=self.busy, still=still)
 
     def refresh_title(self):
-        video = self.catalog.video(self.current) if self.current else None
-        info = PlayerInfo(video['name'], video['score'], tuple(json.loads(video['tags'])), bool(video['star']), video['id']) if video else None
+        video = self.catalog.video_details((self.current,)).get(self.current) if self.current else None
+        info = PlayerInfo(video['name'], video['score'], video['tag_labels'], bool(video['star']), video['id']) if video else None
         self.player_view.present_video(info)
         self.refresh_transport()
         if video:

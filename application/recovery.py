@@ -7,7 +7,8 @@ from application.operations import Operation, Status
 class Recovery:
     def __init__(self, tasks, repository, drafts, *, recover_archive, recover_tags,
                  recover_deletions, available, playback_target, mark_deleting,
-                 refresh, refresh_deleted, continue_after_delete, storage_ready, notify, recover_settings=lambda: [], restore_names=lambda: (), recover_renames=lambda: []):
+                 refresh, refresh_deleted, continue_after_delete, storage_ready, notify, recover_settings=lambda: [], restore_names=lambda: (), recover_renames=lambda: [], tags_renamed=lambda renames: None):
+        self.tags_renamed = tags_renamed
         self.recover_renames = recover_renames
         self.restore_names = restore_names
         self.recover_settings = recover_settings
@@ -50,6 +51,9 @@ class Recovery:
             if outcome.status is Status.CANCELLED:
                 return FileNotice(FileAction.RECOVERY, outcome)
             if outcome.succeeded:
+                for plan in plans:
+                    if plan.get('renames'):
+                        self.tags_renamed(plan['renames'])
                 self.drafts.reconcile(vid for vid in tag_ids if self.repository.video(vid) is not None)
             if not self.repository.pending_tasks():
                 self.storage_ready()

@@ -9,10 +9,10 @@ import subprocess
 def run(destination):
     from verify_ui_refresh import require_private_desktop
     require_private_desktop()
-    from PySide6.QtCore import Qt, QPoint, QThreadPool
+    from PySide6.QtCore import Qt, QPoint, QThreadPool, QTimer
     from PySide6.QtGui import QImage, QColor, QPainter, QLinearGradient
     from PySide6.QtTest import QTest
-    from PySide6.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication, QInputDialog, QMenu
     from app import Window
     from theme import apply_theme
     from runtime import BUNDLE
@@ -276,6 +276,59 @@ def run(destination):
               and all(vid in controller.catalog_ids for vid in marked_ids[:2])
               and [window.catalog.video(vid)['library_added_at'] for vid in marked_ids[:2]] == added)
         screenshot('catalog-unarchived.png')
+        panel.popup.search.clear()
+        panel.change(tags=('风景',))
+        check('筛选项直接显示父子路径', wait(lambda: not controller.catalog_pending)
+              and '风景 › 山川' in panel.popup.tags.chips['山川'].text())
+        target = next(row['id'] for row in controller.list_rows('catalog')
+                      if '山川' in row['tag_names'] and not row.get('unavailable'))
+        selection = controller.catalog_selection(target)
+        window.start(selection.context, selection.location)
+        check('标题和卡片共同显示父子路径', wait(lambda: window.current == target and window.player_view.image_view.has_image())
+              and '风景 › 山川' in window.player_view.header.tags
+              and '风景 › 山川' in controller.details[target]['tag_labels'])
+        tag_popup = window.player_view.options.tags_popup
+        tag_popup.open_above()
+        editor = tag_popup.editor
+        editor.activate('风景')
+        check('父级隐含选择与本级选择分开', not editor.chips['风景'].isChecked()
+              and editor.chips['风景'].property('implicitSelected')
+              and not editor.parent_choices['风景'].isEnabled())
+        tag_popup.grab().save(str(output / 'tag-manager-parent.png'))
+        dialog_checks = []
+        def accept_rename():
+            dialog = app.activeModalWidget()
+            report['rename_dialog'] = dict(type=type(dialog).__name__, visible=tag_popup.isVisible(), current=window.current, expected=target)
+            dialog_checks.append(isinstance(dialog, QInputDialog) and tag_popup.isVisible() and window.current == target)
+            if isinstance(dialog, QInputDialog):
+                dialog.grab().save(str(output / 'tag-rename-dialog.png'))
+                dialog.setTextValue('自然风光')
+                dialog.accept()
+        def rename_from_menu():
+            menu = app.activePopupWidget()
+            if isinstance(menu, QMenu):
+                QTimer.singleShot(50, accept_rename)
+                next(action for action in menu.actions() if action.text() == '重命名标签…').trigger()
+                menu.close()
+        QTimer.singleShot(30, rename_from_menu)
+        editor.menu('风景', editor.chips['风景'].mapToGlobal(QPoint(12, 12)))
+        report['rename_draft'] = editor.renames
+        check('右键重命名弹窗保持标签浮层和当前媒体', dialog_checks and all(dialog_checks)
+              and editor.renames == {'风景': '自然风光'})
+        renamed = tag_popup.flush_pending()
+        check('浮层重命名通过草稿与文件任务完成', wait(lambda: not renamed.pending and not controller.catalog_pending)
+              and renamed.outcome.succeeded)
+        check('父标签改名保留子标签及引用', window.store.tag_layout()['山川']['parent'] == '自然风光'
+              and '风景' not in window.store.tag_layout() and '山川' in json.loads(window.catalog.video(target)['tags']))
+        check('已选父标签筛选随重命名保留', panel.filters.tags == ('自然风光',) and target in controller.catalog_ids)
+        check('改名同步标题与库卡片路径且不换片', window.current == target
+              and '自然风光 › 山川' in window.player_view.header.tags
+              and '自然风光 › 山川' in controller.details[target]['tag_labels'])
+        jobs = len(window.store.query('SELECT id FROM hierarchy_jobs'))
+        check('成功保存后不重复提交旧重命名', tag_popup.flush_pending().outcome.succeeded
+              and len(window.store.query('SELECT id FROM hierarchy_jobs')) == jobs)
+        tag_popup.dismiss()
+        screenshot('catalog-hierarchy-renamed.png')
         panel.change(kind='all',score=7,score_mode='gte',tags=('摄影','旅行'),tag_mode='or')
         check('保存新的评分与标签规则', wait(lambda: not controller.catalog_pending))
         saved_filters = panel.filters
